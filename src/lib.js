@@ -6,9 +6,9 @@
 // only works if it resolves the bare "preact" specifier to the exact same module instance
 // this file uses. Pin the version in the import map, not here, if it ever needs to change.
 import { h, render } from 'preact';
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef, useLayoutEffect } from 'preact/hooks';
 import { signal, computed, effect } from 'https://esm.sh/@preact/signals@1.2.1?external=preact';
 import htm from 'https://esm.sh/htm@3.1.1';
 
 export const html = htm.bind(h);
-export { h, render, useState, useEffect, useRef, signal, computed, effect };
+export { h, render, useState, useEffect, useRef, useLayoutEffect, signal, computed, effect };

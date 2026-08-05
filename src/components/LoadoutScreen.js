@@ -74,6 +74,23 @@ function buildDeckGroups(loadout) {
   return groups;
 }
 
+function EquipmentTooltipContent({ name, cardList }) {
+  return html`
+    <div>
+      <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '13px', marginBottom: '8px' }}>${name}</div>
+      ${cardList.map((entry) => {
+        const def = CARD_DEFINITIONS[entry.defId];
+        return html`
+          <div key=${entry.defId} style=${{ marginBottom: '6px' }}>
+            <div style=${{ fontSize: '11px', fontWeight: 700 }}>${def.name}${entry.count > 1 ? ` ×${entry.count}` : ''}</div>
+            <div style=${{ fontSize: '11px', opacity: 0.8 }}>${def.description}</div>
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
 function StatBox({ label, value }) {
   return html`
     <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', display: 'flex', justifyContent: 'space-between', background: 'var(--color-surface)' }}>
@@ -125,7 +142,7 @@ export function LoadoutScreen() {
         const selected = getSelectedIds(loadout, cat).includes(id);
         const cardCount = cardCountOf(def);
         return {
-          id, name: def.name, selected, description: def.description,
+          id, name: def.name, selected, description: def.description, cardList: def.cardList,
           sub: cardCount !== undefined ? `카드 ${cardCount}장` : def.floorOverload !== undefined ? `과부화 바닥 +${def.floorOverload}` : '',
         };
       });
@@ -189,9 +206,9 @@ export function LoadoutScreen() {
                   </div>
                 </div>
               `;
-              return it.description
-                ? html`<${Tooltip} key=${it.id} width=${220} content=${it.description}>${tile}<//>`
-                : html`<div key=${it.id}>${tile}</div>`;
+              if (it.description) return html`<${Tooltip} key=${it.id} width=${220} content=${it.description}>${tile}<//>`;
+              if (it.cardList) return html`<${Tooltip} key=${it.id} width=${260} content=${html`<${EquipmentTooltipContent} name=${it.name} cardList=${it.cardList} />`}>${tile}<//>`;
+              return html`<div key=${it.id}>${tile}</div>`;
             })}
           </div>
 
