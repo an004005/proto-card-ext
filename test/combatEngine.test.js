@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRngState } from '../src/engine/rng.js';
 import {
-  createCombatState, beginPlayerFirst, beginEnemyFirst, playCard, advanceTurn, isCardPlayable,
+  createCombatState, beginPlayerFirst, beginEnemyFirst, playCard, advanceTurn, endPlayerTurn, isCardPlayable,
 } from '../src/engine/combatEngine.js';
 
 function entries(defIds) {
@@ -69,13 +69,23 @@ test('playing an ammo card consumes ammo 1:1 with its ammoCost', () => {
   assert.equal(state.player.ammo, 2); // 5 - 3
 });
 
-test('역장 방어 locks its armorPerTurn at the stage it was cast, then grants that much armor every following turn start', () => {
+test('역장 방어 locks its armorPerTurn at the stage it was cast, and grants that much armor immediately on cast', () => {
   let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 25 });
   const card = findCard(state, 'module_forcefield_defense');
   state = playCard(state, card.instanceId, null);
   assert.equal(state.player.powers.forcefieldDefense.armorPerTurn, 6); // stage1 row
-  state = advanceTurn(state); // next player turn start applies the armor
+  assert.equal(state.player.statuses.armor, 6); // granted once, immediately, on cast
+  state = endPlayerTurn(state); // armor converts to block right before the enemy's attack, same turn
   assert.ok(state.player.block >= 6);
+});
+
+test('역장 방어 only grants armor once — later turn ends just decay the leftover stack, no re-grant', () => {
+  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 25 });
+  const card = findCard(state, 'module_forcefield_defense');
+  state = playCard(state, card.instanceId, null);
+  state = advanceTurn(state); // turn 1 end converts the 6 armor to block (decrementing it to 5); enemy attacks; turn 2 starts
+  state = endPlayerTurn(state); // turn 2 end: no recast, so only the leftover 5 stacks convert
+  assert.equal(state.player.block, 5);
 });
 
 test('신경 강화 adds a live block bonus that tracks the CURRENT stage, not the cast-time stage', () => {

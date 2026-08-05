@@ -143,14 +143,7 @@ export function beginEnemyFirst(state) {
 }
 
 export function startPlayerTurn(state) {
-  let player = { ...state.player, block: 0 };
-  // 역장 방어 (파워·고정, §9): 사용 시점 단계로 고정된 armorPerTurn을 매턴 갑옷 스택에 더한 뒤,
-  // 일반 갑옷 규칙(applyArmorAtTurnStart)으로 방어도 전환 + 1 감소.
-  if (player.powers.forcefieldDefense) {
-    player = { ...player, statuses: applyStatus(player.statuses, 'armor', player.powers.forcefieldDefense.armorPerTurn) };
-  }
-  player = applyArmorAtTurnStart(player);
-  player = { ...player, energy: player.maxEnergy };
+  let player = { ...state.player, block: 0, energy: state.player.maxEnergy };
 
   const drawCount = HAND_SIZE + (player.extraDrawPerTurn || 0);
   const drawn = cardEngine.drawCards(state.piles, drawCount, state.rngState);
@@ -380,7 +373,16 @@ export function playCard(state, instanceId, targetId) {
   };
 
   if (def.powerKind === 'fixed' && resolved.armorPerTurn !== undefined) {
-    s = { ...s, player: { ...s.player, powers: { ...s.player.powers, [def.power]: { armorPerTurn: resolved.armorPerTurn } } } };
+    // 역장 방어 (파워·고정, §9): 시전 시점에 갑옷을 1회 즉시 부여. 이후 매턴 재부여되지 않음 —
+    // 그 갑옷 스택이 (일반 갑옷 규칙에 따라) 턴 종료 시 방어도로 전환되며 스택이 소모/감소한다.
+    s = {
+      ...s,
+      player: {
+        ...s.player,
+        powers: { ...s.player.powers, [def.power]: { armorPerTurn: resolved.armorPerTurn } },
+        statuses: applyStatus(s.player.statuses, 'armor', resolved.armorPerTurn),
+      },
+    };
   } else {
     s = applyEffects(s, resolved.effects, {
       source: 'player', cardTargetId: targetId, scalesWithStage: !!def.scalesWithStage,
@@ -406,9 +408,12 @@ export function endPlayerTurn(state) {
   let s = checkWinLoss(state);
   if (s.phase !== 'player_turn') return s;
 
+  // 갑옷: 턴 종료 시 스택만큼 방어도를 얻고 스택 1 감소, 그 다음 적의 공격이 실행됨 (§7.1).
+  let player = applyArmorAtTurnStart(s.player);
+
   const piles = cardEngine.discardHand(s.piles);
-  let nextPlayer = { ...s.player, temporaryEffects: {}, statuses: decayStatusesAtTurnEnd(s.player.statuses) };
-  return { ...s, piles, player: nextPlayer, phase: 'enemy_turn' };
+  player = { ...player, temporaryEffects: {}, statuses: decayStatusesAtTurnEnd(player.statuses) };
+  return { ...s, piles, player, phase: 'enemy_turn' };
 }
 
 function executeEnemyAction(state, enemyId) {

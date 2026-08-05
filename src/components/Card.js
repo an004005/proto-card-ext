@@ -3,6 +3,7 @@ import { CARD_DEFINITIONS } from '../data/cards.js';
 import { getEffectiveCost, resolveCard } from '../engine/combatEngine.js';
 import { getStage, applyStageScale } from '../engine/overloadEngine.js';
 import { STATUS_LABELS, POWER_LABELS } from '../data/statusEffects.js';
+import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
 import { Tooltip } from './Tooltip.js';
 import { OverloadGauge } from './OverloadGauge.js';
 
@@ -15,6 +16,14 @@ export const TYPE_INFO = {
 
 const STAGE_LABELS = ['0단계 (노멀)', '1단계 (최적)', '2단계 (과열)', '3단계 (멜트다운)'];
 const STAGE_ZONE_LABELS = ['노멀', '최적', '과열', '멜트다운'];
+
+// What each "variable" module power actually boosts, for the per-stage bonus shown in the
+// card detail overlay (§9 — MODULE_POWER_STAGE_TABLES holds the live per-stage numbers).
+const VARIABLE_POWER_BONUS_LABELS = {
+  neuralBoost: '방어력 획득 시',
+  bodyBoost: '근접 공격 피해',
+  spatialAwareness: '원거리 공격 피해',
+};
 
 function describeEffect(effect, def, stage) {
   const scale = (v) => (def.stageTable ? v : applyStageScale(v, stage, def.scalesWithStage));
@@ -35,8 +44,15 @@ function describeEffect(effect, def, stage) {
     case 'discardRandomFromHand':
       return '무작위 카드 버리기';
     case 'activatePower':
-    case 'activateFixedPower':
-      return `${POWER_LABELS[effect.power] || effect.power} 활성화`;
+    case 'activateFixedPower': {
+      const label = POWER_LABELS[effect.power] || effect.power;
+      const table = MODULE_POWER_STAGE_TABLES[effect.power];
+      if (table) {
+        const bonusLabel = VARIABLE_POWER_BONUS_LABELS[effect.power] || '효과';
+        return `${label} 활성화 (${bonusLabel} +${table[stage]})`;
+      }
+      return `${label} 활성화`;
+    }
     case 'grantNextRangedBonus':
       return `다음 원거리 피해 +${effect.amount}${effect.ignoresBlock ? ' (방어 무시)' : ''}`;
     case 'removeInventoryItem':

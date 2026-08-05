@@ -6,7 +6,7 @@ import { MODULE_DEFINITIONS } from '../data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../data/implants.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
-import { WAREHOUSE_STARTING_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
+import { WAREHOUSE_STARTING_POOL, FARMING_ONLY_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
 import { buildDeckFromLoadout, computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus } from '../engine/equipmentEngine.js';
 import { getEffectiveCost } from '../engine/combatEngine.js';
 import { getStage } from '../engine/overloadEngine.js';
@@ -15,11 +15,11 @@ import { Tooltip } from './Tooltip.js';
 import { CardDetailTooltip, TYPE_INFO } from './Card.js';
 
 const CATEGORIES = [
-  { key: 'weapon', label: '무기', defs: WEAPON_DEFINITIONS, pool: WAREHOUSE_STARTING_POOL.weapons, slotType: 'weapon', max: 2, iconColor: 'var(--color-accent)' },
-  { key: 'top', label: '상의', defs: ARMOR_TOP_DEFINITIONS, pool: WAREHOUSE_STARTING_POOL.tops, slotType: 'top', max: 1, iconColor: 'var(--color-neutral-700)' },
-  { key: 'bottom', label: '하의', defs: ARMOR_BOTTOM_DEFINITIONS, pool: WAREHOUSE_STARTING_POOL.bottoms, slotType: 'bottom', max: 1, iconColor: 'var(--color-neutral-700)' },
-  { key: 'module', label: '모듈', defs: MODULE_DEFINITIONS, pool: WAREHOUSE_STARTING_POOL.modules, slotType: 'module', max: 2, iconColor: 'var(--color-accent-2-700)' },
-  { key: 'implant', label: '임플란트', defs: IMPLANT_DEFINITIONS, pool: WAREHOUSE_STARTING_POOL.implants, slotType: 'implant', max: 3, iconColor: 'var(--color-accent-2-700)' },
+  { key: 'weapon', label: '무기', defs: WEAPON_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.weapons, ...FARMING_ONLY_POOL.weapons], slotType: 'weapon', max: 2, iconColor: 'var(--color-accent)' },
+  { key: 'top', label: '상의', defs: ARMOR_TOP_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.tops, ...FARMING_ONLY_POOL.tops], slotType: 'top', max: 1, iconColor: 'var(--color-neutral-700)' },
+  { key: 'bottom', label: '하의', defs: ARMOR_BOTTOM_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.bottoms, ...FARMING_ONLY_POOL.bottoms], slotType: 'bottom', max: 1, iconColor: 'var(--color-neutral-700)' },
+  { key: 'module', label: '모듈', defs: MODULE_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.modules, ...FARMING_ONLY_POOL.modules], slotType: 'module', max: 2, iconColor: 'var(--color-accent-2-700)' },
+  { key: 'implant', label: '임플란트', defs: IMPLANT_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.implants, ...FARMING_ONLY_POOL.implants], slotType: 'implant', max: 3, iconColor: 'var(--color-accent-2-700)' },
   { key: 'consumable', label: '소모품', defs: null, pool: null, slotType: null, max: null, iconColor: 'var(--color-neutral-700)' },
 ];
 
@@ -119,13 +119,13 @@ export function LoadoutScreen() {
   const deckGroups = buildDeckGroups(loadout);
 
   const warehouseItems = cat.key === 'consumable'
-    ? loadout.consumables.map((c) => ({ id: c.defId, name: CONSUMABLE_DEFINITIONS[c.defId].name, sub: `×${c.count}`, selected: false }))
+    ? loadout.consumables.map((c) => ({ id: c.defId, name: CONSUMABLE_DEFINITIONS[c.defId].name, sub: `×${c.count}`, selected: false, description: CONSUMABLE_DEFINITIONS[c.defId].description }))
     : cat.pool.map((id) => {
         const def = cat.defs[id];
         const selected = getSelectedIds(loadout, cat).includes(id);
         const cardCount = cardCountOf(def);
         return {
-          id, name: def.name, selected,
+          id, name: def.name, selected, description: def.description,
           sub: cardCount !== undefined ? `카드 ${cardCount}장` : def.floorOverload !== undefined ? `과부화 바닥 +${def.floorOverload}` : '',
         };
       });
@@ -167,27 +167,32 @@ export function LoadoutScreen() {
       ${loadoutTab === 'equip' ? html`
         <div style=${{ display: 'flex', gap: 'var(--space-4)', flex: 1 }}>
           <div style=${{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--space-3)', alignContent: 'start' }}>
-            ${warehouseItems.map((it) => html`
-              <div key=${it.id}
-                style=${{
-                  border: `2px solid ${it.selected ? 'var(--color-accent)' : 'var(--color-divider)'}`,
-                  background: 'var(--color-surface)', padding: 'var(--space-3)', position: 'relative',
-                  cursor: cat.slotType ? 'pointer' : 'default',
-                }}
-                onClick=${cat.slotType ? () => dispatch({ type: 'SET_LOADOUT_SLOT', slotType: cat.slotType, id: it.id }) : undefined}
-              >
-                <div style=${{ position: 'relative', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style=${{ position: 'absolute', left: '50%', top: '6px', width: '34px', height: '44px', background: 'var(--color-neutral-200)', border: '1px solid var(--color-divider)', transform: 'translateX(-50%) rotate(-10deg)' }}></span>
-                  <span style=${{ position: 'absolute', left: '50%', top: '4px', width: '34px', height: '44px', background: 'var(--color-neutral-100)', border: '1px solid var(--color-divider)', transform: 'translateX(-50%) rotate(6deg)' }}></span>
-                  <span style=${{ position: 'relative', width: '38px', height: '38px', background: cat.iconColor }}></span>
+            ${warehouseItems.map((it) => {
+              const tile = html`
+                <div
+                  style=${{
+                    border: `2px solid ${it.selected ? 'var(--color-accent)' : 'var(--color-divider)'}`,
+                    background: 'var(--color-surface)', padding: 'var(--space-3)', position: 'relative',
+                    cursor: cat.slotType ? 'pointer' : 'default',
+                  }}
+                  onClick=${cat.slotType ? () => dispatch({ type: 'SET_LOADOUT_SLOT', slotType: cat.slotType, id: it.id }) : undefined}
+                >
+                  <div style=${{ position: 'relative', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style=${{ position: 'absolute', left: '50%', top: '6px', width: '34px', height: '44px', background: 'var(--color-neutral-200)', border: '1px solid var(--color-divider)', transform: 'translateX(-50%) rotate(-10deg)' }}></span>
+                    <span style=${{ position: 'absolute', left: '50%', top: '4px', width: '34px', height: '44px', background: 'var(--color-neutral-100)', border: '1px solid var(--color-divider)', transform: 'translateX(-50%) rotate(6deg)' }}></span>
+                    <span style=${{ position: 'relative', width: '38px', height: '38px', background: cat.iconColor }}></span>
+                  </div>
+                  <div style=${{ fontWeight: 800, fontSize: '12px', marginTop: '8px' }}>${it.name}</div>
+                  <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                    <span class="tag tag-outline" style=${{ fontSize: '10px' }}>${it.sub}</span>
+                    ${it.selected ? html`<span class="tag tag-accent" style=${{ fontSize: '10px' }}>장착중</span>` : null}
+                  </div>
                 </div>
-                <div style=${{ fontWeight: 800, fontSize: '12px', marginTop: '8px' }}>${it.name}</div>
-                <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                  <span class="tag tag-outline" style=${{ fontSize: '10px' }}>${it.sub}</span>
-                  ${it.selected ? html`<span class="tag tag-accent" style=${{ fontSize: '10px' }}>장착중</span>` : null}
-                </div>
-              </div>
-            `)}
+              `;
+              return it.description
+                ? html`<${Tooltip} key=${it.id} width=${220} content=${it.description}>${tile}<//>`
+                : html`<div key=${it.id}>${tile}</div>`;
+            })}
           </div>
 
           <${EquipSlotsPanel} allEquipSlots=${allEquipSlots} />

@@ -188,7 +188,7 @@ export const CARD_DEFINITIONS = {
       { cost: 2, armorPerTurn: 8 },
       { cost: 2, armorPerTurn: 4 },
     ],
-    description: '사용 시점 단계로 갑옷 획득량 고정. 매턴 시작 시 갑옷 스택 추가.',
+    description: '사용 시점 단계로 고정된 만큼 갑옷을 즉시 1회 획득 (턴 종료 시 방어도로 전환).',
   },
   module_forcefield_blast: {
     id: 'module_forcefield_blast', name: '역장 방출', type: 'attack', attackKind: null,
