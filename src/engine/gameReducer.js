@@ -23,8 +23,8 @@ import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { WAREHOUSE_STARTING_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
 import { POST_COMBAT_CHOICES } from '../data/dropTables.js';
 
-const BASE_MAX_HP = 70;
-const BASE_INVENTORY_CAPACITY = 20;
+export const BASE_MAX_HP = 70;
+export const BASE_INVENTORY_CAPACITY = 20;
 const SLOT_LIMITS = { weaponIds: 2, moduleIds: 2, implantIds: 3 };
 
 export function gameReducer(snapshot, command) {

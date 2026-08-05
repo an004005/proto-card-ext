@@ -12,9 +12,11 @@ import { EndTurnButton } from './EndTurnButton.js';
 import { TargetingOverlay } from './TargetingOverlay.js';
 import { HistoryControls } from './HistoryControls.js';
 import { PlayLog } from './PlayLog.js';
+import { InventoryPopup } from './InventoryPopup.js';
 
 export function CombatScreen() {
   const [draggingCard, setDraggingCard] = useState(null);
+  const [showInventory, setShowInventory] = useState(false);
   const combat = combatStateSignal.value;
   if (!combat) return null;
 
@@ -57,7 +59,10 @@ export function CombatScreen() {
       onDrop=${handleDropAnywhere}
     >
       <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <h3 style=${{ margin: 0 }}>전투 — ${enemyNames}</h3>
+        <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <h3 style=${{ margin: 0 }}>전투 — ${enemyNames}</h3>
+          <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }} onClick=${() => setShowInventory(true)}>인벤토리</button>
+        </div>
         <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', width: '280px', fontSize: '11px' }}>
           <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
             <span class="tag tag-outline">DEBUG · 디버그</span>
@@ -106,6 +111,8 @@ export function CombatScreen() {
         />
         <${EndTurnButton} disabled=${combat.phase !== 'player_turn'} />
       </div>
+
+      ${showInventory ? html`<${InventoryPopup} onClose=${() => setShowInventory(false)} />` : null}
     </div>
   `;
 }

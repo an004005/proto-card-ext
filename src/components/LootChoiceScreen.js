@@ -1,19 +1,7 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } from '../data/equipment.js';
-import { MODULE_DEFINITIONS } from '../data/modules.js';
-import { IMPLANT_DEFINITIONS } from '../data/implants.js';
-
-const EQUIPMENT_DEFS = {
-  ...WEAPON_DEFINITIONS, ...ARMOR_TOP_DEFINITIONS, ...ARMOR_BOTTOM_DEFINITIONS, ...MODULE_DEFINITIONS, ...IMPLANT_DEFINITIONS,
-};
-
-function describeLoot(item) {
-  if (item.kind === 'junk') return { name: '잡템', sub: `환금 가치 ${item.value}cr`, color: 'var(--color-neutral-500)' };
-  if (item.kind === 'currency') return { name: '환금템', sub: `가치 ${item.value}cr`, color: 'var(--color-accent-2-700)' };
-  return { name: EQUIPMENT_DEFS[item.equipmentId]?.name || item.equipmentId, sub: '장비', color: 'var(--color-accent)' };
-}
+import { describeItem } from '../data/itemDisplay.js';
 
 export function LootChoiceScreen() {
   const pendingLoot = snapshotSignal.value.pendingLoot;
@@ -33,7 +21,7 @@ export function LootChoiceScreen() {
       <div class="hr" style=${{ width: '500px' }}></div>
       <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', justifyContent: 'center', maxWidth: '700px' }}>
         ${items.map((item, i) => {
-          const info = describeLoot(item);
+          const info = describeItem(item);
           const selected = kept.has(i);
           return html`
             <div
