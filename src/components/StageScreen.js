@@ -20,7 +20,7 @@ export function StageScreen() {
     <div style=${{ padding: 'var(--space-6) var(--space-8)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxWidth: '700px' }}>
       <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderBottom: '2px solid var(--color-divider)', paddingBottom: 'var(--space-3)' }}>
         <h2 style=${{ margin: 0 }}>${step ? `${step.floor}층` : '탐사 완료'}</h2>
-        <span style=${{ fontSize: '13px' }}>HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
+        <span style=${{ fontSize: '13px' }}>체력 HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
       </div>
 
       <div style=${{ display: 'flex', gap: 'var(--space-6)', fontSize: '13px', flexWrap: 'wrap' }}>

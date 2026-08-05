@@ -13,7 +13,7 @@ const HAND_SIZE = 5;
 
 // ---- card resolution helpers ----
 
-function resolveCard(def, stage) {
+export function resolveCard(def, stage) {
   if (def.stageTable) {
     const row = def.stageTable[Math.min(stage, 3)];
     return { cost: row.cost, effects: row.effects || [], armorPerTurn: row.armorPerTurn };

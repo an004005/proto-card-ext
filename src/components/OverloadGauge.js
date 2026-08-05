@@ -22,7 +22,7 @@ export function OverloadGauge({ overload, floor, compact = false }) {
         </div>
       ` : null}
       <div style=${{ height, background: 'var(--color-neutral-300)', border: '1px solid var(--color-divider)', position: 'relative', overflow: 'hidden' }}>
-        <div style=${{ position: 'absolute', left: `${floor}%`, top: 0, bottom: 0, width: '2px', background: 'var(--color-text)', opacity: 0.4 }} title="장착 바닥"></div>
+        <div style=${{ position: 'absolute', left: `${floor}%`, top: 0, bottom: 0, width: '2px', background: 'var(--color-text)', opacity: 0.4 }} title="장착 과부화 바닥"></div>
         <div style=${{ height: '100%', width: `${clamped}%`, background: info.color, transition: 'width 0.15s ease' }}></div>
         ${!compact ? html`
           <span style=${{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 700 }}>

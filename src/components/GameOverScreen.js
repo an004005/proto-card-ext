@@ -19,7 +19,7 @@ export function GameOverScreen() {
 
   return html`
     <div style=${{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 'var(--space-4)', background: 'var(--color-neutral-900)', color: 'var(--color-bg)' }}>
-      <h6 style=${{ color: 'var(--color-accent-400)' }}>EXTRACTION FAILED</h6>
+      <h6 style=${{ color: 'var(--color-accent-400)' }}>EXTRACTION FAILED · 탈출 실패</h6>
       <h1 style=${{ margin: 0, fontSize: '64px' }}>사망</h1>
       <div style=${{ display: 'flex', gap: 'var(--space-8)', margin: 'var(--space-4) 0', fontSize: '14px' }}>
         <span>도달 층 <strong>${floorReached}</strong>/10</span>

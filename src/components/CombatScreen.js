@@ -60,7 +60,7 @@ export function CombatScreen() {
         <h3 style=${{ margin: 0 }}>전투 — ${enemyNames}</h3>
         <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', width: '280px', fontSize: '11px' }}>
           <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-            <span class="tag tag-outline">DEBUG</span>
+            <span class="tag tag-outline">DEBUG · 디버그</span>
             <${HistoryControls} />
           </div>
           <${PlayLog} />
@@ -102,7 +102,7 @@ export function CombatScreen() {
           draggingInstanceId=${draggingCard?.instanceId ?? null}
           onCardDragStart=${(card) => setDraggingCard(card)}
           onCardDragEnd=${() => setDraggingCard(null)}
-          stage=${stage} powers=${player.powers}
+          stage=${stage} overload=${combat.overload} powers=${player.powers}
         />
         <${EndTurnButton} disabled=${combat.phase !== 'player_turn'} />
       </div>

@@ -1,28 +1,105 @@
 import { html } from '../lib.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
-import { getEffectiveCost } from '../engine/combatEngine.js';
+import { getEffectiveCost, resolveCard } from '../engine/combatEngine.js';
+import { getStage, applyStageScale } from '../engine/overloadEngine.js';
+import { STATUS_LABELS, POWER_LABELS } from '../data/statusEffects.js';
 import { Tooltip } from './Tooltip.js';
+import { OverloadGauge } from './OverloadGauge.js';
 
 export const TYPE_INFO = {
-  attack: { color: 'var(--color-accent)', label: 'ATTACK', cls: 'tag-accent' },
-  skill: { color: 'var(--color-neutral-700)', label: 'SKILL', cls: 'tag-neutral' },
-  power: { color: 'var(--color-accent-2-700)', label: 'POWER', cls: 'tag-accent-2' },
-  curse: { color: 'var(--color-neutral-500)', label: 'CURSE', cls: 'tag-neutral' },
+  attack: { color: 'var(--color-accent)', label: 'ATTACK · 공격', cls: 'tag-accent' },
+  skill: { color: 'var(--color-neutral-700)', label: 'SKILL · 스킬', cls: 'tag-neutral' },
+  power: { color: 'var(--color-accent-2-700)', label: 'POWER · 파워', cls: 'tag-accent-2' },
+  curse: { color: 'var(--color-neutral-500)', label: 'CURSE · 저주', cls: 'tag-neutral' },
 };
 
-function CardDetailTooltip({ def, cost, type }) {
+const STAGE_LABELS = ['0단계 (노멀)', '1단계 (최적)', '2단계 (과열)', '3단계 (멜트다운)'];
+const STAGE_ZONE_LABELS = ['노멀', '최적', '과열', '멜트다운'];
+
+function describeEffect(effect, def, stage) {
+  const scale = (v) => (def.stageTable ? v : applyStageScale(v, stage, def.scalesWithStage));
+  switch (effect.kind) {
+    case 'damage':
+      return (effect.target === 'all_enemies' ? '광역 피해 ' : '피해 ') + scale(effect.value);
+    case 'block':
+      return '방어 ' + scale(effect.value);
+    case 'applyStatus': {
+      const label = STATUS_LABELS[effect.status] || effect.status;
+      const who = effect.target === 'self' ? '자신' : effect.target === 'all_enemies' ? '전체 적' : '적';
+      return `${who} ${label} ${effect.amount}`;
+    }
+    case 'applyStun':
+      return `기계 스턴 ${effect.amount}`;
+    case 'draw':
+      return `드로우 ${effect.count}장`;
+    case 'discardRandomFromHand':
+      return '무작위 카드 버리기';
+    case 'activatePower':
+    case 'activateFixedPower':
+      return `${POWER_LABELS[effect.power] || effect.power} 활성화`;
+    case 'grantNextRangedBonus':
+      return `다음 원거리 피해 +${effect.amount}${effect.ignoresBlock ? ' (방어 무시)' : ''}`;
+    case 'removeInventoryItem':
+      return '아이템 영구 소멸';
+    default:
+      return effect.kind;
+  }
+}
+
+function buildStageRows(def) {
+  return STAGE_LABELS.map((label, stage) => {
+    const resolved = resolveCard(def, stage);
+    const parts = [];
+    if (def.stageTable) parts.push(`코스트 ${resolved.cost}`);
+    if (resolved.armorPerTurn !== undefined) parts.push(`매턴 갑옷 +${resolved.armorPerTurn}`);
+    for (const effect of resolved.effects) parts.push(describeEffect(effect, def, stage));
+    return { stage, label, effect: parts.filter(Boolean).join(' · ') || '효과 없음' };
+  });
+}
+
+export function CardDetailTooltip({ def, cost, type, overload }) {
+  const stage = getStage(overload ?? 0);
+  const rows = buildStageRows(def);
   return html`
-    <div>
-      <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '13px', marginBottom: '4px' }}>${def.name}</div>
-      <div style=${{ opacity: 0.75, marginBottom: '6px' }}>
-        ${type.label} · 코스트 ${cost}${def.ammoCost ? ` · 총알 ${def.ammoCost}` : ''}
+    <div style=${{ width: '260px' }}>
+      <div style=${{ display: 'flex', gap: '10px', paddingBottom: '10px', borderBottom: '1px solid var(--color-neutral-700)', marginBottom: '10px' }}>
+        <div style=${{ width: '50px', height: '66px', border: `2px solid ${type.color}`, background: 'var(--color-surface)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style=${{ width: '22px', height: '22px', background: type.color }}></span>
+        </div>
+        <div>
+          <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '14px' }}>${def.name}</div>
+          <span class=${`tag ${type.cls}`} style=${{ marginTop: '4px' }}>${type.label}</span>
+          <div style=${{ fontSize: '10px', marginTop: '6px', opacity: 0.85 }}>
+            ${!def.stageTable ? `코스트 ${cost}` : ''}${def.ammoCost ? ` · 총알 ${def.ammoCost}` : ''}
+          </div>
+          ${def.overloadGain ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.75 }}>과부화 부여 +${def.overloadGain}</div>` : null}
+        </div>
       </div>
-      <div>${def.description}</div>
-      <div style=${{ marginTop: '6px', display: 'flex', flexDirection: 'column', gap: '2px', opacity: 0.7 }}>
-        ${def.overloadGain ? html`<div>과부화 +${def.overloadGain}</div>` : null}
-        ${def.exhausts ? html`<div>사용 후 소진</div>` : null}
-        ${def.unplayable ? html`<div>과적(짐) 상태일 때만 사용 가능</div>` : null}
-        ${def.scalesWithStage ? html`<div>과부화 단계에 따라 수치 변동 (1·2단계 +25%)</div>` : null}
+
+      <div>
+        ${rows.map((row) => html`
+          <div key=${row.stage} style=${{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px',
+            padding: '6px 8px', marginBottom: '4px',
+            background: row.stage === stage ? 'var(--color-neutral-800)' : 'transparent',
+            borderLeft: `3px solid ${row.stage === stage ? 'var(--color-accent-400)' : 'transparent'}`,
+          }}>
+            <span style=${{ fontSize: '11px', fontWeight: row.stage === stage ? 800 : 400 }}>${row.label}</span>
+            <span style=${{ fontSize: '11px', fontWeight: row.stage === stage ? 800 : 400, textAlign: 'right' }}>${row.effect}</span>
+          </div>
+        `)}
+      </div>
+
+      <div style=${{ marginTop: '8px' }}>
+        <div style=${{ fontSize: '10px', opacity: 0.75, marginBottom: '4px' }}>
+          현재 과부화 — 이 카드는 <strong>${STAGE_ZONE_LABELS[Math.min(stage, 3)]}</strong> 단계로 발동
+        </div>
+        <${OverloadGauge} overload=${overload ?? 0} floor=${0} compact=${true} />
+      </div>
+
+      <div style=${{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '2px', opacity: 0.75 }}>
+        ${def.exhausts ? html`<div style=${{ fontSize: '10px' }}>사용 후 소진</div>` : null}
+        ${def.unplayable ? html`<div style=${{ fontSize: '10px' }}>과적(짐) 상태일 때만 사용 가능</div>` : null}
       </div>
     </div>
   `;
@@ -30,7 +107,7 @@ function CardDetailTooltip({ def, cost, type }) {
 
 export function Card({
   card, playable = true, armed = false, width = 140, onClick,
-  draggable = false, onDragStart, onDragEnd, stage = 0, powers = {},
+  draggable = false, onDragStart, onDragEnd, stage = 0, overload = 0, powers = {},
 }) {
   const def = CARD_DEFINITIONS[card.defId];
   const type = TYPE_INFO[def.type] || TYPE_INFO.skill;
@@ -40,7 +117,7 @@ export function Card({
   const cost = getEffectiveCost(def, stage, powers);
 
   return html`
-    <${Tooltip} width=${200} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} />`}>
+    <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${overload} />`}>
       <div
         class=${classNames}
         style=${{
