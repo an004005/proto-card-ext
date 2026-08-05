@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Spire Prototype — 전투 &amp; 맵</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="./src/styles.css" />
+<!-- @preact/signals is loaded with ?external=preact so it stays on the SAME preact module
+     instance as the rest of the app (required for its auto-rerender-on-.value-read magic to
+     work). That leaves a bare `import ... from "preact"` inside its bundle, which only the
+     browser's native import map (not a bundler) can resolve — hence this map. -->
+<script type="importmap">
+{
+  "imports": {
+    "preact": "https://esm.sh/preact@10.29.8",
+    "preact/hooks": "https://esm.sh/preact@10.29.8/hooks"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
