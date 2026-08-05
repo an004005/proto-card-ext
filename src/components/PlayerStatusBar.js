@@ -1,13 +1,24 @@
 import { html } from '../lib.js';
 import { POWER_LABELS, POWER_DESCRIPTIONS } from '../data/statusEffects.js';
+import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
+import { getStage } from '../engine/overloadEngine.js';
 import { PileCounts } from './PileCounts.js';
 import { OverloadGauge } from './OverloadGauge.js';
 import { useDamagePopups, DamagePopupLayer } from './DamagePopup.js';
 import { StatusTag } from './StatusTag.js';
 import { Tooltip } from './Tooltip.js';
 
+// Live per-stage bonus for each active variable power (neuralBoost/bodyBoost/spatialAwareness),
+// so the player can see the actual number it's currently granting, re-read every render.
+// forcefieldDefense isn't tracked as a power at all — it just grants an armor stack on cast.
+function powerBonus(key, stage) {
+  const table = MODULE_POWER_STAGE_TABLES[key];
+  return table ? table[stage] : null;
+}
+
 export function PlayerStatusBar({ player, overload, overloadFloor, pileCounts }) {
   const hpPct = Math.max(0, Math.round((player.hp / player.maxHp) * 100));
+  const stage = getStage(overload);
   const statusEntries = Object.entries(player.statuses).filter(([, v]) => v);
   const powerEntries = Object.keys(player.powers || {});
   const hasNextRangedBonus = !!player.temporaryEffects?.nextRangedBonus;
@@ -28,11 +39,14 @@ export function PlayerStatusBar({ player, overload, overloadFloor, pileCounts })
       <div style=${{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
         ${player.block > 0 ? html`<span class="tag tag-neutral">방어 ${player.block}</span>` : null}
         ${statusEntries.map(([key, value]) => html`<${StatusTag} key=${key} statusKey=${key} value=${value} cls="tag-outline" />`)}
-        ${powerEntries.map((key) => html`
-          <${Tooltip} key=${key} width=${180} content=${POWER_DESCRIPTIONS[key] || ''}>
-            <span class="tag tag-accent-2">${POWER_LABELS[key] || key}</span>
-          <//>
-        `)}
+        ${powerEntries.map((key) => {
+          const bonus = powerBonus(key, stage);
+          return html`
+            <${Tooltip} key=${key} width=${180} content=${POWER_DESCRIPTIONS[key] || ''}>
+              <span class="tag tag-accent-2">${POWER_LABELS[key] || key}${bonus !== null ? ` +${bonus}` : ''}</span>
+            <//>
+          `;
+        })}
         ${hasNextRangedBonus ? html`
           <${Tooltip} width=${180} content=${`다음 원거리 공격에 +${player.temporaryEffects.nextRangedBonus.amount} 피해${player.temporaryEffects.nextRangedBonus.ignoresBlock ? ' (방어 무시)' : ''}`}>
             <span class="tag tag-accent-2">투시 대기중</span>

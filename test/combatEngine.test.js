@@ -69,12 +69,12 @@ test('playing an ammo card consumes ammo 1:1 with its ammoCost', () => {
   assert.equal(state.player.ammo, 2); // 5 - 3
 });
 
-test('역장 방어 locks its armorPerTurn at the stage it was cast, and grants that much armor immediately on cast', () => {
+test('역장 방어 locks its armor gain at the stage it was cast, and grants that much armor immediately — no lingering "power" state', () => {
   let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 25 });
   const card = findCard(state, 'module_forcefield_defense');
   state = playCard(state, card.instanceId, null);
-  assert.equal(state.player.powers.forcefieldDefense.armorPerTurn, 6); // stage1 row
-  assert.equal(state.player.statuses.armor, 6); // granted once, immediately, on cast
+  assert.equal(state.player.statuses.armor, 6); // stage1 row, granted once, immediately, on cast
+  assert.equal(state.player.powers.forcefieldDefense, undefined); // only the armor status is left behind
   state = endPlayerTurn(state); // armor converts to block right before the enemy's attack, same turn
   assert.ok(state.player.block >= 6);
 });

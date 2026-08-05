@@ -115,7 +115,7 @@ export function LoadoutScreen() {
   const deckSize = buildDeckFromLoadout(loadout).length;
   const floor = computeFloorOverload(loadout);
   const maxHp = 70 + computeMaxHpBonus(loadout);
-  const capacity = 30 + computeInventoryCapacityBonus(loadout);
+  const capacity = 20 + computeInventoryCapacityBonus(loadout);
   const deckGroups = buildDeckGroups(loadout);
 
   const warehouseItems = cat.key === 'consumable'
@@ -227,6 +227,9 @@ export function LoadoutScreen() {
           <${EquipSlotsPanel} allEquipSlots=${allEquipSlots} />
 
           <div style=${{ flex: 1, display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <div style=${{ display: 'flex', gap: 'var(--space-5)', fontSize: '12px', paddingBottom: 'var(--space-2)', borderBottom: '2px solid var(--color-divider)' }}>
+              <span>인벤토리 <strong>${deckSize}</strong>/${capacity}</span>
+            </div>
             ${deckGroups.map((g) => html`
               <div key=${g.name}>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontWeight: 800, letterSpacing: '0.04em', marginBottom: '6px' }}>

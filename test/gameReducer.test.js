@@ -20,6 +20,14 @@ function autoPlayCombat(snapshot, guardLimit = 100) {
   return s;
 }
 
+// Combat wins and farm rolls route through 'loot_choice' before the next screen — keep
+// everything rolled, mirroring the old "auto-collect" behavior for tests that don't care.
+function confirmAllLoot(snapshot) {
+  if (snapshot.currentScreen !== 'loot_choice') return snapshot;
+  const keepIndices = snapshot.pendingLoot.items.map((_, i) => i);
+  return gameReducer(snapshot, { type: 'CONFIRM_LOOT_CHOICE', keepIndices });
+}
+
 test('NEW_RUN starts on the loadout screen with a pre-filled default loadout', () => {
   const s = gameReducer(null, { type: 'NEW_RUN', seed: 1 });
   assert.equal(s.currentScreen, 'loadout');
@@ -42,15 +50,29 @@ test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants and s
   assert.equal(s.playerState.maxHp, 77);
   assert.equal(s.playerState.hp, 77);
   assert.equal(s.playerState.overload, 30);
-  assert.equal(s.playerState.inventory.capacity, 35);
+  assert.equal(s.playerState.inventory.capacity, 25);
 });
 
-test('ENTER_STEP on a combat step starts combat; winning it routes to post_combat with a drop applied', () => {
+test('ENTER_STEP on a combat step starts combat; winning it routes to loot_choice then post_combat', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = gameReducer(s, { type: 'ENTER_STEP' });
   assert.equal(s.currentScreen, 'combat');
   s = autoPlayCombat(s);
+  assert.equal(s.currentScreen, 'loot_choice');
+  s = confirmAllLoot(s);
+  assert.equal(s.currentScreen, 'post_combat');
+});
+
+test('CONFIRM_LOOT_CHOICE only keeps the items the player selected', () => {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = gameReducer(s, { type: 'ENTER_STEP' });
+  s = autoPlayCombat(s);
+  if (s.currentScreen !== 'loot_choice') return; // this seed's roll produced no lootable items
+  const invBefore = s.playerState.inventory.items.length;
+  s = gameReducer(s, { type: 'CONFIRM_LOOT_CHOICE', keepIndices: [] }); // discard everything
+  assert.equal(s.playerState.inventory.items.length, invBefore);
   assert.equal(s.currentScreen, 'post_combat');
 });
 
@@ -58,7 +80,7 @@ test('POST_COMBAT_CHOICE "move" is always safe and advances the stage without a 
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = gameReducer(s, { type: 'ENTER_STEP' });
-  s = autoPlayCombat(s);
+  s = confirmAllLoot(autoPlayCombat(s));
   const stepIndexBefore = s.stageState.stepIndex;
   s = gameReducer(s, { type: 'POST_COMBAT_CHOICE', choice: 'move' });
   assert.equal(s.currentScreen, 'stage');
@@ -69,7 +91,7 @@ test('POST_COMBAT_CHOICE "rest" heals 10% hp and reduces overload by 30 (never b
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 5 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = gameReducer(s, { type: 'ENTER_STEP' });
-  s = autoPlayCombat(s);
+  s = confirmAllLoot(autoPlayCombat(s));
   const hpBefore = s.playerState.hp;
   // force overload up so the reduction is meaningfully observable
   s = { ...s, playerState: { ...s.playerState, overload: 80, hp: Math.max(1, hpBefore - 20) } };
@@ -88,6 +110,7 @@ test('a full run can be played headlessly from NEW_RUN to either extractionCompl
   while (s.currentScreen !== 'gameOver' && s.currentScreen !== 'extractionComplete' && guard < 400) {
     if (s.currentScreen === 'stage') s = gameReducer(s, { type: 'ENTER_STEP' });
     else if (s.currentScreen === 'combat') s = autoPlayCombat(s, 1);
+    else if (s.currentScreen === 'loot_choice') s = confirmAllLoot(s);
     else if (s.currentScreen === 'post_combat') s = gameReducer(s, { type: 'POST_COMBAT_CHOICE', choice: 'move' });
     else break;
     guard += 1;
@@ -124,4 +147,22 @@ test('PLAY_CARD with an invalid instanceId is a full no-op snapshot', () => {
   const before = s;
   const after = gameReducer(before, { type: 'PLAY_CARD', instanceId: 'nope', targetId: null });
   assert.equal(after, before);
+});
+
+test('junk and currency items only enter the deck as curse cards once they are burden (past capacity)', () => {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const capacity = s.playerState.inventory.capacity;
+  const items = [{ id: 'item-junk', kind: 'junk', value: 5 }];
+  for (let i = 0; i < capacity + 2; i++) items.push({ id: `item-cur-${i}`, kind: 'currency', value: 15 });
+  s = { ...s, playerState: { ...s.playerState, inventory: { ...s.playerState.inventory, items } } };
+
+  s = gameReducer(s, { type: 'ENTER_STEP' });
+  const combat = s.activeCombatState;
+  const deckDefIds = [...combat.piles.drawPile, ...combat.piles.hand].map((c) => c.defId);
+  const junkCount = deckDefIds.filter((id) => id === 'junk_item').length;
+  const currencyCount = deckDefIds.filter((id) => id === 'currency_item').length;
+
+  assert.equal(junkCount, 0); // the junk item sits at index 0 -> well within capacity, not burden
+  assert.equal(currencyCount, items.length - capacity); // only the currency items past capacity (burden) are included
 });

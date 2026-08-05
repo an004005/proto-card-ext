@@ -5,6 +5,7 @@ import { getCurrentStep } from '../engine/stageEngine.js';
 import { computeFloorOverload } from '../engine/equipmentEngine.js';
 import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
+import { getDeckEntries } from '../engine/gameReducer.js';
 import { OverloadGauge } from './OverloadGauge.js';
 
 const TIER_LABELS = { elite: '정예', boss: '보스', normal: '일반' };
@@ -15,6 +16,7 @@ export function StageScreen() {
   const step = getCurrentStep(snapshot.stageState);
   const floor = computeFloorOverload(ps.loadout);
   const burdenCount = getBurdenItems(ps.inventory).length;
+  const deckSize = getDeckEntries(ps).length;
 
   return html`
     <div style=${{ padding: 'var(--space-6) var(--space-8)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', maxWidth: '700px' }}>
@@ -25,6 +27,7 @@ export function StageScreen() {
 
       <div style=${{ display: 'flex', gap: 'var(--space-6)', fontSize: '13px', flexWrap: 'wrap' }}>
         <span>총알 <strong>${ps.ammo}</strong></span>
+        <span>덱 카드 <strong>${deckSize}</strong>장</span>
         <span>인벤토리 <strong>${ps.inventory.items.length}</strong>/${ps.inventory.capacity}${burdenCount > 0 ? ` (짐 ${burdenCount})` : ''}</span>
       </div>
       <div style=${{ width: '320px' }}>

@@ -15,7 +15,7 @@ import {
   buildDeckFromLoadout, computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus,
   computeOverloadGainMultiplier, getImplantEffect,
 } from './equipmentEngine.js';
-import { createInventory, addItem, removeItem, createItem } from './inventoryEngine.js';
+import { createInventory, addItem, removeItem, createItem, isItemBurdenGivenOrder } from './inventoryEngine.js';
 import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } from '../data/equipment.js';
 import { MODULE_DEFINITIONS } from '../data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../data/implants.js';
@@ -24,7 +24,7 @@ import { WAREHOUSE_STARTING_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
 import { POST_COMBAT_CHOICES } from '../data/dropTables.js';
 
 const BASE_MAX_HP = 70;
-const BASE_INVENTORY_CAPACITY = 30;
+const BASE_INVENTORY_CAPACITY = 20;
 const SLOT_LIMITS = { weaponIds: 2, moduleIds: 2, implantIds: 3 };
 
 export function gameReducer(snapshot, command) {
@@ -38,6 +38,7 @@ export function gameReducer(snapshot, command) {
     case 'END_TURN': return endTurnCommand(snapshot);
     case 'USE_CONSUMABLE': return useConsumable(snapshot, command.defId);
     case 'POST_COMBAT_CHOICE': return postCombatChoice(snapshot, command.choice);
+    case 'CONFIRM_LOOT_CHOICE': return confirmLootChoice(snapshot, command.keepIndices);
     default:
       throw new Error(`Unknown command type "${command.type}"`);
   }
@@ -67,6 +68,7 @@ function newRun(seed) {
     stageState: createStageState(),
     activeCombatState: null,
     combatContext: null,
+    pendingLoot: null,
     rngState: createRngState(seed),
   };
 }
@@ -117,10 +119,13 @@ function getOwnedEquipmentIds(loadout) {
   return [loadout.topId, loadout.bottomId, ...loadout.weaponIds, ...loadout.moduleIds, ...loadout.implantIds].filter(Boolean);
 }
 
-function getDeckEntries(playerState) {
+export function getDeckEntries(playerState) {
   const equipmentEntries = buildDeckFromLoadout(playerState.loadout).map((defId) => ({ defId }));
-  const lootEntries = playerState.inventory.items
-    .filter((i) => i.kind === 'junk' || i.kind === 'currency')
+  const inv = playerState.inventory;
+  const orderedIds = inv.items.map((i) => i.id);
+  // 잡템·환금템 모두 과적(짐) 상태로 넘어간 것만 저주 카드로 덱에 들어간다.
+  const lootEntries = inv.items
+    .filter((i) => (i.kind === 'junk' || i.kind === 'currency') && isItemBurdenGivenOrder(orderedIds, [], inv.capacity, i.id))
     .map((i) => ({ defId: i.kind === 'junk' ? 'junk_item' : 'currency_item', itemId: i.id }));
   return [...equipmentEntries, ...lootEntries];
 }
@@ -249,18 +254,56 @@ function finalizeIfCombatEnded(snapshot) {
   let inventory = ps.inventory;
   for (const itemId of combat.player.removedItemIds) inventory = removeItem(inventory, itemId);
   const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, ammo: combat.player.ammo, inventory };
-  let s = { ...snapshot, playerState, activeCombatState: null };
+  let s = { ...snapshot, playerState, activeCombatState: null, combatContext: null };
 
   const context = snapshot.combatContext;
   if (context && context.kind === 'ambush') {
-    s = applyBasicDrop(s, 'normal');
-    return { ...s, stageState: advanceStage(s.stageState), currentScreen: 'stage', combatContext: null };
+    return applyBasicDrop(s, 'normal', { kind: 'advance_stage' });
   }
 
   const tier = (context && context.tier) || 'normal';
-  s = applyBasicDrop(s, tier);
-  if (tier === 'boss') return { ...s, currentScreen: 'extractionComplete', combatContext: null };
-  return { ...s, currentScreen: 'post_combat', combatContext: null };
+  const next = tier === 'boss' ? { kind: 'extractionComplete' } : { kind: 'post_combat' };
+  return applyBasicDrop(s, tier, next);
+}
+
+// ---- loot pickup choice (전투/파밍에서 나온 잡템·환금템·장비는 개별로 습득 여부 선택) ----
+
+function startLootChoice(snapshot, items, next) {
+  if (items.length === 0) return resolveLootNext(snapshot, next);
+  return { ...snapshot, pendingLoot: { items, next }, currentScreen: 'loot_choice' };
+}
+
+function confirmLootChoice(snapshot, keepIndices) {
+  if (snapshot.currentScreen !== 'loot_choice' || !snapshot.pendingLoot) return snapshot;
+  const { items, next } = snapshot.pendingLoot;
+  let inv = snapshot.playerState.inventory;
+  for (const idx of keepIndices) {
+    const item = items[idx];
+    if (!item) continue;
+    if (item.kind === 'junk') inv = addItem(inv, createItem('junk', { value: item.value }));
+    else if (item.kind === 'currency') inv = addItem(inv, createItem('currency', { value: item.value }));
+    else if (item.kind === 'equipment') inv = addItem(inv, createItem('equipment', { equipmentId: item.equipmentId }));
+  }
+  const s = { ...snapshot, playerState: { ...snapshot.playerState, inventory: inv }, pendingLoot: null };
+  return resolveLootNext(s, next);
+}
+
+function resolveLootNext(snapshot, next) {
+  if (next.kind === 'post_combat') return { ...snapshot, currentScreen: 'post_combat' };
+  if (next.kind === 'extractionComplete') return { ...snapshot, currentScreen: 'extractionComplete' };
+  if (next.kind === 'advance_stage') return { ...snapshot, stageState: advanceStage(snapshot.stageState), currentScreen: 'stage' };
+  if (next.kind === 'ambush_check') {
+    const ambushRoll = nextFloat(snapshot.rngState);
+    let s = { ...snapshot, rngState: ambushRoll.state };
+    if (ambushRoll.value < next.ambushChance) {
+      const floor = getCurrentStep(s.stageState).floor;
+      const picked = pickUnknownRoomMonster(floor, s.rngState);
+      s = { ...s, rngState: picked.rngState };
+      return startCombat(s, [picked.monsterId], undefined, true, { kind: 'ambush' });
+    }
+    return { ...s, stageState: advanceStage(s.stageState), currentScreen: 'stage' };
+  }
+  return snapshot;
 }
 
 // ---- post-combat 3-choice (§12.2) ----
@@ -281,32 +324,38 @@ function addConsumableToLoadout(loadout, defId, count) {
   return { ...loadout, consumables: [...loadout.consumables, { defId, count }] };
 }
 
-function applyFarm(snapshot) {
+// Ammo/consumables never occupy an inventory slot, so they're auto-collected. Junk/currency
+// (and, from the basic drop, equipment) do occupy a slot, so the player picks which to keep.
+function applyFarm(snapshot, next) {
   const roll = rollFarmLoot(snapshot.rngState);
   let ps = snapshot.playerState;
-  let inv = ps.inventory;
   let ammo = ps.ammo;
   let loadout = ps.loadout;
+  const lootItems = [];
   for (const item of roll.items) {
-    if (item.kind === 'junk') inv = addItem(inv, createItem('junk', { value: item.value }));
-    else if (item.kind === 'currency') inv = addItem(inv, createItem('currency', { value: item.value }));
+    if (item.kind === 'junk') lootItems.push({ kind: 'junk', value: item.value });
+    else if (item.kind === 'currency') lootItems.push({ kind: 'currency', value: item.value });
     else if (item.kind === 'ammo') ammo += item.amount;
     else if (item.kind === 'consumable') loadout = addConsumableToLoadout(loadout, item.defId, 1);
   }
-  return { ...snapshot, rngState: roll.rngState, playerState: { ...ps, inventory: inv, ammo, loadout } };
+  const s = { ...snapshot, rngState: roll.rngState, playerState: { ...ps, ammo, loadout } };
+  return startLootChoice(s, lootItems, next);
 }
 
-function applyBasicDrop(snapshot, tier) {
+function applyBasicDrop(snapshot, tier, next) {
   const ps = snapshot.playerState;
   const owned = getOwnedEquipmentIds(ps.loadout);
   const { result, rngState } = rollBasicDrop(tier, owned, getAllEquipmentIds(), snapshot.rngState);
-  let inv = ps.inventory;
-  for (const value of result.currencyValues) inv = addItem(inv, createItem('currency', { value }));
-  if (result.equipmentId) inv = addItem(inv, createItem('equipment', { equipmentId: result.equipmentId }));
   let loadout = ps.loadout;
   if (result.consumableId) loadout = addConsumableToLoadout(loadout, result.consumableId, 1);
   const ammo = ps.ammo + result.ammo;
-  return { ...snapshot, rngState, playerState: { ...ps, inventory: inv, ammo, loadout } };
+  const s = { ...snapshot, rngState, playerState: { ...ps, ammo, loadout } };
+
+  const lootItems = [
+    ...result.currencyValues.map((value) => ({ kind: 'currency', value })),
+    ...(result.equipmentId ? [{ kind: 'equipment', equipmentId: result.equipmentId }] : []),
+  ];
+  return startLootChoice(s, lootItems, next);
 }
 
 function postCombatChoice(snapshot, choice) {
@@ -314,17 +363,7 @@ function postCombatChoice(snapshot, choice) {
   const rules = POST_COMBAT_CHOICES[choice];
   if (!rules) return snapshot;
 
-  let s = snapshot;
-  if (choice === 'rest') s = applyRest(s);
-  if (choice === 'farm') s = applyFarm(s);
-
-  const ambushRoll = nextFloat(s.rngState);
-  s = { ...s, rngState: ambushRoll.state };
-  if (ambushRoll.value < rules.ambushChance) {
-    const floor = getCurrentStep(s.stageState).floor;
-    const picked = pickUnknownRoomMonster(floor, s.rngState);
-    s = { ...s, rngState: picked.rngState };
-    return startCombat(s, [picked.monsterId], undefined, true, { kind: 'ambush' });
-  }
-  return { ...s, stageState: advanceStage(s.stageState), currentScreen: 'stage' };
+  if (choice === 'move') return { ...snapshot, stageState: advanceStage(snapshot.stageState), currentScreen: 'stage' };
+  if (choice === 'rest') return resolveLootNext(applyRest(snapshot), { kind: 'ambush_check', ambushChance: rules.ambushChance });
+  return applyFarm(snapshot, { kind: 'ambush_check', ambushChance: rules.ambushChance }); // 'farm'
 }

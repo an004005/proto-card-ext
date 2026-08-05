@@ -15,19 +15,18 @@ export const STATUS_LABELS = {
   atkBonus: '공격력+',
 };
 
-// Active module powers / one-shot buffs — not part of `statuses`, but still worth surfacing
-// during combat so the player can see what's currently boosting their cards.
+// Active module powers — not part of `statuses`, but still worth surfacing during combat so
+// the player can see what's currently boosting their cards. forcefieldDefense (역장 방어) isn't
+// tracked here — casting it just grants a plain 갑옷(armor) stack, nothing power-like lingers.
 export const POWER_LABELS = {
   neuralBoost: '신경 강화',
   bodyBoost: '신체 강화',
   spatialAwareness: '공간 지각',
-  forcefieldDefense: '역장 방어',
 };
 export const POWER_DESCRIPTIONS = {
   neuralBoost: '모든 방어 획득에 현재 과부화 단계 기준 보너스가 붙습니다 (단계별 수치는 §9 참고).',
   bodyBoost: '근접 공격 피해에 현재 과부화 단계 기준 보너스가 붙습니다.',
   spatialAwareness: '원거리 공격 피해에 현재 과부화 단계 기준 보너스가 붙습니다.',
-  forcefieldDefense: '사용 시점에 고정된 만큼 갑옷 스택을 1회 획득합니다 (턴 종료 시 방어도로 전환).',
 };
 
 export const STATUS_DESCRIPTIONS = {

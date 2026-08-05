@@ -51,7 +51,7 @@ function getModuleDamageBonus(attackKind, stage, powers) {
 export function getCardTargetKind(def) {
   const effects = def.stageTable ? (def.stageTable[0].effects || []) : (def.effects || []);
   for (const e of effects) {
-    if (e.kind === 'applyStun') return 'machine_enemy';
+    if (e.kind === 'applyStun') return e.target === 'machine_enemy' ? 'machine_enemy' : 'enemy';
     if (e.target === 'all_enemies') return 'all_enemies';
     if (e.kind === 'damage' && !e.target) return 'enemy';
     if (e.kind === 'applyStatus' && e.target === 'enemy') return 'enemy';
@@ -373,16 +373,10 @@ export function playCard(state, instanceId, targetId) {
   };
 
   if (def.powerKind === 'fixed' && resolved.armorPerTurn !== undefined) {
-    // 역장 방어 (파워·고정, §9): 시전 시점에 갑옷을 1회 즉시 부여. 이후 매턴 재부여되지 않음 —
-    // 그 갑옷 스택이 (일반 갑옷 규칙에 따라) 턴 종료 시 방어도로 전환되며 스택이 소모/감소한다.
-    s = {
-      ...s,
-      player: {
-        ...s.player,
-        powers: { ...s.player.powers, [def.power]: { armorPerTurn: resolved.armorPerTurn } },
-        statuses: applyStatus(s.player.statuses, 'armor', resolved.armorPerTurn),
-      },
-    };
+    // 역장 방어 (파워·고정, §9): 시전 시점에 갑옷을 1회 즉시 부여할 뿐, forcefieldDefense라는
+    // 파워/상태를 별도로 남기지 않는다. 그 갑옷 스택은 (일반 갑옷 규칙에 따라) 턴 종료 시
+    // 방어도로 전환되며 소모/감소한다.
+    s = { ...s, player: { ...s.player, statuses: applyStatus(s.player.statuses, 'armor', resolved.armorPerTurn) } };
   } else {
     s = applyEffects(s, resolved.effects, {
       source: 'player', cardTargetId: targetId, scalesWithStage: !!def.scalesWithStage,

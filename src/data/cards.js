@@ -222,7 +222,7 @@ export const CARD_DEFINITIONS = {
   },
 
   // ---- 모듈 5: 전자기 간섭 ----
-  // ---- 루팅 저주 (잡템/환금템 습득 시 덱에 삽입, §6) ----
+  // ---- 루팅 저주 (잡템/환금템이 과적(짐) 상태로 넘어가면 덱에 삽입, §6) ----
   // 평소엔 unplayable(과적 아님). 소지 아이템이 과적(짐)으로 넘어가면 combatEngine이
   // 카드 인스턴스의 itemId를 통해 동적으로 playable 처리 — 이 defId 자체는 항상 unplayable.
   junk_item: {
@@ -255,7 +255,7 @@ export const CARD_DEFINITIONS = {
   module_hack: {
     id: 'module_hack', name: '해킹', type: 'skill', attackKind: null,
     cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 15,
-    effects: [{ kind: 'applyStun', target: 'machine_enemy', amount: 1 }],
-    description: '기계 대상 스턴 1턴. 소멸. 단계 무관.',
+    effects: [{ kind: 'applyStun', target: 'enemy', amount: 1 }],
+    description: '적 대상(기계 아니어도) 스턴 1턴. 소멸. 과부화 +15 (단계 무관).',
   },
 };

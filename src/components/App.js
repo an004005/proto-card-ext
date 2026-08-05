@@ -4,6 +4,7 @@ import { LoadoutScreen } from './LoadoutScreen.js';
 import { StageScreen } from './StageScreen.js';
 import { CombatScreen } from './CombatScreen.js';
 import { PostCombatScreen } from './PostCombatScreen.js';
+import { LootChoiceScreen } from './LootChoiceScreen.js';
 import { GameOverScreen } from './GameOverScreen.js';
 import { ExtractionCompleteScreen } from './ExtractionCompleteScreen.js';
 
@@ -11,6 +12,7 @@ const SCREENS = {
   loadout: LoadoutScreen,
   stage: StageScreen,
   combat: CombatScreen,
+  loot_choice: LootChoiceScreen,
   post_combat: PostCombatScreen,
   gameOver: GameOverScreen,
   extractionComplete: ExtractionCompleteScreen,
