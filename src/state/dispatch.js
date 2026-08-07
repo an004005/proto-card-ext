@@ -12,15 +12,19 @@ function summarize(command, before) {
     case 'NEW_RUN': return `NEW_RUN (seed ${command.seed})`;
     case 'SET_LOADOUT_SLOT': return `SET_LOADOUT_SLOT ${command.slotType}:${command.id}`;
     case 'CONFIRM_LOADOUT': return 'CONFIRM_LOADOUT';
-    case 'ENTER_STEP': return 'ENTER_STEP';
-    case 'SKIP_UNKNOWN_ROOM': return 'SKIP_UNKNOWN_ROOM';
+    case 'ENTER_MAP_NODE': return `ENTER_MAP_NODE ${command.nodeId}`;
+    case 'RESOLVE_UNKNOWN_ROOM_CHOICE': return `RESOLVE_UNKNOWN_ROOM_CHOICE ${command.choice}`;
     case 'PLAY_CARD': {
       const card = before.activeCombatState?.piles.hand.find((c) => c.instanceId === command.instanceId);
       return `PLAY_CARD ${card ? card.defId : command.instanceId}`;
     }
     case 'END_TURN': return 'END_TURN';
     case 'USE_CONSUMABLE': return `USE_CONSUMABLE ${command.defId}`;
-    case 'POST_COMBAT_CHOICE': return `POST_COMBAT_CHOICE ${command.choice}`;
+    case 'SELECT_REWARD': return `SELECT_REWARD ${command.slotKey}:${command.optionIndex}`;
+    case 'CONFIRM_REWARDS': return 'CONFIRM_REWARDS';
+    case 'EQUIP_ITEM': return `EQUIP_ITEM ${command.itemId}`;
+    case 'UNEQUIP_ITEM': return `UNEQUIP_ITEM ${command.equipmentId}`;
+    case 'DISCARD_ITEM': return `DISCARD_ITEM ${command.itemId}`;
     default: return command.type;
   }
 }

@@ -1,13 +1,14 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadStageSignal } from '../state/combatStateAdapter.js';
+import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadStageSignal, ammoMaxSignal } from '../state/combatStateAdapter.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { isCardPlayable, getCardTargetKind } from '../engine/combatEngine.js';
 import { PlayerStatusBar } from './PlayerStatusBar.js';
 import { EnemyRow } from './EnemyRow.js';
 import { Hand } from './Hand.js';
+import { DrawPileBox, DiscardPileBox } from './PileCounts.js';
 import { EndTurnButton } from './EndTurnButton.js';
 import { TargetingOverlay } from './TargetingOverlay.js';
 import { HistoryControls } from './HistoryControls.js';
@@ -24,6 +25,7 @@ export function CombatScreen() {
   const enemies = enemiesSignal.value;
   const player = playerCombatSignal.value;
   const pileCounts = pileCountsSignal.value;
+  const ammoMax = ammoMaxSignal.value;
   const stage = overloadStageSignal.value;
   const consumables = snapshotSignal.value.playerState.loadout.consumables;
 
@@ -72,9 +74,10 @@ export function CombatScreen() {
         </div>
       </div>
 
-      <div style=${{ display: 'flex', gap: 'var(--space-4)', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <${PlayerStatusBar} player=${player} overload=${combat.overload} overloadFloor=${combat.overloadFloor} pileCounts=${pileCounts} />
-        <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
+      <div style=${{ display: 'flex', gap: 'var(--space-4)', justifyContent: 'center', alignItems: 'stretch' }}>
+        <${PlayerStatusBar} player=${player} overload=${combat.overload} overloadFloor=${combat.overloadFloor} ammoMax=${ammoMax} />
+        <div style=${{ width: '2px', background: 'var(--color-divider)', alignSelf: 'stretch' }}></div>
+        <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
           ${enemies.map((enemy) => html`
             <${EnemyRow}
               key=${enemy.id}
@@ -102,13 +105,17 @@ export function CombatScreen() {
 
       <div style=${{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 'var(--space-3)', flex: 1 }}>
         <${TargetingOverlay} active=${needsEnemyTarget} />
-        <${Hand}
-          cards=${hand} playableMap=${playableMap}
-          draggingInstanceId=${draggingCard?.instanceId ?? null}
-          onCardDragStart=${(card) => setDraggingCard(card)}
-          onCardDragEnd=${() => setDraggingCard(null)}
-          stage=${stage} overload=${combat.overload} powers=${player.powers}
-        />
+        <div style=${{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', justifyContent: 'center' }}>
+          <${DrawPileBox} count=${pileCounts.draw} />
+          <${Hand}
+            cards=${hand} playableMap=${playableMap}
+            draggingInstanceId=${draggingCard?.instanceId ?? null}
+            onCardDragStart=${(card) => setDraggingCard(card)}
+            onCardDragEnd=${() => setDraggingCard(null)}
+            stage=${stage} overload=${combat.overload} powers=${player.powers}
+          />
+          <${DiscardPileBox} count=${pileCounts.discard} exhaustCount=${pileCounts.exhaust} />
+        </div>
         <${EndTurnButton} disabled=${combat.phase !== 'player_turn'} />
       </div>
 

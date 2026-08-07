@@ -1,7 +1,8 @@
 import { html } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { getCurrentStep } from '../engine/stageEngine.js';
+import { getNode } from '../engine/mapEngine.js';
+import { MAP_FLOOR_COUNT } from '../data/mapLayout.js';
 
 function computeScore(inventory) {
   return inventory.items.reduce((sum, i) => sum + (i.value || 0), 0);
@@ -13,8 +14,8 @@ function startNewRun() {
 
 export function GameOverScreen() {
   const snapshot = snapshotSignal.value;
-  const step = getCurrentStep(snapshot.stageState);
-  const floorReached = step ? step.floor : 10;
+  const currentNode = snapshot.mapState ? getNode(snapshot.mapState, snapshot.mapState.currentNodeId) : null;
+  const floorReached = currentNode ? currentNode.floor : 1;
   const score = computeScore(snapshot.playerState.inventory);
 
   return html`
@@ -22,7 +23,7 @@ export function GameOverScreen() {
       <h6 style=${{ color: 'var(--color-accent-400)' }}>EXTRACTION FAILED · 탈출 실패</h6>
       <h1 style=${{ margin: 0, fontSize: '64px' }}>사망</h1>
       <div style=${{ display: 'flex', gap: 'var(--space-8)', margin: 'var(--space-4) 0', fontSize: '14px' }}>
-        <span>도달 층 <strong>${floorReached}</strong>/10</span>
+        <span>도달 층 <strong>${floorReached}</strong>/${MAP_FLOOR_COUNT}</span>
         <span>회수된 점수 <strong>0</strong> (사망 시 전부 손실)</span>
       </div>
       <p style=${{ fontSize: '12px', opacity: 0.6 }}>미회수 점수: ${score}크레드</p>

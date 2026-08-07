@@ -2,10 +2,20 @@
 // Never call Math.random() from engine code — all randomness must thread rngState explicitly
 // so combat/map generation is reproducible and undo/redo can restore identical outcomes.
 
+/** @typedef {import('./types.js').RngState} RngState */
+
+/**
+ * @param {number} seed
+ * @returns {RngState}
+ */
 export function createRngState(seed) {
   return seed >>> 0;
 }
 
+/**
+ * @param {RngState} state
+ * @returns {{value: number, state: RngState}} value in [0, 1)
+ */
 export function nextFloat(state) {
   const t = (state + 0x6d2b79f5) >>> 0;
   let z = t;
@@ -15,16 +25,33 @@ export function nextFloat(state) {
   return { value, state: t };
 }
 
+/**
+ * @param {RngState} state
+ * @param {number} maxExclusive
+ * @returns {{value: number, state: RngState}} integer in [0, maxExclusive)
+ */
 export function nextInt(state, maxExclusive) {
   const { value, state: nextState } = nextFloat(state);
   return { value: Math.floor(value * maxExclusive), state: nextState };
 }
 
+/**
+ * @template T
+ * @param {RngState} state
+ * @param {T[]} array
+ * @returns {{value: T, state: RngState}}
+ */
 export function pick(state, array) {
   const { value: index, state: nextState } = nextInt(state, array.length);
   return { value: array[index], state: nextState };
 }
 
+/**
+ * @template T
+ * @param {RngState} state
+ * @param {T[]} array
+ * @returns {{value: T[], state: RngState}} a fresh shuffled copy (input untouched)
+ */
 export function shuffle(state, array) {
   const result = array.slice();
   let s = state;
@@ -36,7 +63,12 @@ export function shuffle(state, array) {
   return { value: result, state: s };
 }
 
-// items: [{ value, weight }]
+/**
+ * @template T
+ * @param {RngState} state
+ * @param {{value: T, weight: number}[]} items
+ * @returns {{value: T, state: RngState}}
+ */
 export function weightedPick(state, items) {
   const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
   const { value: roll, state: nextState } = nextFloat(state);

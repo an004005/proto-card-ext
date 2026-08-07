@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gameReducer } from '../src/engine/gameReducer.js';
 import { isCardPlayable } from '../src/engine/combatEngine.js';
+import { getAvailableNodeIds } from '../src/engine/mapEngine.js';
 
 function autoPlayCombat(snapshot, guardLimit = 100) {
   let s = snapshot;
@@ -20,12 +21,34 @@ function autoPlayCombat(snapshot, guardLimit = 100) {
   return s;
 }
 
-// Combat wins and farm rolls route through 'loot_choice' before the next screen — keep
-// everything rolled, mirroring the old "auto-collect" behavior for tests that don't care.
-function confirmAllLoot(snapshot) {
-  if (snapshot.currentScreen !== 'loot_choice') return snapshot;
-  const keepIndices = snapshot.pendingLoot.items.map((_, i) => i);
-  return gameReducer(snapshot, { type: 'CONFIRM_LOOT_CHOICE', keepIndices });
+function enterFirstAvailableNode(s) {
+  const nodeId = getAvailableNodeIds(s.mapState)[0];
+  return gameReducer(s, { type: 'ENTER_MAP_NODE', nodeId });
+}
+
+// Picks option 0 in every offered reward slot then confirms — mirrors the old "auto-collect"
+// behavior for tests that don't care which specific reward they get.
+function confirmAllRewards(s) {
+  if (s.currentScreen !== 'reward') return s;
+  let next = s;
+  for (const slot of s.pendingReward.slots) {
+    if (slot.options.length === 0) continue;
+    next = gameReducer(next, { type: 'SELECT_REWARD', slotKey: slot.key, optionIndex: 0 });
+  }
+  return gameReducer(next, { type: 'CONFIRM_REWARDS' });
+}
+
+// Drives the map screen forward until combat starts (or the run ends), auto-resolving
+// rest/unknown-room nodes along the way (unknown room always picks 'farm').
+function driveToNextCombatOrEnd(s, guardLimit = 30) {
+  let guard = 0;
+  while (guard < guardLimit) {
+    if (s.currentScreen === 'map') s = enterFirstAvailableNode(s);
+    else if (s.currentScreen === 'unknown_room') s = gameReducer(s, { type: 'RESOLVE_UNKNOWN_ROOM_CHOICE', choice: 'farm' });
+    else break;
+    guard += 1;
+  }
+  return s;
 }
 
 test('NEW_RUN starts on the loadout screen with a pre-filled default loadout', () => {
@@ -43,63 +66,38 @@ test('SET_LOADOUT_SLOT toggles multi-select slots and respects the 2-weapon limi
   assert.equal(s.playerState.loadout.weaponIds.length, 2);
 });
 
-test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants and starts the stage', () => {
+test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seeds starting ammo, and generates the map', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 1 }); // default implants: 1,3,6 -> hp+7, floor 10+5+15=30
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
-  assert.equal(s.currentScreen, 'stage');
+  assert.equal(s.currentScreen, 'map');
   assert.equal(s.playerState.maxHp, 77);
   assert.equal(s.playerState.hp, 77);
   assert.equal(s.playerState.overload, 30);
   assert.equal(s.playerState.inventory.capacity, 25);
+  assert.deepEqual(s.playerState.inventory.items.map((i) => ({ kind: i.kind, amount: i.amount })), [{ kind: 'ammo', amount: 8 }]);
+  assert.ok(s.mapState.mapData.nodes.length > 0);
+  assert.deepEqual(getAvailableNodeIds(s.mapState).sort(), s.mapState.mapData.nodes.filter((n) => n.floor === 1).map((n) => n.id).sort());
 });
 
-test('ENTER_STEP on a combat step starts combat; winning it routes to loot_choice then post_combat', () => {
+test('entering a combat/elite map node starts combat; winning it routes to the reward screen', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
-  s = gameReducer(s, { type: 'ENTER_STEP' });
+  s = driveToNextCombatOrEnd(s);
   assert.equal(s.currentScreen, 'combat');
   s = autoPlayCombat(s);
-  assert.equal(s.currentScreen, 'loot_choice');
-  s = confirmAllLoot(s);
-  assert.equal(s.currentScreen, 'post_combat');
+  assert.equal(s.currentScreen, 'reward');
+  assert.equal(s.pendingReward.slots[0].category, 'equipment');
 });
 
-test('CONFIRM_LOOT_CHOICE only keeps the items the player selected', () => {
+test('CONFIRM_REWARDS applies picked options and returns to the map (or extraction on a boss win)', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
-  s = gameReducer(s, { type: 'ENTER_STEP' });
-  s = autoPlayCombat(s);
-  if (s.currentScreen !== 'loot_choice') return; // this seed's roll produced no lootable items
+  s = autoPlayCombat(driveToNextCombatOrEnd(s));
+  assert.equal(s.currentScreen, 'reward');
   const invBefore = s.playerState.inventory.items.length;
-  s = gameReducer(s, { type: 'CONFIRM_LOOT_CHOICE', keepIndices: [] }); // discard everything
-  assert.equal(s.playerState.inventory.items.length, invBefore);
-  assert.equal(s.currentScreen, 'post_combat');
-});
-
-test('POST_COMBAT_CHOICE "move" is always safe and advances the stage without a fight', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
-  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
-  s = gameReducer(s, { type: 'ENTER_STEP' });
-  s = confirmAllLoot(autoPlayCombat(s));
-  const stepIndexBefore = s.stageState.stepIndex;
-  s = gameReducer(s, { type: 'POST_COMBAT_CHOICE', choice: 'move' });
-  assert.equal(s.currentScreen, 'stage');
-  assert.equal(s.stageState.stepIndex, stepIndexBefore + 1);
-});
-
-test('POST_COMBAT_CHOICE "rest" heals 10% hp and reduces overload by 30 (never below floor)', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 5 });
-  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
-  s = gameReducer(s, { type: 'ENTER_STEP' });
-  s = confirmAllLoot(autoPlayCombat(s));
-  const hpBefore = s.playerState.hp;
-  // force overload up so the reduction is meaningfully observable
-  s = { ...s, playerState: { ...s.playerState, overload: 80, hp: Math.max(1, hpBefore - 20) } };
-  const preHp = s.playerState.hp;
-  s = gameReducer(s, { type: 'POST_COMBAT_CHOICE', choice: 'rest' });
-  assert.ok(['stage', 'combat'].includes(s.currentScreen)); // 'combat' if the 15% ambush roll hit
-  assert.ok(s.playerState.hp >= preHp);
-  assert.ok(s.playerState.overload <= 50);
+  s = confirmAllRewards(s);
+  assert.ok(['map', 'extractionComplete'].includes(s.currentScreen));
+  assert.ok(s.playerState.inventory.items.length >= invBefore); // equipment slot always grants at least one pick
 });
 
 test('a full run can be played headlessly from NEW_RUN to either extractionComplete or gameOver', () => {
@@ -108,10 +106,10 @@ test('a full run can be played headlessly from NEW_RUN to either extractionCompl
 
   let guard = 0;
   while (s.currentScreen !== 'gameOver' && s.currentScreen !== 'extractionComplete' && guard < 400) {
-    if (s.currentScreen === 'stage') s = gameReducer(s, { type: 'ENTER_STEP' });
+    if (s.currentScreen === 'map') s = enterFirstAvailableNode(s);
+    else if (s.currentScreen === 'unknown_room') s = gameReducer(s, { type: 'RESOLVE_UNKNOWN_ROOM_CHOICE', choice: 'farm' });
     else if (s.currentScreen === 'combat') s = autoPlayCombat(s, 1);
-    else if (s.currentScreen === 'loot_choice') s = confirmAllLoot(s);
-    else if (s.currentScreen === 'post_combat') s = gameReducer(s, { type: 'POST_COMBAT_CHOICE', choice: 'move' });
+    else if (s.currentScreen === 'reward') s = confirmAllRewards(s);
     else break;
     guard += 1;
   }
@@ -127,9 +125,10 @@ test('the same seed reproduces an identical run outcome (deterministic headless 
     s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
     let guard = 0;
     while (s.currentScreen !== 'gameOver' && s.currentScreen !== 'extractionComplete' && guard < 400) {
-      if (s.currentScreen === 'stage') s = gameReducer(s, { type: 'ENTER_STEP' });
+      if (s.currentScreen === 'map') s = enterFirstAvailableNode(s);
+      else if (s.currentScreen === 'unknown_room') s = gameReducer(s, { type: 'RESOLVE_UNKNOWN_ROOM_CHOICE', choice: 'farm' });
       else if (s.currentScreen === 'combat') s = autoPlayCombat(s, 1);
-      else if (s.currentScreen === 'post_combat') s = gameReducer(s, { type: 'POST_COMBAT_CHOICE', choice: 'move' });
+      else if (s.currentScreen === 'reward') s = confirmAllRewards(s);
       else break;
       guard += 1;
     }
@@ -143,7 +142,7 @@ test('the same seed reproduces an identical run outcome (deterministic headless 
 test('PLAY_CARD with an invalid instanceId is a full no-op snapshot', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 6 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
-  s = gameReducer(s, { type: 'ENTER_STEP' });
+  s = driveToNextCombatOrEnd(s);
   const before = s;
   const after = gameReducer(before, { type: 'PLAY_CARD', instanceId: 'nope', targetId: null });
   assert.equal(after, before);
@@ -157,7 +156,8 @@ test('junk and currency items only enter the deck as curse cards once they are b
   for (let i = 0; i < capacity + 2; i++) items.push({ id: `item-cur-${i}`, kind: 'currency', value: 15 });
   s = { ...s, playerState: { ...s.playerState, inventory: { ...s.playerState.inventory, items } } };
 
-  s = gameReducer(s, { type: 'ENTER_STEP' });
+  s = driveToNextCombatOrEnd(s);
+  assert.equal(s.currentScreen, 'combat');
   const combat = s.activeCombatState;
   const deckDefIds = [...combat.piles.drawPile, ...combat.piles.hand].map((c) => c.defId);
   const junkCount = deckDefIds.filter((id) => id === 'junk_item').length;
@@ -165,4 +165,30 @@ test('junk and currency items only enter the deck as curse cards once they are b
 
   assert.equal(junkCount, 0); // the junk item sits at index 0 -> well within capacity, not burden
   assert.equal(currencyCount, items.length - capacity); // only the currency items past capacity (burden) are included
+});
+
+test('EQUIP_ITEM/UNEQUIP_ITEM move gear between the loadout and the inventory, and are blocked mid-combat', () => {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-rifle', kind: 'equipment', equipmentId: 'rifle' }] },
+      loadout: { ...s.playerState.loadout, weaponIds: ['katana'] },
+    },
+  };
+
+  s = gameReducer(s, { type: 'EQUIP_ITEM', itemId: 'item-rifle' });
+  assert.deepEqual(s.playerState.loadout.weaponIds.sort(), ['katana', 'rifle']);
+  assert.ok(!s.playerState.inventory.items.some((i) => i.id === 'item-rifle'));
+
+  s = gameReducer(s, { type: 'UNEQUIP_ITEM', equipmentId: 'rifle' });
+  assert.deepEqual(s.playerState.loadout.weaponIds, ['katana']);
+  assert.ok(s.playerState.inventory.items.some((i) => i.kind === 'equipment' && i.equipmentId === 'rifle'));
+
+  const midCombat = driveToNextCombatOrEnd(s);
+  assert.equal(midCombat.currentScreen, 'combat');
+  const blocked = gameReducer(midCombat, { type: 'UNEQUIP_ITEM', equipmentId: 'katana' });
+  assert.equal(blocked, midCombat); // guarded to currentScreen === 'map', no-op mid-combat
 });

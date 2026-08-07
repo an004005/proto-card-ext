@@ -137,27 +137,26 @@ test('playing a burdened loot card records the item for removal (synced back to 
   assert.deepEqual(state.player.removedItemIds, ['a']);
 });
 
-test('니빗 쌍 act out of phase (one bites while the other curls)', () => {
+test('니빗 쌍 act out of phase (one headbutts while the other slices)', () => {
   const state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit', 'nibbit'] });
   const kinds = state.enemies.map((e) => e.intent.id);
-  assert.deepEqual(kinds.sort(), ['bite', 'curl']);
+  assert.deepEqual(kinds.sort(), ['headbutt', 'slice']);
 });
 
-test('자폭충 explodes for 18 after its 2-turn countdown and neutralizes itself', () => {
+test('자폭충 cycles weaken -> bite -> stomp without ever self-destructing', () => {
   let state = makeCombat({ deck: Array(10).fill('katana_parry'), monsterIds: ['shrinker_beetle'], playerHp: 70 });
-  // Initial intent is already "puff" (rolled before turn 1). Turn 1 executes puff, turn 2
-  // executes inflate, turn 3 executes explode — a genuine 2-turn window to kill it first.
+  assert.equal(state.enemies[0].intent.id, 'weaken');
   state = advanceTurn(state);
+  assert.equal(state.enemies[0].intent.id, 'bite');
   state = advanceTurn(state);
+  assert.equal(state.enemies[0].intent.id, 'stomp');
   state = advanceTurn(state);
-  assert.ok(state.player.hp <= 70);
-  const enemy = state.enemies[0];
-  assert.equal(enemy.hp, 0);
+  assert.equal(state.enemies[0].intent.id, 'weaken'); // loops back around
+  assert.ok(state.enemies[0].hp > 0);
 });
 
-test('의식의 짐승 inserts 3 공물 curses and switches to phase 2 at 50% hp', () => {
+test('의식의 짐승 switches to phase 2 once hp drops to (or below) 150/252', () => {
   let state = makeCombat({ deck: Array(60).fill('katana_slash'), monsterIds: ['ceremonial_beast'], playerHp: 999 });
-  const boss = state.enemies[0];
   let guard = 0;
   while (state.enemies[0].phase === 1 && guard < 60) {
     let card = state.piles.hand.find((c) => c.defId === 'katana_slash' && isCardPlayable(state, c.instanceId));
@@ -165,9 +164,7 @@ test('의식의 짐승 inserts 3 공물 curses and switches to phase 2 at 50% hp
     guard += 1;
   }
   assert.equal(state.enemies[0].phase, 2);
-  const curseCount = [...state.piles.hand, ...state.piles.drawPile, ...state.piles.discardPile]
-    .filter((c) => c.defId === 'offering_curse').length;
-  assert.equal(curseCount, 3);
+  assert.ok(state.enemies[0].hp <= state.enemies[0].maxHp * (150 / 252));
 });
 
 test('beginEnemyFirst (ambush, §7.3) resolves the first intent before the player ever acts', () => {
@@ -180,4 +177,84 @@ test('beginEnemyFirst (ambush, §7.3) resolves the first intent before the playe
   const opened = beginEnemyFirst(setup);
   assert.equal(opened.phase, 'player_turn'); // already past the enemy's first move
   assert.ok(opened.player.hp <= 70); // wrap wound was already taken
+});
+
+test('뒤얽힘(entangled) adds its stack to attack card cost', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'] });
+  state = { ...state, player: { ...state.player, statuses: { ...state.player.statuses, entangled: 2 }, energy: 2 } };
+  const card = findCard(state, 'katana_slash');
+  assert.equal(isCardPlayable(state, card.instanceId), false); // needs 1(base)+2(entangled) = 3, only have 2
+  state = { ...state, player: { ...state.player, energy: 3 } };
+  assert.equal(isCardPlayable(state, card.instanceId), true);
+  const after = playCard(state, card.instanceId, state.enemies[0].id);
+  assert.equal(after.player.energy, 0);
+});
+
+test('감염(infected_curse) left in hand at turn end deals blockable damage per copy and moves to discard', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], playerHp: 70 });
+  const curseCard = { instanceId: 'test-infected', defId: 'infected_curse' };
+  state = { ...state, piles: { ...state.piles, hand: [...state.piles.hand, curseCard] } };
+  state = endPlayerTurn(state);
+  assert.equal(state.player.hp, 70 - 3);
+  assert.ok(state.piles.discardPile.some((c) => c.instanceId === 'test-infected'));
+  assert.ok(!state.piles.hand.some((c) => c.instanceId === 'test-infected'));
+});
+
+test('감염 damage is absorbed by block like any other damage', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], playerHp: 70 });
+  const curseCard = { instanceId: 'test-infected-2', defId: 'infected_curse' };
+  state = { ...state, player: { ...state.player, block: 10 }, piles: { ...state.piles, hand: [...state.piles.hand, curseCard] } };
+  state = endPlayerTurn(state);
+  assert.equal(state.player.hp, 70); // fully absorbed
+  assert.equal(state.player.block, 7);
+});
+
+test('어지러움(dizziness_curse, volatile) left in hand at turn end vanishes into the exhaust pile, not discard', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'] });
+  const curseCard = { instanceId: 'test-dizzy', defId: 'dizziness_curse' };
+  state = { ...state, piles: { ...state.piles, hand: [...state.piles.hand, curseCard] } };
+  state = endPlayerTurn(state);
+  assert.ok(state.piles.exhaustPile.some((c) => c.instanceId === 'test-dizzy'));
+  assert.ok(!state.piles.discardPile.some((c) => c.instanceId === 'test-dizzy'));
+  assert.ok(!state.piles.hand.some((c) => c.instanceId === 'test-dizzy'));
+});
+
+test('조이기(constrict) deals 1 blockable damage at turn end, and clears once its caster dies', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['slithering_strangler'], playerHp: 70 });
+  state = {
+    ...state,
+    player: { ...state.player, statuses: { ...state.player.statuses, constrict: 1 } },
+    enemies: state.enemies.map((e) => ({ ...e, hp: 1, isConstrictSource: true })),
+  };
+  const card = findCard(state, 'katana_slash');
+  state = playCard(state, card.instanceId, state.enemies[0].id);
+  assert.equal(state.enemies[0].hp, 0);
+  assert.equal(state.player.statuses.constrict, undefined); // cleared on the source's death
+  state = endPlayerTurn(state);
+  assert.equal(state.player.hp, 70); // no more 1-dmg tick since constrict was cleared
+});
+
+test('move.summon skips re-summoning while a living 톱니눈 already exists', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['fogmog'], playerHp: 999 });
+  state = advanceTurn(state); // fogmog's turn 1 (spore_summon) fires, spawns one 톱니눈
+  const countAfterFirst = state.enemies.filter((e) => e.defId === 'sawtooth_eye').length;
+  assert.equal(countAfterFirst, 1);
+  // Loop until fogmog's intent is spore_summon again (its sequence wraps every 2 turns).
+  let guard = 0;
+  while (state.enemies[0].intent.id !== 'spore_summon' && guard < 6) {
+    state = advanceTurn(state);
+    guard += 1;
+  }
+  state = advanceTurn(state); // executes spore_summon again — 톱니눈 is still alive, should NOT stack
+  const countAfterSecond = state.enemies.filter((e) => e.defId === 'sawtooth_eye').length;
+  assert.equal(countAfterSecond, 1);
+});
+
+test('move.summon adds a fresh enemy instance mid-combat (포그모그 -> 톱니눈)', () => {
+  const state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['fogmog'], playerHp: 70 });
+  assert.equal(state.enemies.length, 1);
+  assert.equal(state.enemies[0].intent.id, 'spore_summon');
+  const after = advanceTurn(state);
+  assert.equal(after.enemies.length, 2);
+  assert.ok(after.enemies.some((e) => e.defId === 'sawtooth_eye' && e.hp === 6));
 });

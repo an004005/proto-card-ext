@@ -1,5 +1,9 @@
 // Modules (기획서 §9). module_charge_slash only enters the deck if 카타나 is also equipped
 // (its card def carries requiresWeapon: 'katana' — see equipmentEngine.js).
+
+/** @typedef {import('./equipment.js').EquipmentDef} EquipmentDef */
+
+/** @type {Object.<string, EquipmentDef>} */
 export const MODULE_DEFINITIONS = {
   module_neural: {
     id: 'module_neural', name: '신경 강화', slot: 'module',
@@ -23,8 +27,11 @@ export const MODULE_DEFINITIONS = {
   },
 };
 
-// Per-stage flat bonuses for the "variable" power modules (기획서 §9). Looked up live at
-// every damage/block calculation while the power is active — never cached.
+/**
+ * Per-stage flat bonuses for the "variable" power modules (기획서 §9). Looked up live at
+ * every damage/block calculation while the power is active — never cached.
+ * @type {Object.<string, number[]>}
+ */
 export const MODULE_POWER_STAGE_TABLES = {
   neuralBoost: [1, 2, 2, 1], // 방어력 +N (block bonus)
   bodyBoost: [1, 2, 2, 1], // 근접 공격력 +N

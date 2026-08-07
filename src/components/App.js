@@ -1,19 +1,19 @@
 import { html } from '../lib.js';
 import { snapshotSignal } from '../state/runState.js';
 import { LoadoutScreen } from './LoadoutScreen.js';
-import { StageScreen } from './StageScreen.js';
+import { MapScreen } from './MapScreen.js';
 import { CombatScreen } from './CombatScreen.js';
-import { PostCombatScreen } from './PostCombatScreen.js';
-import { LootChoiceScreen } from './LootChoiceScreen.js';
+import { UnknownRoomScreen } from './UnknownRoomScreen.js';
+import { RewardScreen } from './RewardScreen.js';
 import { GameOverScreen } from './GameOverScreen.js';
 import { ExtractionCompleteScreen } from './ExtractionCompleteScreen.js';
 
 const SCREENS = {
   loadout: LoadoutScreen,
-  stage: StageScreen,
+  map: MapScreen,
   combat: CombatScreen,
-  loot_choice: LootChoiceScreen,
-  post_combat: PostCombatScreen,
+  unknown_room: UnknownRoomScreen,
+  reward: RewardScreen,
   gameOver: GameOverScreen,
   extractionComplete: ExtractionCompleteScreen,
 };

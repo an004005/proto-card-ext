@@ -1,10 +1,23 @@
 import { DECAYING_STATUSES } from '../data/statusEffects.js';
 import { applyStageScale } from './overloadEngine.js';
 
+/** @typedef {import('./types.js').Statuses} Statuses */
+
+/**
+ * @param {Statuses} statuses
+ * @param {string} key
+ * @returns {number}
+ */
 export function getStacks(statuses, key) {
   return statuses[key] || 0;
 }
 
+/**
+ * @param {Statuses} statuses
+ * @param {string} key
+ * @param {number} amount
+ * @returns {Statuses}
+ */
 export function applyStatus(statuses, key, amount) {
   const next = { ...statuses };
   const value = (next[key] || 0) + amount;
@@ -19,7 +32,11 @@ export function applyStatus(statuses, key, amount) {
   return next;
 }
 
-// weak/vulnerable decay by 1 at the end of the holder's own turn (기획서 §7.1).
+/**
+ * weak/vulnerable/fragile/entangled decay by 1 at the end of the holder's own turn (기획서 §7.1).
+ * @param {Statuses} statuses
+ * @returns {Statuses}
+ */
 export function decayStatusesAtTurnEnd(statuses) {
   const next = { ...statuses };
   for (const key of DECAYING_STATUSES) {
@@ -31,7 +48,12 @@ export function decayStatusesAtTurnEnd(statuses) {
   return next;
 }
 
-// 갑옷: 턴 시작 시 스택만큼 방어도 획득, 매턴 스택 1 감소 (기획서 §7.1).
+/**
+ * 갑옷: 턴 시작 시 스택만큼 방어도 획득, 매턴 스택 1 감소 (기획서 §7.1).
+ * @template {{block: number, statuses: Statuses}} T
+ * @param {T} combatant
+ * @returns {T}
+ */
 export function applyArmorAtTurnStart(combatant) {
   const armorStacks = getStacks(combatant.statuses, 'armor');
   if (armorStacks <= 0) return combatant;
@@ -42,7 +64,12 @@ export function applyArmorAtTurnStart(combatant) {
   return { ...combatant, block: combatant.block + armorStacks, statuses };
 }
 
-// Damage formula: stage-scale base -> + flat module/atk bonuses -> weak (x0.75) -> vulnerable (x1.5).
+/**
+ * Damage formula: stage-scale base -> + flat module/atk bonuses -> weak (x0.75) -> vulnerable (x1.5).
+ * @param {number} baseValue
+ * @param {{stage: number, scalesWithStage: boolean, flatBonus?: number, weak?: boolean, vulnerable?: boolean}} opts
+ * @returns {number}
+ */
 export function computeDamage(baseValue, { stage, scalesWithStage, flatBonus = 0, weak = false, vulnerable = false }) {
   let amount = applyStageScale(baseValue, stage, scalesWithStage) + flatBonus;
   if (weak) amount = Math.floor(amount * 0.75);
@@ -50,13 +77,26 @@ export function computeDamage(baseValue, { stage, scalesWithStage, flatBonus = 0
   return Math.max(0, amount);
 }
 
-// Block formula: stage-scale base -> + flat module bonus. No frail-equivalent in this ruleset.
-export function computeBlock(baseValue, { stage, scalesWithStage, flatBonus = 0 }) {
-  const amount = applyStageScale(baseValue, stage, scalesWithStage) + flatBonus;
+/**
+ * Block formula: stage-scale base -> + flat module bonus -> fragile (x0.75, 손상).
+ * @param {number} baseValue
+ * @param {{stage: number, scalesWithStage: boolean, flatBonus?: number, fragile?: boolean}} opts
+ * @returns {number}
+ */
+export function computeBlock(baseValue, { stage, scalesWithStage, flatBonus = 0, fragile = false }) {
+  let amount = applyStageScale(baseValue, stage, scalesWithStage) + flatBonus;
+  if (fragile) amount = Math.floor(amount * 0.75);
   return Math.max(0, amount);
 }
 
-// Block absorbs 1:1 and excess is lost, unless ignoresBlock (§9 투시 1단계) bypasses it entirely.
+/**
+ * Block absorbs 1:1 and excess is lost, unless ignoresBlock (§9 투시 1단계) bypasses it entirely.
+ * @template {{hp: number, block: number}} T
+ * @param {T} target
+ * @param {number} amount
+ * @param {boolean} [ignoresBlock]
+ * @returns {T}
+ */
 export function applyDamage(target, amount, ignoresBlock = false) {
   if (ignoresBlock) {
     return { ...target, hp: Math.max(0, target.hp - amount) };

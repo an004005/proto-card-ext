@@ -1,5 +1,17 @@
 // Implants (기획서 §10). Passive — no cards. Equipping one permanently occupies `floorOverload`
 // of the run's overload floor (never reducible below it).
+
+/**
+ * @typedef {Object} ImplantDef
+ * @property {string} id
+ * @property {string} name
+ * @property {number} floorOverload
+ * @property {Object} effect
+ * @property {string} effect.kind
+ * @property {string} description
+ */
+
+/** @type {Object.<string, ImplantDef>} */
 export const IMPLANT_DEFINITIONS = {
   implant1: { id: 'implant1', name: '① 체력 보강', floorOverload: 10, effect: { kind: 'maxHpBonus', amount: 7 }, description: '최대 체력 +7' },
   implant2: { id: 'implant2', name: '② 위협 감지', floorOverload: 20, effect: { kind: 'combatStartDebuffAll', vulnerable: 1, weak: 1 }, description: '전투 시작 시 모든 적 취약1·약화1' },

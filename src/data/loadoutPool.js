@@ -1,5 +1,16 @@
 // Warehouse (창고) vs farming-only pool split (기획서 §13.2). Warehouse items are available
 // at run start; farming-only items only ever appear via drops.
+/**
+ * @typedef {Object} EquipmentPool
+ * @property {string[]} weapons
+ * @property {string[]} tops
+ * @property {string[]} bottoms
+ * @property {string[]} modules
+ * @property {string[]} implants
+ * @property {(string|{defId: string, count: number})[]} consumables
+ */
+
+/** @type {EquipmentPool} */
 export const WAREHOUSE_STARTING_POOL = {
   weapons: ['katana', 'dagger'],
   tops: ['light_top'],
@@ -9,6 +20,7 @@ export const WAREHOUSE_STARTING_POOL = {
   consumables: [{ defId: 'bandage', count: 2 }, { defId: 'stabilizer', count: 1 }],
 };
 
+/** @type {EquipmentPool} */
 export const FARMING_ONLY_POOL = {
   weapons: ['rifle', 'pistol'],
   tops: ['heavy_top'],

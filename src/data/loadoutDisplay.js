@@ -7,6 +7,8 @@ import { IMPLANT_DEFINITIONS } from './implants.js';
 import { CARD_DEFINITIONS } from './cards.js';
 import { WAREHOUSE_STARTING_POOL, FARMING_ONLY_POOL } from './loadoutPool.js';
 
+/** @typedef {import('../engine/types.js').Loadout} Loadout */
+
 export const CATEGORIES = [
   { key: 'weapon', label: '무기', defs: WEAPON_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.weapons, ...FARMING_ONLY_POOL.weapons], slotType: 'weapon', max: 2, iconColor: 'var(--color-accent)' },
   { key: 'top', label: '상의', defs: ARMOR_TOP_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.tops, ...FARMING_ONLY_POOL.tops], slotType: 'top', max: 1, iconColor: 'var(--color-neutral-700)' },
@@ -16,6 +18,11 @@ export const CATEGORIES = [
   { key: 'consumable', label: '소모품', defs: null, pool: null, slotType: null, max: null, iconColor: 'var(--color-neutral-700)' },
 ];
 
+/**
+ * @param {Loadout} loadout
+ * @param {Object} cat
+ * @returns {string[]}
+ */
 export function getSelectedIds(loadout, cat) {
   if (cat.key === 'weapon') return loadout.weaponIds;
   if (cat.key === 'top') return loadout.topId ? [loadout.topId] : [];
@@ -25,11 +32,20 @@ export function getSelectedIds(loadout, cat) {
   return [];
 }
 
+/**
+ * @param {?{cardList?: {defId: string, count: number}[]}} def
+ * @returns {number|undefined}
+ */
 export function cardCountOf(def) {
   if (!def || !def.cardList) return undefined;
   return def.cardList.reduce((s, e) => s + e.count, 0);
 }
 
+/**
+ * @param {Object} cat
+ * @param {Loadout} loadout
+ * @returns {Object[]}
+ */
 export function buildSlots(cat, loadout) {
   const ids = getSelectedIds(loadout, cat);
   const slots = [];
@@ -38,6 +54,8 @@ export function buildSlots(cat, loadout) {
     const def = id ? cat.defs[id] : null;
     slots.push({
       key: `${cat.key}${i}`,
+      catKey: cat.key,
+      equipmentId: id || null,
       category: cat.max > 1 ? `${cat.label}${i + 1}` : cat.label,
       filled: !!def,
       name: def?.name,
@@ -50,6 +68,7 @@ export function buildSlots(cat, loadout) {
   return slots;
 }
 
+/** @param {Loadout} loadout @returns {Object[]} */
 export function buildAllEquipSlots(loadout) {
   return [
     ...buildSlots(CATEGORIES[0], loadout),
@@ -60,6 +79,10 @@ export function buildAllEquipSlots(loadout) {
   ];
 }
 
+/**
+ * @param {Loadout} loadout
+ * @returns {{name: string, color: string, cards: {name: string, defId: string}[]}[]}
+ */
 export function buildDeckGroups(loadout) {
   const groups = [];
   const pushGroup = (name, color, cardList) => {

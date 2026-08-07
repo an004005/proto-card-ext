@@ -12,6 +12,7 @@ export const overloadStageSignal = computed(() => {
   const combat = combatStateSignal.value;
   return combat ? getStage(combat.overload) : 0;
 });
+export const ammoMaxSignal = computed(() => snapshotSignal.value.combatContext?.ammoAtStart ?? 0);
 export const pileCountsSignal = computed(() => {
   const combat = combatStateSignal.value;
   if (!combat) return { draw: 0, discard: 0, exhaust: 0 };

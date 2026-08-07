@@ -4,6 +4,12 @@ import { MODULE_DEFINITIONS } from '../data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../data/implants.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 
+/** @typedef {import('./types.js').Loadout} Loadout */
+
+/**
+ * @param {{defId: string, count: number}[]} cardList
+ * @returns {string[]}
+ */
 function expandCardList(cardList) {
   const defIds = [];
   for (const entry of cardList) {
@@ -12,6 +18,10 @@ function expandCardList(cardList) {
   return defIds;
 }
 
+/**
+ * @param {Loadout} loadout
+ * @returns {string[]} flat list of card defIds (with duplicates for multi-count entries)
+ */
 export function buildDeckFromLoadout(loadout) {
   const weaponIds = loadout.weaponIds || [];
   const defIds = [];
@@ -34,26 +44,39 @@ export function buildDeckFromLoadout(loadout) {
   return defIds;
 }
 
+/**
+ * @param {Loadout} loadout
+ * @returns {Object[]} the `effect` object of each equipped implant
+ */
 function implantEffects(loadout) {
   return (loadout.implantIds || []).map((id) => IMPLANT_DEFINITIONS[id]).filter(Boolean).map((d) => d.effect);
 }
 
+/** @param {Loadout} loadout @returns {number} */
 export function computeFloorOverload(loadout) {
   return (loadout.implantIds || []).reduce((sum, id) => sum + (IMPLANT_DEFINITIONS[id]?.floorOverload || 0), 0);
 }
 
+/** @param {Loadout} loadout @returns {number} */
 export function computeMaxHpBonus(loadout) {
   return implantEffects(loadout).filter((e) => e.kind === 'maxHpBonus').reduce((s, e) => s + e.amount, 0);
 }
 
+/** @param {Loadout} loadout @returns {number} */
 export function computeInventoryCapacityBonus(loadout) {
   return implantEffects(loadout).filter((e) => e.kind === 'inventoryBonus').reduce((s, e) => s + e.amount, 0);
 }
 
+/** @param {Loadout} loadout @returns {number} */
 export function computeOverloadGainMultiplier(loadout) {
   return implantEffects(loadout).filter((e) => e.kind === 'overloadGainMultiplier').reduce((m, e) => m * e.multiplier, 1);
 }
 
+/**
+ * @param {Loadout} loadout
+ * @param {string} kind
+ * @returns {?Object}
+ */
 export function getImplantEffect(loadout, kind) {
   return implantEffects(loadout).find((e) => e.kind === kind) || null;
 }

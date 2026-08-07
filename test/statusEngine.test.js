@@ -18,6 +18,11 @@ test('computeBlock adds flat module bonus after stage scaling', () => {
   assert.equal(computeBlock(6, { stage: 1, scalesWithStage: true, flatBonus: 2 }), 10); // 6->8 +2
 });
 
+test('손상(fragile) reduces block gained by 0.75x, same as weak does for damage', () => {
+  assert.equal(computeBlock(8, { stage: 0, scalesWithStage: false, fragile: true }), 6); // floor(8*0.75)
+  assert.equal(computeBlock(8, { stage: 0, scalesWithStage: false, fragile: false }), 8);
+});
+
 test('applyDamage absorbs with block first; ignoresBlock bypasses it entirely (§9 투시 1단계)', () => {
   const target = { hp: 20, block: 5 };
   assert.deepEqual(applyDamage(target, 3, false), { hp: 20, block: 2 });

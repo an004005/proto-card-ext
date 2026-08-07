@@ -11,6 +11,9 @@
 // effect kinds: damage, block, applyStatus, applyStun, draw, discardRandomFromHand,
 // activatePower, activateFixedPower, grantNextRangedBonus.
 
+/** @typedef {import('../engine/types.js').CardDef} CardDef */
+
+/** @type {Object.<string, CardDef>} */
 export const CARD_DEFINITIONS = {
   // ---- 카타나 ----
   katana_slash: {
@@ -236,6 +239,46 @@ export const CARD_DEFINITIONS = {
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
+  },
+  equipment_item: {
+    id: 'equipment_item', name: '미장착 장비', type: 'curse', attackKind: null,
+    unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
+    effects: [{ kind: 'removeInventoryItem' }],
+    description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
+  },
+  ammo_item: {
+    id: 'ammo_item', name: '탄약 더미', type: 'curse', attackKind: null,
+    unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
+    effects: [{ kind: 'removeInventoryItem' }],
+    description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
+  },
+
+  // ---- 몬스터 삽입 저주 (전투 한정) ----
+  sticky_curse: {
+    id: 'sticky_curse', name: '점액투성이', type: 'curse', attackKind: null,
+    unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
+    effects: [],
+    description: '아무 효과 없음. 1코로 사용해 소멸.',
+  },
+  infected_curse: {
+    id: 'infected_curse', name: '감염', type: 'curse', attackKind: null,
+    unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
+    damagePerTurnHeld: 3,
+    effects: [],
+    description: '사용 불가. 턴 종료 시 손패에 있으면 장당 3의 피해(방어도로 막을 수 있음).',
+  },
+  wound_curse: {
+    id: 'wound_curse', name: '부상', type: 'curse', attackKind: null,
+    unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
+    effects: [],
+    description: '사용 불가. 그 외엔 아무 효과 없음.',
+  },
+  dizziness_curse: {
+    id: 'dizziness_curse', name: '어지러움', type: 'curse', attackKind: null,
+    unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
+    volatile: true,
+    effects: [],
+    description: '사용 불가. 턴 종료 시 손패에 있으면 소멸(휘발성).',
   },
 
   // ---- 몬스터 삽입 저주 (전투 한정, 다음 전투에 복귀하지 않음) ----

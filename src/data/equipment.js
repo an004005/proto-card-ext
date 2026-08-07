@@ -1,4 +1,14 @@
 // Weapons and armor (기획서 §5, §8). Equipping one adds its whole cardList to the run deck.
+
+/**
+ * @typedef {Object} EquipmentDef
+ * @property {string} id
+ * @property {string} name
+ * @property {'weapon'|'top'|'bottom'|'module'} slot
+ * @property {{defId: string, count: number}[]} cardList
+ */
+
+/** @type {Object.<string, EquipmentDef>} */
 export const WEAPON_DEFINITIONS = {
   katana: {
     id: 'katana', name: '카타나', slot: 'weapon',
@@ -18,6 +28,7 @@ export const WEAPON_DEFINITIONS = {
   },
 };
 
+/** @type {Object.<string, EquipmentDef>} */
 export const ARMOR_TOP_DEFINITIONS = {
   heavy_top: {
     id: 'heavy_top', name: '중갑상의', slot: 'top',
@@ -29,6 +40,7 @@ export const ARMOR_TOP_DEFINITIONS = {
   },
 };
 
+/** @type {Object.<string, EquipmentDef>} */
 export const ARMOR_BOTTOM_DEFINITIONS = {
   tactical_bottom: {
     id: 'tactical_bottom', name: '전술하의', slot: 'bottom',
