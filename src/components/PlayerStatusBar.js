@@ -16,7 +16,7 @@ function powerBonus(key, stage) {
   return table ? table[stage] : null;
 }
 
-export function PlayerStatusBar({ player, overload, overloadFloor, ammoMax }) {
+export function PlayerStatusBar({ player, overload, overloadFloor, ammoMax, animation = null }) {
   const hpPct = Math.max(0, Math.round((player.hp / player.maxHp) * 100));
   const stage = getStage(overload);
   const statusEntries = Object.entries(player.statuses).filter(([, v]) => v);
@@ -26,7 +26,8 @@ export function PlayerStatusBar({ player, overload, overloadFloor, ammoMax }) {
   const popups = useDamagePopups(player.hp);
 
   return html`
-    <div style=${{ width: '200px', border: '2px solid var(--color-divider)', padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--color-surface)' }}>
+    <div class=${animation?.kind === 'attack' ? 'combatant-attack' : undefined} style=${{ width: '200px', border: '2px solid var(--color-divider)', padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: '10px', background: 'var(--color-surface)', position: 'relative' }}>
+      ${animation ? html`<div class="action-cue">${animation.label}</div>` : null}
       <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '14px' }}>플레이어</div>
       <div style=${{ height: '14px', background: 'var(--color-neutral-300)', border: '1px solid var(--color-divider)', position: 'relative' }}>
         <div style=${{ height: '100%', background: 'var(--color-accent-600)', width: `${hpPct}%` }}></div>

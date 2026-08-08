@@ -686,3 +686,60 @@ export function advanceTurn(state) {
   s = { ...s, turn: s.turn + 1 };
   return startPlayerTurn(s);
 }
+
+/**
+ * Resolve a turn using the exact same rules as advanceTurn, while retaining a snapshot after
+ * each visible combat action.  The UI consumes these snapshots; the normal reducer continues
+ * to use advanceTurn, so headless simulation remains synchronous and deterministic.
+ *
+ * @param {CombatState} state
+ * @returns {{state: CombatState, steps: {state: CombatState, actor: 'player'|'enemy', actorId?: string, label: string, kind: 'attack'|'action'}[]}}
+ */
+export function advanceTurnWithSteps(state) {
+  /** @type {{state: CombatState, actor: 'player'|'enemy', actorId?: string, label: string, kind: 'attack'|'action'}[]} */
+  const steps = [];
+  let s = endPlayerTurn(state);
+  steps.push({ state: s, actor: 'player', label: '턴 종료', kind: 'action' });
+  if (s.phase !== 'enemy_turn') return { state: s, steps };
+
+  const actingOrder = s.enemies.map((e) => e.id);
+  for (const enemyId of actingOrder) {
+    if (s.player.hp <= 0 || isLethalOverload(s.overload)) break;
+    let enemy = s.enemies.find((e) => e.id === enemyId);
+    if (!enemy || enemy.hp <= 0) continue;
+
+    enemy = { ...enemy, block: 0 };
+    if (MONSTER_DEFINITIONS[enemy.defId].standingArmor && (enemy.statuses.armor || 0) < MONSTER_DEFINITIONS[enemy.defId].standingArmor) {
+      enemy = { ...enemy, statuses: { ...enemy.statuses, armor: MONSTER_DEFINITIONS[enemy.defId].standingArmor } };
+    }
+    enemy = applyArmorAtTurnStart(enemy);
+    s = setCombatant(s, 'enemy', enemyId, enemy);
+
+    const actionsThisTurn = enemy.doubleActionActive ? 2 : 1;
+    for (let action = 0; action < actionsThisTurn; action++) {
+      enemy = s.enemies.find((e) => e.id === enemyId);
+      if (!enemy || enemy.hp <= 0) break;
+      if ((enemy.statuses.stun || 0) > 0) {
+        s = setCombatant(s, 'enemy', enemyId, { ...enemy, statuses: applyStatus(enemy.statuses, 'stun', -1) });
+        steps.push({ state: s, actor: 'enemy', actorId: enemyId, label: '기절', kind: 'action' });
+        continue;
+      }
+      const move = currentMove(enemy.defId, enemy.aiState, enemy.phase);
+      s = executeEnemyAction(s, enemyId);
+      s = checkWinLoss(s);
+      steps.push({ state: s, actor: 'enemy', actorId: enemyId, label: move.id, kind: move.damage ? 'attack' : 'action' });
+      if (s.phase !== 'enemy_turn') return { state: s, steps };
+    }
+
+    enemy = s.enemies.find((e) => e.id === enemyId);
+    if (!enemy || enemy.hp <= 0) continue;
+    enemy = { ...enemy, statuses: decayStatusesAtTurnEnd(enemy.statuses) };
+    const advanced = advanceAiState(enemy.defId, enemy.aiState, enemy.phase, s.rngState);
+    s = setCombatant(s, 'enemy', enemyId, { ...enemy, aiState: advanced.aiState, intent: currentMove(enemy.defId, advanced.aiState, enemy.phase) });
+    s = { ...s, rngState: advanced.rngState };
+  }
+  s = { ...s, turn: s.turn + 1 };
+  s = startPlayerTurn(s);
+  steps.push({ state: s, actor: 'player', label: '새 턴', kind: 'action' });
+  return { state: s, steps };
+}

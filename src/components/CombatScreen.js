@@ -1,6 +1,6 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
-import { snapshotSignal } from '../state/runState.js';
+import { snapshotSignal, combatAnimationSignal, combatPlaybackDurationSignal } from '../state/runState.js';
 import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadStageSignal, ammoMaxSignal } from '../state/combatStateAdapter.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
@@ -21,6 +21,8 @@ export function CombatScreen() {
   const [showInventory, setShowInventory] = useState(false);
   const [openPile, setOpenPile] = useState(null); // null | 'draw' | 'discard'
   const combat = combatStateSignal.value;
+  const animation = combatAnimationSignal.value;
+  const playbackDuration = combatPlaybackDurationSignal.value;
   if (!combat) return null;
 
   const hand = handSignal.value;
@@ -58,7 +60,7 @@ export function CombatScreen() {
 
   return html`
     <div
-      style=${{ flex: 1, display: 'flex', flexDirection: 'column', padding: 'var(--space-6) var(--space-8)', gap: 'var(--space-4)' }}
+      style=${{ flex: 1, display: 'flex', flexDirection: 'column', padding: 'var(--space-6) var(--space-8)', gap: 'var(--space-4)', '--combat-step-ms': `${playbackDuration}ms` }}
       onDragOver=${(e) => e.preventDefault()}
       onDrop=${handleDropAnywhere}
     >
@@ -66,6 +68,16 @@ export function CombatScreen() {
         <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
           <h3 style=${{ margin: 0 }}>전투 — ${enemyNames}</h3>
           <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }} onClick=${() => setShowInventory(true)}>인벤토리</button>
+          <label style=${{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px' }}>
+            <span>연출</span>
+            <select value=${String(playbackDuration)} onChange=${(e) => { combatPlaybackDurationSignal.value = Number(e.currentTarget.value); }}>
+              <option value="250">빠르게</option>
+              <option value="400">보통-</option>
+              <option value="600">보통</option>
+              <option value="900">느리게</option>
+              <option value="1200">매우 느리게</option>
+            </select>
+          </label>
         </div>
         <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', width: '280px', fontSize: '11px' }}>
           <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
@@ -77,7 +89,7 @@ export function CombatScreen() {
       </div>
 
       <div style=${{ display: 'flex', gap: 'var(--space-4)', justifyContent: 'center', alignItems: 'stretch' }}>
-        <${PlayerStatusBar} player=${player} overload=${combat.overload} overloadFloor=${combat.overloadFloor} ammoMax=${ammoMax} />
+        <${PlayerStatusBar} player=${player} overload=${combat.overload} overloadFloor=${combat.overloadFloor} ammoMax=${ammoMax} animation=${animation?.actor === 'player' ? animation : null} />
         <div style=${{ width: '2px', background: 'var(--color-divider)', alignSelf: 'stretch' }}></div>
         <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
           ${enemies.map((enemy) => html`
@@ -87,6 +99,7 @@ export function CombatScreen() {
               targetable=${needsEnemyTarget && (targetKind !== 'machine_enemy' || enemy.isMachine)}
               onDrop=${handleDropOnEnemy}
               playerVulnerable=${!!player.statuses.vulnerable}
+              animation=${animation?.actor === 'enemy' && animation.actorId === enemy.id ? animation : null}
             />
           `)}
         </div>

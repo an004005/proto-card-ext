@@ -53,6 +53,9 @@ export function LoadoutScreen() {
       </div>
 
       <div style=${{ display: 'flex', justifyContent: 'center' }}>
+        <button class="btn btn-secondary" style=${{ padding: '12px 24px', fontSize: '14px', marginRight: 'var(--space-3)' }} onClick=${() => dispatch({ type: 'AUTO_EQUIP_LOADOUT' })}>
+          자동 장착
+        </button>
         <button class="btn btn-primary" style=${{ padding: '12px 60px', fontSize: '15px' }} onClick=${() => dispatch({ type: 'CONFIRM_LOADOUT' })}>
           출격
         </button>

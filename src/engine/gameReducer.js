@@ -1,7 +1,7 @@
 // Pure command reducer: (GameSnapshot, command) => GameSnapshot. No Preact/DOM dependency —
 // the whole run (loadout -> map -> extraction/death) can be played headlessly with
 // `node --test`. state/dispatch.js is the only caller that wires this to signals.
-import { createRngState, nextFloat } from './rng.js';
+import { createRngState, nextFloat, pick } from './rng.js';
 import { applyStatus, applyDamage } from './statusEngine.js';
 import { reduceOverload } from './overloadEngine.js';
 import {
@@ -52,6 +52,7 @@ export function gameReducer(snapshot, command) {
     case 'NEW_RUN': return newRun(command.seed);
     case 'SET_LOADOUT_SLOT': return setLoadoutSlot(snapshot, command.slotType, command.id);
     case 'CONFIRM_LOADOUT': return confirmLoadout(snapshot);
+    case 'AUTO_EQUIP_LOADOUT': return autoEquipLoadout(snapshot);
     case 'ENTER_MAP_NODE': return enterMapNode(snapshot, command.nodeId);
     case 'RESOLVE_UNKNOWN_ROOM_CHOICE': return resolveUnknownRoomChoice(snapshot, command.choice);
     case 'PLAY_CARD': return playCardCommand(snapshot, command.instanceId, command.targetId);
@@ -183,6 +184,58 @@ function confirmLoadout(snapshot) {
     ...snapshot, playerState, mapState: createMapState(mapGen.mapData), rngState: mapGen.rngState,
     currentScreen: 'map',
   };
+}
+
+/**
+ * Whether this stored item can fill a currently empty loadout slot.  Existing gear is never
+ * displaced by auto-equip; the command only fills gaps.
+ * @param {Loadout} loadout
+ * @param {import('./types.js').Item} item
+ */
+function canFillEmptyLoadoutSlot(loadout, item) {
+  if (item.kind === 'consumable') return loadout.consumableSlots.includes(null);
+  if (item.kind !== 'equipment') return false;
+  const category = getEquipmentCategory(item.equipmentId);
+  if (category === 'top' || category === 'bottom') return !loadout[`${category}Id`];
+  if (!category) return false;
+  const key = `${category}Ids`;
+  return loadout[key].length < SLOT_LIMITS[key] && !loadout[key].includes(item.equipmentId);
+}
+
+/**
+ * Fill every available empty loadout slot.  Inventory is always preferred; warehouse gear is
+ * first transferred to inventory so it follows the normal inventory-equipping lifecycle.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+function autoEquipLoadout(snapshot) {
+  if (snapshot.currentScreen !== 'loadout') return snapshot;
+  let s = snapshot;
+  while (true) {
+    const ps = s.playerState;
+    let source = 'inventory';
+    let candidates = ps.inventory.items.filter((item) => canFillEmptyLoadoutSlot(ps.loadout, item));
+    if (candidates.length === 0) {
+      source = 'warehouse';
+      candidates = ps.warehouse.items.filter((item) => canFillEmptyLoadoutSlot(ps.loadout, item));
+    }
+    if (candidates.length === 0) return s;
+
+    const selected = pick(s.rngState, candidates);
+    s = { ...s, rngState: selected.state };
+    if (source === 'warehouse') {
+      const current = s.playerState;
+      s = {
+        ...s,
+        playerState: {
+          ...current,
+          inventory: addItem(current.inventory, selected.value),
+          warehouse: removeItem(current.warehouse, selected.value.id),
+        },
+      };
+    }
+    s = equipItemFrom(s, 'inventory', selected.value.id);
+  }
 }
 
 // ---- deck / combat setup ----

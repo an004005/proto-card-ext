@@ -3,7 +3,7 @@ import { IntentIcon } from './IntentIcon.js';
 import { useDamagePopups, DamagePopupLayer } from './DamagePopup.js';
 import { StatusTag } from './StatusTag.js';
 
-export function EnemyRow({ enemy, targetable = false, onDrop, playerVulnerable = false }) {
+export function EnemyRow({ enemy, targetable = false, onDrop, playerVulnerable = false, animation = null }) {
   const [hovering, setHovering] = useState(false);
   const dead = enemy.hp <= 0;
   const hpPct = dead ? 0 : Math.max(0, Math.round((enemy.hp / enemy.maxHp) * 100));
@@ -17,13 +17,15 @@ export function EnemyRow({ enemy, targetable = false, onDrop, playerVulnerable =
         width: '220px',
         border: `2px solid ${hovering ? 'var(--color-accent-600)' : canDrop ? 'var(--color-accent)' : 'var(--color-divider)'}`,
         padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: '8px',
-        background: 'var(--color-surface)', opacity: dead ? 0.4 : 1,
+        background: 'var(--color-surface)', opacity: dead ? 0.4 : 1, position: 'relative',
       }}
+      class=${animation?.kind === 'attack' ? 'combatant-attack' : undefined}
       onDragOver=${canDrop ? (e) => e.preventDefault() : undefined}
       onDragEnter=${canDrop ? (e) => { e.preventDefault(); setHovering(true); } : undefined}
       onDragLeave=${canDrop ? () => setHovering(false) : undefined}
       onDrop=${canDrop ? (e) => { e.preventDefault(); e.stopPropagation(); setHovering(false); onDrop(enemy); } : undefined}
     >
+      ${animation ? html`<div class="action-cue">${animation.label}</div>` : null}
       <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style=${{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <span style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '14px' }}>${enemy.name}</span>
