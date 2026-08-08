@@ -19,11 +19,15 @@ function summarize(command, before) {
       return `PLAY_CARD ${card ? card.defId : command.instanceId}`;
     }
     case 'END_TURN': return 'END_TURN';
-    case 'USE_CONSUMABLE': return `USE_CONSUMABLE ${command.defId}`;
+    case 'USE_CONSUMABLE': return `USE_CONSUMABLE ${command.itemId}`;
     case 'SELECT_REWARD': return `SELECT_REWARD ${command.slotKey}:${command.optionIndex}`;
     case 'CONFIRM_REWARDS': return 'CONFIRM_REWARDS';
     case 'EQUIP_ITEM': return `EQUIP_ITEM ${command.itemId}`;
+    case 'EQUIP_ITEM_FROM_WAREHOUSE': return `EQUIP_ITEM_FROM_WAREHOUSE ${command.itemId}`;
     case 'UNEQUIP_ITEM': return `UNEQUIP_ITEM ${command.equipmentId}`;
+    case 'UNEQUIP_CONSUMABLE': return `UNEQUIP_CONSUMABLE ${command.itemId}`;
+    case 'MOVE_TO_INVENTORY': return `MOVE_TO_INVENTORY ${command.itemId}`;
+    case 'MOVE_TO_WAREHOUSE': return `MOVE_TO_WAREHOUSE ${command.itemId}`;
     case 'DISCARD_ITEM': return `DISCARD_ITEM ${command.itemId}`;
     default: return command.type;
   }

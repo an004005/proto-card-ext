@@ -155,7 +155,7 @@ function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier, double
   const created = createInitialAiState(defId, staggerIndex, rngState);
   const enemy = {
     id: `${defId}-${idSuffix}`, defId, name: def.name,
-    hp, maxHp: hp, block: 0, statuses: {},
+    hp, maxHp: hp, block: 0, statuses: { ...(def.startingStatuses || {}) },
     isMachine: !!def.isMachine, phase: 1, phaseTransitioned: false,
     doubleActionActive: !!(def.doubleActionIfPlayerHasBurden && doubleActionActive),
     aiState: created.aiState, intent: currentMove(defId, created.aiState, 1),

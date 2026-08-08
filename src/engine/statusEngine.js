@@ -1,4 +1,4 @@
-import { DECAYING_STATUSES } from '../data/statusEffects.js';
+import { DECAYING_STATUSES, DEBUFF_STATUSES } from '../data/statusEffects.js';
 import { applyStageScale } from './overloadEngine.js';
 
 /** @typedef {import('./types.js').Statuses} Statuses */
@@ -13,12 +13,18 @@ export function getStacks(statuses, key) {
 }
 
 /**
+ * 인공물(artifact): 디버프(§DEBUFF_STATUSES) 부여를 스택당 1회 대신 무효화한다 — 부여 자체를
+ * 막고 인공물 스택만 1 소모한다. 모든 상태 부여가 이 함수를 거치므로(적용 위치 무관) 여기
+ * 한 곳에서만 처리하면 카드/소모품/몬스터 무브 전부 자동으로 규칙을 따른다.
  * @param {Statuses} statuses
  * @param {string} key
  * @param {number} amount
  * @returns {Statuses}
  */
 export function applyStatus(statuses, key, amount) {
+  if (amount > 0 && DEBUFF_STATUSES.includes(key) && (statuses.artifact || 0) > 0) {
+    return applyStatus(statuses, 'artifact', -1);
+  }
   const next = { ...statuses };
   const value = (next[key] || 0) + amount;
   if (DECAYING_STATUSES.includes(key)) {

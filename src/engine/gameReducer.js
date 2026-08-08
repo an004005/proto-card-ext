@@ -23,7 +23,8 @@ import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } f
 import { MODULE_DEFINITIONS } from '../data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../data/implants.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
-import { WAREHOUSE_STARTING_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
+import { BURDEN_CARD_DEF_BY_KIND } from '../data/cards.js';
+import { WAREHOUSE_STARTING_POOL, FARMING_ONLY_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
 import { POST_COMBAT_CHOICES } from '../data/dropTables.js';
 import { MAP_REST_HP_RESTORE_PERCENT } from '../data/mapLayout.js';
 
@@ -34,9 +35,9 @@ import { MAP_REST_HP_RESTORE_PERCENT } from '../data/mapLayout.js';
 /** @typedef {import('./types.js').Inventory} Inventory */
 
 export const BASE_MAX_HP = 70;
-export const BASE_INVENTORY_CAPACITY = 20;
+export const BASE_INVENTORY_CAPACITY = 10;
 const SLOT_LIMITS = { weaponIds: 2, moduleIds: 2, implantIds: 3 };
-const LOOT_CARD_DEF_BY_KIND = { junk: 'junk_item', currency: 'currency_item', equipment: 'equipment_item', ammo: 'ammo_item' };
+const CONSUMABLE_SLOT_COUNT = 3;
 
 /**
  * `command` is a discriminated union keyed by `.type` (NEW_RUN, SET_LOADOUT_SLOT, ENTER_MAP_NODE,
@@ -55,11 +56,15 @@ export function gameReducer(snapshot, command) {
     case 'RESOLVE_UNKNOWN_ROOM_CHOICE': return resolveUnknownRoomChoice(snapshot, command.choice);
     case 'PLAY_CARD': return playCardCommand(snapshot, command.instanceId, command.targetId);
     case 'END_TURN': return endTurnCommand(snapshot);
-    case 'USE_CONSUMABLE': return useConsumable(snapshot, command.defId);
+    case 'USE_CONSUMABLE': return useConsumable(snapshot, command.itemId);
     case 'SELECT_REWARD': return selectReward(snapshot, command.slotKey, command.optionIndex);
     case 'CONFIRM_REWARDS': return confirmRewards(snapshot);
     case 'EQUIP_ITEM': return equipItem(snapshot, command.itemId);
+    case 'EQUIP_ITEM_FROM_WAREHOUSE': return equipItemFromWarehouse(snapshot, command.itemId);
     case 'UNEQUIP_ITEM': return unequipItem(snapshot, command.equipmentId);
+    case 'UNEQUIP_CONSUMABLE': return unequipConsumable(snapshot, command.itemId);
+    case 'MOVE_TO_INVENTORY': return moveItemBetweenCollections(snapshot, command.itemId, 'warehouse', 'inventory');
+    case 'MOVE_TO_WAREHOUSE': return moveItemBetweenCollections(snapshot, command.itemId, 'inventory', 'warehouse');
     case 'DISCARD_ITEM': return discardItem(snapshot, command.itemId);
     default:
       throw new Error(`Unknown command type "${command.type}"`);
@@ -68,26 +73,59 @@ export function gameReducer(snapshot, command) {
 
 // ---- run / loadout ----
 
+// 창고 화면은 아무것도 장착되지 않은 상태로 시작한다 — 소유한 장비/소모품은 전부 창고에서
+// 시작하고(buildStartingWarehouse), 플레이어가 직접 장비 슬롯으로 옮겨야 덱에 편입된다.
 /** @returns {Loadout} */
 function defaultLoadout() {
   return {
-    weaponIds: [...WAREHOUSE_STARTING_POOL.weapons],
-    topId: WAREHOUSE_STARTING_POOL.tops[0],
-    bottomId: WAREHOUSE_STARTING_POOL.bottoms[0],
-    moduleIds: [...WAREHOUSE_STARTING_POOL.modules],
-    implantIds: [...WAREHOUSE_STARTING_POOL.implants],
-    consumables: WAREHOUSE_STARTING_POOL.consumables.map((c) => ({ ...c })),
+    weaponIds: [],
+    topId: null,
+    bottomId: null,
+    moduleIds: [],
+    implantIds: [],
+    consumableSlots: new Array(CONSUMABLE_SLOT_COUNT).fill(null),
   };
+}
+
+/**
+ * 창고(warehouse)는 용량 제한이 없는 홈베이스 보관함 — 장착하지 않은 장비/소모품/탄약은 여기서
+ * 시작하며, 인벤토리로 옮겨야("창고 ⇄ 인벤토리" 드래그) 비로소 런에 들고 나갈 짐이 된다.
+ * 인벤토리는 빈 채로 시작한다 — 시작 탄환도 플레이어가 직접 인벤토리로 옮겨야 실제 런에
+ * 반영된다(§ confirmLoadout은 더 이상 탄약을 자동으로 넣지 않음).
+ * @param {Loadout} loadout
+ * @returns {Inventory}
+ */
+function buildStartingWarehouse(loadout) {
+  const equippedIds = new Set([loadout.topId, loadout.bottomId, ...loadout.weaponIds, ...loadout.moduleIds, ...loadout.implantIds].filter(Boolean));
+  const allPoolIds = [
+    ...WAREHOUSE_STARTING_POOL.weapons, ...WAREHOUSE_STARTING_POOL.tops, ...WAREHOUSE_STARTING_POOL.bottoms,
+    ...WAREHOUSE_STARTING_POOL.modules, ...WAREHOUSE_STARTING_POOL.implants,
+    ...FARMING_ONLY_POOL.weapons, ...FARMING_ONLY_POOL.tops, ...FARMING_ONLY_POOL.bottoms,
+    ...FARMING_ONLY_POOL.modules, ...FARMING_ONLY_POOL.implants,
+  ];
+  let warehouse = createInventory(Infinity, 'wh-item');
+  for (const equipmentId of allPoolIds) {
+    if (equippedIds.has(equipmentId)) continue;
+    warehouse = addItem(warehouse, createItem('equipment', { equipmentId }));
+  }
+  for (const c of WAREHOUSE_STARTING_POOL.consumables) {
+    const entry = typeof c === 'string' ? { defId: c, count: 1 } : c;
+    for (let i = 0; i < entry.count; i++) warehouse = addItem(warehouse, createItem('consumable', { defId: entry.defId }));
+  }
+  warehouse = addAmmo(warehouse, STARTING_AMMO);
+  return warehouse;
 }
 
 /** @param {number} seed @returns {GameSnapshot} */
 function newRun(seed) {
+  const loadout = defaultLoadout();
   return {
     currentScreen: 'loadout',
     playerState: {
       hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, overload: 0,
-      loadout: defaultLoadout(),
+      loadout,
       inventory: createInventory(BASE_INVENTORY_CAPACITY),
+      warehouse: buildStartingWarehouse(loadout),
     },
     mapState: null,
     activeCombatState: null,
@@ -136,7 +174,9 @@ function confirmLoadout(snapshot) {
   const maxHp = BASE_MAX_HP + computeMaxHpBonus(loadout);
   const floor = computeFloorOverload(loadout);
   const capacity = BASE_INVENTORY_CAPACITY + computeInventoryCapacityBonus(loadout);
-  const inventory = addAmmo(createInventory(capacity), STARTING_AMMO);
+  // 인벤토리로 옮겨둔 아이템(탄약 포함)은 그대로 런으로 이어간다 — 새로 만드는 건 용량 갱신뿐.
+  // 탄약은 더 이상 여기서 자동 지급되지 않는다 — 창고에서 인벤토리로 직접 옮겨온 만큼만 시작 탄약이 된다.
+  const inventory = { ...snapshot.playerState.inventory, capacity };
   const playerState = { ...snapshot.playerState, hp: maxHp, maxHp, overload: floor, inventory };
   const mapGen = generateMap(snapshot.rngState);
   return {
@@ -195,8 +235,8 @@ export function getDeckEntries(playerState) {
   const orderedIds = inv.items.map((i) => i.id);
   // 잡템·환금템·미장착 장비·탄약 모두 과적(짐) 상태로 넘어간 것만 저주 카드로 덱에 들어간다.
   const lootEntries = inv.items
-    .filter((i) => LOOT_CARD_DEF_BY_KIND[i.kind] && isItemBurdenGivenOrder(orderedIds, [], inv.capacity, i.id))
-    .map((i) => ({ defId: LOOT_CARD_DEF_BY_KIND[i.kind], itemId: i.id }));
+    .filter((i) => BURDEN_CARD_DEF_BY_KIND[i.kind] && isItemBurdenGivenOrder(orderedIds, [], inv.capacity, i.id))
+    .map((i) => ({ defId: BURDEN_CARD_DEF_BY_KIND[i.kind], itemId: i.id }));
   return [...equipmentEntries, ...lootEntries];
 }
 
@@ -333,15 +373,15 @@ function endTurnCommand(snapshot) {
 
 /**
  * @param {GameSnapshot} snapshot
- * @param {string} defId
+ * @param {string} itemId
  * @returns {GameSnapshot}
  */
-function useConsumable(snapshot, defId) {
+function useConsumable(snapshot, itemId) {
   if (!snapshot.activeCombatState) return snapshot;
   const ps = snapshot.playerState;
-  const owned = ps.loadout.consumables.find((c) => c.defId === defId);
-  if (!owned || owned.count <= 0) return snapshot;
-  const def = CONSUMABLE_DEFINITIONS[defId];
+  const slotIndex = ps.loadout.consumableSlots.findIndex((it) => it?.id === itemId);
+  if (slotIndex === -1) return snapshot;
+  const def = CONSUMABLE_DEFINITIONS[ps.loadout.consumableSlots[slotIndex].defId];
   let combat = snapshot.activeCombatState;
 
   if (def.effect.kind === 'healPercent') {
@@ -361,12 +401,8 @@ function useConsumable(snapshot, defId) {
   }
   combat = checkWinLoss(combat);
 
-  const loadout = {
-    ...ps.loadout,
-    consumables: ps.loadout.consumables
-      .map((c) => (c.defId === defId ? { ...c, count: c.count - 1 } : c))
-      .filter((c) => c.count > 0),
-  };
+  const consumableSlots = ps.loadout.consumableSlots.map((it, i) => (i === slotIndex ? null : it));
+  const loadout = { ...ps.loadout, consumableSlots };
   return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, playerState: { ...ps, loadout } });
 }
 
@@ -428,27 +464,12 @@ function selectReward(snapshot, slotKey, optionIndex) {
   return { ...snapshot, pendingReward: { ...snapshot.pendingReward, selections } };
 }
 
-/**
- * @param {Loadout} loadout
- * @param {string} defId
- * @param {number} count
- * @returns {Loadout}
- */
-function addConsumableToLoadout(loadout, defId, count) {
-  const existing = loadout.consumables.find((c) => c.defId === defId);
-  if (existing) {
-    return { ...loadout, consumables: loadout.consumables.map((c) => (c.defId === defId ? { ...c, count: c.count + count } : c)) };
-  }
-  return { ...loadout, consumables: [...loadout.consumables, { defId, count }] };
-}
-
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 function confirmRewards(snapshot) {
   if (snapshot.currentScreen !== 'reward' || !snapshot.pendingReward) return snapshot;
   const { slots, selections, nodeId, tier } = snapshot.pendingReward;
   let ps = snapshot.playerState;
   let inventory = ps.inventory;
-  let loadout = ps.loadout;
 
   for (const slot of slots) {
     const idx = selections[slot.key];
@@ -459,10 +480,10 @@ function confirmRewards(snapshot) {
     else if (opt.kind === 'currency') inventory = addItem(inventory, createItem('currency', { value: opt.value }));
     else if (opt.kind === 'junk') inventory = addItem(inventory, createItem('junk', { value: opt.value }));
     else if (opt.kind === 'ammo') inventory = addAmmo(inventory, opt.amount);
-    else if (opt.kind === 'consumable') loadout = addConsumableToLoadout(loadout, opt.defId, 1);
+    else if (opt.kind === 'consumable') inventory = addItem(inventory, createItem('consumable', { defId: opt.defId }));
   }
 
-  ps = { ...ps, inventory, loadout };
+  ps = { ...ps, inventory };
   const s = { ...snapshot, playerState: ps, pendingReward: null };
 
   if (tier === 'boss') return { ...s, currentScreen: 'extractionComplete' };
@@ -471,7 +492,9 @@ function confirmRewards(snapshot) {
   return { ...s, mapState, currentScreen: 'map' };
 }
 
-// ---- 맵 중 장비 교체 / 아이템 정리 (전투 중엔 불가 — currentScreen==='map' 가드) ----
+// ---- 장비 교체 / 아이템 정리 (창고·맵 화면에서만 — 전투 중엔 불가) ----
+
+const EQUIP_ALLOWED_SCREENS = ['loadout', 'map'];
 
 /**
  * @param {GameSnapshot} snapshot
@@ -479,35 +502,61 @@ function confirmRewards(snapshot) {
  * @returns {GameSnapshot}
  */
 function equipItem(snapshot, itemId) {
-  if (snapshot.currentScreen !== 'map') return snapshot;
+  return equipItemFrom(snapshot, 'inventory', itemId);
+}
+
+/**
+ * 창고 아이템을 장비 슬롯으로 바로 드래그하면 인벤토리를 거치지 않고 곧장 장착된다(짐을 지지
+ * 않고 바로 장착하는 지름길). 밀려나는 기존 장비/소모품은 항상 인벤토리로 들어간다 — 이미
+ * 런에 들고 나가는 중이던 것이므로 창고로 되돌리지 않는다.
+ * @param {GameSnapshot} snapshot
+ * @param {string} itemId
+ * @returns {GameSnapshot}
+ */
+function equipItemFromWarehouse(snapshot, itemId) {
+  return equipItemFrom(snapshot, 'warehouse', itemId);
+}
+
+/**
+ * @param {GameSnapshot} snapshot
+ * @param {'inventory'|'warehouse'} fromKey
+ * @param {string} itemId
+ * @returns {GameSnapshot}
+ */
+function equipItemFrom(snapshot, fromKey, itemId) {
+  if (!EQUIP_ALLOWED_SCREENS.includes(snapshot.currentScreen)) return snapshot;
   const ps = snapshot.playerState;
-  const item = ps.inventory.items.find((i) => i.id === itemId);
-  if (!item || item.kind !== 'equipment') return snapshot;
+  const item = ps[fromKey].items.find((i) => i.id === itemId);
+  if (!item) return snapshot;
+  if (item.kind === 'consumable') return equipConsumableFrom(snapshot, fromKey, item);
+  if (item.kind !== 'equipment') return snapshot;
   const equipmentId = item.equipmentId;
   const category = getEquipmentCategory(equipmentId);
   if (!category) return snapshot;
 
   let loadout = ps.loadout;
-  let inventory = removeItem(ps.inventory, itemId);
+  let inventory = fromKey === 'inventory' ? removeItem(ps.inventory, itemId) : ps.inventory;
+  const warehouse = fromKey === 'warehouse' ? removeItem(ps.warehouse, itemId) : ps.warehouse;
+  /** @param {string} bumpedEquipmentId */
+  const bumpToInventory = (bumpedEquipmentId) => { inventory = addItem(inventory, createItem('equipment', { equipmentId: bumpedEquipmentId })); };
 
   if (category === 'top' || category === 'bottom') {
     const key = `${category}Id`;
     const prevId = loadout[key];
-    if (prevId) inventory = addItem(inventory, createItem('equipment', { equipmentId: prevId }));
+    if (prevId) bumpToInventory(prevId);
     loadout = { ...loadout, [key]: equipmentId };
   } else {
     const key = `${category}Ids`;
     let ids = loadout[key];
     if (ids.includes(equipmentId)) return snapshot;
     if (ids.length >= SLOT_LIMITS[key]) {
-      const bumped = ids[0];
-      inventory = addItem(inventory, createItem('equipment', { equipmentId: bumped }));
+      bumpToInventory(ids[0]);
       ids = ids.slice(1);
     }
     loadout = { ...loadout, [key]: [...ids, equipmentId] };
   }
 
-  return { ...snapshot, playerState: { ...ps, loadout, inventory } };
+  return { ...snapshot, playerState: { ...ps, loadout, inventory, warehouse } };
 }
 
 /**
@@ -516,7 +565,7 @@ function equipItem(snapshot, itemId) {
  * @returns {GameSnapshot}
  */
 function unequipItem(snapshot, equipmentId) {
-  if (snapshot.currentScreen !== 'map') return snapshot;
+  if (!EQUIP_ALLOWED_SCREENS.includes(snapshot.currentScreen)) return snapshot;
   const ps = snapshot.playerState;
   const category = getEquipmentCategory(equipmentId);
   if (!category) return snapshot;
@@ -537,13 +586,81 @@ function unequipItem(snapshot, equipmentId) {
 }
 
 /**
+ * 퀵슬롯(고정 3칸)에 소모품 아이템을 장착 — 원본 Item을 통째로 빼내 슬롯에 넣는다(itemId
+ * 보존). 슬롯이 다 찼으면 가장 오래 장착된 것을 인벤토리로 되돌린다(창고에서 바로 장착한
+ * 경우도 밀려나는 소모품은 인벤토리로 — 이미 런에 들고 나가는 중이던 것이므로).
+ * @param {GameSnapshot} snapshot
+ * @param {'inventory'|'warehouse'} fromKey
+ * @param {import('./types.js').Item} item
+ * @returns {GameSnapshot}
+ */
+function equipConsumableFrom(snapshot, fromKey, item) {
+  const ps = snapshot.playerState;
+  let inventory = fromKey === 'inventory' ? removeItem(ps.inventory, item.id) : ps.inventory;
+  const warehouse = fromKey === 'warehouse' ? removeItem(ps.warehouse, item.id) : ps.warehouse;
+  let slots = ps.loadout.consumableSlots;
+  const emptyIndex = slots.indexOf(null);
+  if (emptyIndex !== -1) {
+    slots = slots.map((s, i) => (i === emptyIndex ? item : s));
+  } else {
+    inventory = addItem(inventory, createItem('consumable', { defId: slots[0].defId }));
+    slots = [...slots.slice(1), item];
+  }
+  const loadout = { ...ps.loadout, consumableSlots: slots };
+  return { ...snapshot, playerState: { ...ps, loadout, inventory, warehouse } };
+}
+
+/**
+ * @param {GameSnapshot} snapshot
+ * @param {string} itemId
+ * @returns {GameSnapshot}
+ */
+function unequipConsumable(snapshot, itemId) {
+  if (!EQUIP_ALLOWED_SCREENS.includes(snapshot.currentScreen)) return snapshot;
+  const ps = snapshot.playerState;
+  const slotIndex = ps.loadout.consumableSlots.findIndex((it) => it?.id === itemId);
+  if (slotIndex === -1) return snapshot;
+  const item = ps.loadout.consumableSlots[slotIndex];
+  const consumableSlots = ps.loadout.consumableSlots.map((it, i) => (i === slotIndex ? null : it));
+  const loadout = { ...ps.loadout, consumableSlots };
+  const inventory = addItem(ps.inventory, createItem('consumable', { defId: item.defId }));
+  return { ...snapshot, playerState: { ...ps, loadout, inventory } };
+}
+
+/**
  * @param {GameSnapshot} snapshot
  * @param {string} itemId
  * @returns {GameSnapshot}
  */
 function discardItem(snapshot, itemId) {
-  if (snapshot.currentScreen !== 'map') return snapshot;
+  if (!EQUIP_ALLOWED_SCREENS.includes(snapshot.currentScreen)) return snapshot;
   const ps = snapshot.playerState;
-  const inventory = removeItem(ps.inventory, itemId);
-  return { ...snapshot, playerState: { ...ps, inventory } };
+  if (ps.inventory.items.some((i) => i.id === itemId)) {
+    return { ...snapshot, playerState: { ...ps, inventory: removeItem(ps.inventory, itemId) } };
+  }
+  if (ps.warehouse.items.some((i) => i.id === itemId)) {
+    return { ...snapshot, playerState: { ...ps, warehouse: removeItem(ps.warehouse, itemId) } };
+  }
+  return snapshot;
+}
+
+/**
+ * 창고(무제한) ⇄ 인벤토리(용량 제한) 간 아이템 이동 — 창고 화면에서만 가능(맵/전투 중엔
+ * 홈베이스에 접근할 수 없음). 이동한 아이템은 새 컬렉션의 id를 새로 발급받는다(장비
+ * 장착/해제와 동일한 관례).
+ * @param {GameSnapshot} snapshot
+ * @param {string} itemId
+ * @param {'inventory'|'warehouse'} fromKey
+ * @param {'inventory'|'warehouse'} toKey
+ * @returns {GameSnapshot}
+ */
+function moveItemBetweenCollections(snapshot, itemId, fromKey, toKey) {
+  if (snapshot.currentScreen !== 'loadout') return snapshot;
+  const ps = snapshot.playerState;
+  const item = ps[fromKey].items.find((i) => i.id === itemId);
+  if (!item) return snapshot;
+  const { id, ...rest } = item;
+  const from = removeItem(ps[fromKey], itemId);
+  const to = addItem(ps[toKey], rest);
+  return { ...snapshot, playerState: { ...ps, [fromKey]: from, [toKey]: to } };
 }

@@ -4,10 +4,14 @@
 import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } from './equipment.js';
 import { MODULE_DEFINITIONS } from './modules.js';
 import { IMPLANT_DEFINITIONS } from './implants.js';
-import { CARD_DEFINITIONS } from './cards.js';
+import { CARD_DEFINITIONS, BURDEN_CARD_DEF_BY_KIND } from './cards.js';
+import { CONSUMABLE_DEFINITIONS } from './consumables.js';
 import { WAREHOUSE_STARTING_POOL, FARMING_ONLY_POOL } from './loadoutPool.js';
+import { getBurdenItems } from '../engine/inventoryEngine.js';
+import { MAX_WEAPON_SLOTS, EMPTY_SLOT_FILLER_COUNT } from '../engine/equipmentEngine.js';
 
 /** @typedef {import('../engine/types.js').Loadout} Loadout */
+/** @typedef {import('../engine/types.js').Inventory} Inventory */
 
 export const CATEGORIES = [
   { key: 'weapon', label: '무기', defs: WEAPON_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.weapons, ...FARMING_ONLY_POOL.weapons], slotType: 'weapon', max: 2, iconColor: 'var(--color-accent)' },
@@ -68,6 +72,27 @@ export function buildSlots(cat, loadout) {
   return slots;
 }
 
+/**
+ * 소모품 퀵슬롯(고정 3칸)은 다른 장비 슬롯과 달리 defId가 아니라 인벤토리 itemId로 식별된다
+ * (같은 소모품을 여러 개 동시 장착할 수 있어서 defId만으로는 구분이 안 됨).
+ * @param {Loadout} loadout
+ * @returns {Object[]}
+ */
+export function buildConsumableSlots(loadout) {
+  return loadout.consumableSlots.map((item, i) => {
+    const def = item ? CONSUMABLE_DEFINITIONS[item.defId ?? ''] : null;
+    return {
+      key: `consumable${i}`,
+      catKey: 'consumable',
+      itemId: item?.id || null,
+      category: '소모품',
+      filled: !!item,
+      name: def?.name,
+      description: def?.description,
+    };
+  });
+}
+
 /** @param {Loadout} loadout @returns {Object[]} */
 export function buildAllEquipSlots(loadout) {
   return [
@@ -76,6 +101,7 @@ export function buildAllEquipSlots(loadout) {
     ...buildSlots(CATEGORIES[2], loadout),
     ...buildSlots(CATEGORIES[3], loadout),
     ...buildSlots(CATEGORIES[4], loadout),
+    ...buildConsumableSlots(loadout),
   ];
 }
 
@@ -99,5 +125,36 @@ export function buildDeckGroups(loadout) {
   if (loadout.topId) pushGroup(ARMOR_TOP_DEFINITIONS[loadout.topId].name, 'var(--color-neutral-700)', ARMOR_TOP_DEFINITIONS[loadout.topId].cardList);
   if (loadout.bottomId) pushGroup(ARMOR_BOTTOM_DEFINITIONS[loadout.bottomId].name, 'var(--color-neutral-700)', ARMOR_BOTTOM_DEFINITIONS[loadout.bottomId].cardList);
   loadout.moduleIds.forEach((id) => MODULE_DEFINITIONS[id] && pushGroup(MODULE_DEFINITIONS[id].name, 'var(--color-accent-2-700)', MODULE_DEFINITIONS[id].cardList));
+
+  // 무기/상의/하의 미장착 슬롯 보충 카드(맨손공격/어설픈 회피) — equipmentEngine.buildDeckFromLoadout과 동일 규칙.
+  const emptyWeaponSlots = Math.max(0, MAX_WEAPON_SLOTS - loadout.weaponIds.length);
+  if (emptyWeaponSlots > 0) pushGroup('맨손 (미장착 무기)', 'var(--color-neutral-500)', [{ defId: 'bare_hands_attack', count: emptyWeaponSlots * EMPTY_SLOT_FILLER_COUNT }]);
+  const emptyArmorSlots = (loadout.topId ? 0 : 1) + (loadout.bottomId ? 0 : 1);
+  if (emptyArmorSlots > 0) pushGroup('맨몸 (미장착 상/하의)', 'var(--color-neutral-500)', [{ defId: 'clumsy_dodge', count: emptyArmorSlots * EMPTY_SLOT_FILLER_COUNT }]);
+
   return groups;
+}
+
+/**
+ * 과적(짐) 상태 아이템이 덱에 편입하는 status 카드 — kind별로 묶어서 보여준다. 각 카드에
+ * 연결된 원본 Item을 함께 실어, 툴팁에서 "어떤 아이템 때문에 생긴 카드인지" 보여줄 수 있게 한다.
+ * @param {?Inventory} inventory
+ * @returns {{name: string, color: string, cards: {name: string, defId: string, item: import('../engine/types.js').Item}[]}[]}
+ */
+export function buildBurdenGroups(inventory) {
+  if (!inventory) return [];
+  /** @type {Object.<string, import('../engine/types.js').Item[]>} */
+  const byKind = {};
+  for (const item of getBurdenItems(inventory)) {
+    const defId = BURDEN_CARD_DEF_BY_KIND[item.kind];
+    if (!defId) continue;
+    (byKind[defId] ||= []).push(item);
+  }
+  return Object.entries(byKind).map(([defId, items]) => {
+    const def = CARD_DEFINITIONS[defId];
+    return {
+      name: `[짐] ${def.name}`, color: 'var(--color-neutral-600)',
+      cards: items.map((item) => ({ name: def.name, defId, item })),
+    };
+  });
 }

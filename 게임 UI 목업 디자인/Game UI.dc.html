@@ -333,8 +333,15 @@
               </div>
               <sc-if value="{{ it.menuOpen }}" hint-placeholder-val="{{ false }}">
                 <div onClick="{{ stopPropagation }}" style="position:absolute;top:100%;left:0;right:0;z-index:10;background:var(--color-bg);border:2px solid var(--color-divider);box-shadow:var(--shadow-lg);display:flex;flex-direction:column">
-                  <button class="btn btn-ghost" onClick="{{ it.onEquip }}" style="font-size:11px;padding:8px 10px;text-align:left">장착하기</button>
-                  <button class="btn btn-ghost" onClick="{{ it.onStore }}" style="font-size:11px;padding:8px 10px;text-align:left;border-top:1px solid var(--color-divider)">짐으로 보관 (미장착)</button>
+                  <sc-if value="{{ it.showEquip }}" hint-placeholder-val="{{ true }}">
+                    <button class="btn btn-ghost" onClick="{{ it.onEquip }}" style="font-size:11px;padding:8px 10px;text-align:left">장착하기</button>
+                  </sc-if>
+                  <sc-if value="{{ it.showToInventory }}" hint-placeholder-val="{{ true }}">
+                    <button class="btn btn-ghost" onClick="{{ it.onToInventory }}" style="font-size:11px;padding:8px 10px;text-align:left;border-top:1px solid var(--color-divider)">인벤토리로 이동 (런에 들고 가기)</button>
+                  </sc-if>
+                  <sc-if value="{{ it.showToWarehouse }}" hint-placeholder-val="{{ false }}">
+                    <button class="btn btn-ghost" onClick="{{ it.onToWarehouse }}" style="font-size:11px;padding:8px 10px;text-align:left;border-top:1px solid var(--color-divider)">창고로 보관</button>
+                  </sc-if>
                 </div>
               </sc-if>
             </div>
@@ -397,21 +404,43 @@
         </div>
 
         <div style="width:260px;border:2px solid var(--color-divider);padding:var(--space-3);display:flex;flex-direction:column;gap:var(--space-3);background:var(--color-surface);flex-shrink:0;overflow-y:auto">
-          <div style="font-family:var(--font-heading);font-weight:800;font-size:13px">덱 뭉치 — 인벤토리</div>
-          <sc-for list="{{ storedGroups }}" as="g" hint-placeholder-count="4">
-            <div>
-              <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;margin-bottom:3px">
-                <span style="width:8px;height:8px;background:{{ g.color }}"></span>{{ g.name }} ({{ g.count }}장)
-              </div>
-              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
-                <sc-for list="{{ g.cards }}" as="c" hint-placeholder-count="2">
-                  <div style="aspect-ratio:3/4;border:2px solid {{ g.color }};background:var(--color-bg);display:flex;align-items:center;justify-content:center;padding:4px">
-                    <span style="font-size:9px;font-weight:800;text-align:center;line-height:1.2">{{ c }}</span>
-                  </div>
-                </sc-for>
-              </div>
+          <div style="display:flex;gap:4px">
+            <sc-for list="{{ loadoutRightTabs }}" as="rt" hint-placeholder-count="2">
+              <button class="{{ rt.cls }}" onClick="{{ rt.onSelect }}" style="font-size:11px;padding:4px 10px">{{ rt.label }}</button>
+            </sc-for>
+          </div>
+
+          <sc-if value="{{ isRightInventory }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:10px;opacity:0.7">런에 들고 갈 아이템 — 클릭하면 창고로 되돌린다</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <sc-for list="{{ storedItems }}" as="it" hint-placeholder-count="4">
+                <div onClick="{{ it.onToWarehouse }}" style="border:2px solid var(--color-divider);background:var(--color-bg);padding:8px;display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer">
+                  <span style="width:26px;height:26px;background:{{ it.iconColor }}"></span>
+                  <div style="font-size:10px;font-weight:700;text-align:center">{{ it.name }}</div>
+                  <span class="tag tag-outline" style="font-size:9px">카드 {{ it.cardCount }}장</span>
+                </div>
+              </sc-for>
             </div>
-          </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ isRightDeck }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <sc-for list="{{ storedGroups }}" as="g" hint-placeholder-count="4">
+                <div>
+                  <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;margin-bottom:3px">
+                    <span style="width:8px;height:8px;background:{{ g.color }}"></span>{{ g.name }} ({{ g.count }}장)
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+                    <sc-for list="{{ g.cards }}" as="c" hint-placeholder-count="2">
+                      <div style="aspect-ratio:3/4;border:2px solid {{ g.color }};background:var(--color-bg);display:flex;align-items:center;justify-content:center;padding:4px">
+                        <span style="font-size:9px;font-weight:800;text-align:center;line-height:1.2">{{ c }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
         </div>
       </div>
 
@@ -504,10 +533,17 @@
         </div>
       </div>
 
-      <div style="display:flex;gap:6px">
-        <sc-for list="{{ invFilters }}" as="f" hint-placeholder-count="3">
-          <button class="{{ f.cls }}" onClick="{{ f.onSelect }}" style="font-size:12px;padding:4px 12px">{{ f.label }}</button>
-        </sc-for>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;gap:6px">
+          <sc-for list="{{ invFilters }}" as="f" hint-placeholder-count="3">
+            <button class="{{ f.cls }}" onClick="{{ f.onSelect }}" style="font-size:12px;padding:4px 12px">{{ f.label }}</button>
+          </sc-for>
+        </div>
+        <div style="display:flex;gap:4px">
+          <sc-for list="{{ invViewTabs }}" as="vt" hint-placeholder-count="2">
+            <button class="{{ vt.cls }}" onClick="{{ vt.onSelect }}" style="font-size:12px;padding:4px 12px">{{ vt.label }}</button>
+          </sc-for>
+        </div>
       </div>
 
       <div style="display:flex;gap:var(--space-4);flex:1;align-items:flex-start">
@@ -530,20 +566,36 @@
         </div>
 
         <div style="flex:1;display:flex;flex-direction:column;gap:var(--space-4)">
-          <sc-for list="{{ inventoryGroups }}" as="g" hint-placeholder-count="4">
-            <div>
-              <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;letter-spacing:0.04em;margin-bottom:6px">
-                <span style="width:8px;height:8px;background:{{ g.color }}"></span>{{ g.name }} ({{ g.count }}장)
-              </div>
-              <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">
-                <sc-for list="{{ g.cards }}" as="s" hint-placeholder-count="2">
-                  <div style="aspect-ratio:3/4;border:2px solid {{ g.color }};background:var(--color-surface);display:flex;align-items:center;justify-content:center;padding:4px">
-                    <span style="font-size:9px;font-weight:800;text-align:center;line-height:1.2">{{ s }}</span>
-                  </div>
-                </sc-for>
-              </div>
+          <sc-if value="{{ isInvViewEquip }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px">
+              <sc-for list="{{ allInventoryItems }}" as="it" hint-placeholder-count="8">
+                <div style="border:2px solid var(--color-divider);background:var(--color-surface);padding:8px;display:flex;flex-direction:column;align-items:center;gap:6px">
+                  <span style="width:26px;height:26px;background:{{ it.iconColor }}"></span>
+                  <div style="font-size:10px;font-weight:700;text-align:center">{{ it.name }}</div>
+                  <span class="tag {{ it.statusTagCls }}" style="font-size:9px">{{ it.statusLabel }}</span>
+                </div>
+              </sc-for>
             </div>
-          </sc-for>
+          </sc-if>
+
+          <sc-if value="{{ isInvViewDeck }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:var(--space-4)">
+              <sc-for list="{{ inventoryGroups }}" as="g" hint-placeholder-count="4">
+                <div>
+                  <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:800;letter-spacing:0.04em;margin-bottom:6px">
+                    <span style="width:8px;height:8px;background:{{ g.color }}"></span>{{ g.name }} ({{ g.count }}장)
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">
+                    <sc-for list="{{ g.cards }}" as="s" hint-placeholder-count="2">
+                      <div style="aspect-ratio:3/4;border:2px solid {{ g.color }};background:var(--color-surface);display:flex;align-items:center;justify-content:center;padding:4px">
+                        <span style="font-size:9px;font-weight:800;text-align:center;line-height:1.2">{{ s }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
 
           <div>
             <div style="font-size:11px;font-weight:800;letter-spacing:0.04em;margin-bottom:6px">잡템</div>
@@ -737,8 +789,8 @@ class Component extends DCLogic {
     screen: 'combat', warehouseTab: '무기', invFilter: '전투카드', loadoutTab: 'equip',
     roomStage: 'choice', roomOutcome: 'combat', resultVariant: 'extract', cardDetailOpen: false,
     exhaustOpen: false, roomInventoryOpen: false, rewardSelections: {}, activeRewardCat: null,
-    itemMenuKey: null,
-    itemStatus: { 'AK 카빈': 'equip', '전술 베스트': 'equip', '초과부하 코일': 'equip', '신경가속기': 'equip', '진통제': 'equip', '단검': 'stored', '석궁': 'stored', '경량 바지': 'stored', '안정제': 'stored' },
+    itemMenuKey: null, loadoutRightTab: 'inventory', invViewTab: 'equip',
+    itemStatus: { 'AK 카빈': 'equip', '전술 베스트': 'equip', '초과부하 코일': 'equip', '신경가속기': 'equip', '진통제': 'equip', '단검': 'warehouse', '석궁': 'warehouse', '경량 바지': 'inventory', '안정제': 'inventory' },
   };
 
   drawPileRaw = ['Strike', 'Strike', 'Defend', 'Iron Wave'];
@@ -946,6 +998,8 @@ class Component extends DCLogic {
   closeCardDetail = () => this.setState({ cardDetailOpen: false });
   setWarehouseTab(t) { return () => this.setState({ warehouseTab: t }); }
   setLoadoutTab(t) { return () => this.setState({ loadoutTab: t }); }
+  setLoadoutRightTab(t) { return () => this.setState({ loadoutRightTab: t }); }
+  setInvViewTab(t) { return () => this.setState({ invViewTab: t }); }
   setInvFilter(f) { return () => this.setState({ invFilter: f }); }
   enterRoom = () => this.setState({ roomStage: 'result' });
   resetRoom = () => this.setState({ roomStage: 'choice' });
@@ -1051,25 +1105,37 @@ class Component extends DCLogic {
 
     const overload = this.overloadInfo(this.overloadValue);
 
-    const isLoadoutEquip = this.state.loadoutTab === 'equip';
-    const isLoadoutInventory = !isLoadoutEquip;
-    const loadoutMainTabs = [['equip', '장비'], ['inventory', '인벤토리']].map(([id, label]) => ({
-      label, cls: 'btn ' + (this.state.loadoutTab === id ? 'btn-primary' : 'btn-secondary'), onSelect: this.setLoadoutTab(id),
+    const isRightInventory = this.state.loadoutRightTab === 'inventory';
+    const isRightDeck = !isRightInventory;
+    const loadoutRightTabs = [['inventory', '인벤토리'], ['deck', '덱']].map(([id, label]) => ({
+      label, cls: 'btn ' + (this.state.loadoutRightTab === id ? 'btn-primary' : 'btn-secondary'), onSelect: this.setLoadoutRightTab(id),
     }));
+
+    const allItemsByName = {};
+    Object.values(this.warehouseItemsByTab).forEach(list => list.forEach(it => { allItemsByName[it.name] = it; }));
 
     const warehouseTabs = this.warehouseTabList.map(t => ({
       label: t, cls: 'btn ' + (this.state.warehouseTab === t ? 'btn-primary' : 'btn-secondary'), onSelect: this.setWarehouseTab(t),
     }));
+    const statusLabelOf = (status) => (status === 'equip' ? '장착됨' : status === 'inventory' ? '인벤토리' : '창고 보관');
+    const statusTagClsOf = (status) => (status === 'equip' ? 'tag-accent' : status === 'inventory' ? 'tag-accent-2' : 'tag-neutral');
+
+    // "창고" 그리드: 카테고리 내 모든 소유 아이템을 상태(장착/인벤토리/창고)와 무관하게 훑어보는
+    // 뷰 — 장착·인벤토리 이동을 여기 메뉴에서 오갈 수 있다. 우측 "인벤토리" 탭은 이 중 실제로
+    // 인벤토리로 옮긴(런에 들고 갈) 것만 별도로 보여준다(아래 storedItems/storedGroups).
     const warehouseItems = (this.warehouseItemsByTab[this.state.warehouseTab] || []).map(it => {
-      const status = this.state.itemStatus[it.name] || 'stored';
+      const status = this.state.itemStatus[it.name] || 'warehouse';
       return {
         ...it, opacity: 1, status, isEquip: status === 'equip',
-        statusLabel: status === 'equip' ? '장착됨' : '짐 보관',
-        statusTagCls: status === 'equip' ? 'tag-accent' : 'tag-neutral',
+        statusLabel: statusLabelOf(status), statusTagCls: statusTagClsOf(status),
         menuOpen: this.state.itemMenuKey === it.name,
         onToggleMenu: this.toggleItemMenu(it.name),
+        showEquip: status !== 'equip',
+        showToInventory: status === 'warehouse',
+        showToWarehouse: status !== 'warehouse',
         onEquip: this.setItemStatus(it.name, 'equip'),
-        onStore: this.setItemStatus(it.name, 'stored'),
+        onToInventory: this.setItemStatus(it.name, 'inventory'),
+        onToWarehouse: this.setItemStatus(it.name, 'warehouse'),
       };
     });
 
@@ -1082,7 +1148,14 @@ class Component extends DCLogic {
     const equippedNames = Object.keys(this.state.itemStatus).filter(n => this.state.itemStatus[n] === 'equip');
     const deckGroups = this.deckGroupsRaw.filter(g => equippedNames.includes(g.name)).map(g => ({ ...g, count: g.cards.length }));
     const deckTotal = deckGroups.reduce((s, g) => s + g.count, 0) + 2;
-    const storedGroups = this.deckGroupsRaw.filter(g => !equippedNames.includes(g.name) && (this.state.itemStatus[g.name] === 'stored')).map(g => ({ ...g, count: g.cards.length }));
+    // 우측 "인벤토리" 탭: 창고에서 실제로 인벤토리로 옮긴(런에 들고 갈) 아이템만 — 창고에
+    // 그대로 남아있는 것(status: 'warehouse')은 여기 나타나지 않는다.
+    const storedGroups = this.deckGroupsRaw.filter(g => this.state.itemStatus[g.name] === 'inventory').map(g => ({ ...g, count: g.cards.length }));
+    const storedItems = storedGroups.map(g => ({
+      name: g.name, cardCount: g.count,
+      iconColor: (allItemsByName[g.name] && allItemsByName[g.name].iconColor) || 'var(--color-neutral-500)',
+      onToWarehouse: this.setItemStatus(g.name, 'warehouse'),
+    }));
 
     const dropItems = this.dropItemsRaw.map(d => ({
       ...d, borderColor: d.kind === 'equip' ? 'var(--color-accent)' : d.kind === 'bullet' ? 'var(--color-accent-2-700)' : 'var(--color-divider)',
@@ -1104,6 +1177,15 @@ class Component extends DCLogic {
       label: f, cls: 'btn ' + (this.state.invFilter === f ? 'btn-primary' : 'btn-secondary'), onSelect: this.setInvFilter(f),
     }));
     const inventoryGroups = this.deckGroupsRaw.map(g => ({ ...g, count: g.cards.length }));
+    const isInvViewEquip = this.state.invViewTab === 'equip';
+    const isInvViewDeck = !isInvViewEquip;
+    const invViewTabs = [['equip', '장비'], ['deck', '덱']].map(([id, label]) => ({
+      label, cls: 'btn ' + (this.state.invViewTab === id ? 'btn-primary' : 'btn-secondary'), onSelect: this.setInvViewTab(id),
+    }));
+    const allInventoryItems = Object.values(allItemsByName).map(it => {
+      const status = this.state.itemStatus[it.name] || 'warehouse';
+      return { ...it, statusLabel: statusLabelOf(status), statusTagCls: statusTagClsOf(status) };
+    });
     const junkSlots = this.junkSlotsRaw;
     const overflowSlots = this.overflowRaw;
     const hasOverflow = overflowSlots.length > 0;
@@ -1143,12 +1225,13 @@ class Component extends DCLogic {
       rewardCategories, rewardClaimedCount, activeRewardCategory, showRewardDetail, showRewardList, backToRewardCategories: this.backToRewardCategories,
       confirmRewards: this.confirmRewards, nextRoomOptions,
       overload, bulletCount: this.bulletCountVal,
-      isLoadoutEquip, isLoadoutInventory, loadoutMainTabs,
+      isRightInventory, isRightDeck, loadoutRightTabs, storedItems,
       warehouseTabs, warehouseItems, equipSlots, deckGroups, deckTotal, storedGroups,
       closeItemMenu: this.closeItemMenu,
       dropItems, endChoices,
       isRoomChoice, roomOutcomeInfo, roomOutcomeOptions, enterRoom: this.enterRoom, resetRoom: this.resetRoom,
       invFilters, inventoryGroups, junkSlots, overflowSlots, hasOverflow, inventoryUsed, inventoryPct, inventoryBarColor, inventoryTextColor, inventoryBg,
+      isInvViewEquip, isInvViewDeck, invViewTabs, allInventoryItems,
       resultVariants, resultInfo,
       cardDetailOpen: this.state.cardDetailOpen, openCardDetail: this.openCardDetail, closeCardDetail: this.closeCardDetail,
       stopPropagation: this.stopPropagation, cardStages,

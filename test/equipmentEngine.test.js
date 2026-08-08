@@ -22,6 +22,24 @@ test('buildDeckFromLoadout expands each equipped item\'s full card list with cou
   assert.equal(counts.tactical_bottom_feint, 1);
 });
 
+test('무기/상의/하의 미장착 슬롯 1칸당 맨손공격/어설픈 회피 3장씩 덱에 보충된다', () => {
+  const fullyGeared = buildDeckFromLoadout(loadout({ weaponIds: ['katana', 'dagger'] }));
+  assert.equal(fullyGeared.filter((id) => id === 'bare_hands_attack').length, 0);
+  assert.equal(fullyGeared.filter((id) => id === 'clumsy_dodge').length, 0);
+
+  const oneWeapon = buildDeckFromLoadout(loadout({ weaponIds: ['katana'] })); // 1/2 무기 슬롯 빈칸
+  assert.equal(oneWeapon.filter((id) => id === 'bare_hands_attack').length, 3);
+
+  const noWeapon = buildDeckFromLoadout(loadout({ weaponIds: [] })); // 2/2 무기 슬롯 빈칸
+  assert.equal(noWeapon.filter((id) => id === 'bare_hands_attack').length, 6);
+
+  const noArmor = buildDeckFromLoadout(loadout({ topId: null, bottomId: null })); // 상/하의 둘 다 빈칸
+  assert.equal(noArmor.filter((id) => id === 'clumsy_dodge').length, 6);
+
+  const noTopOnly = buildDeckFromLoadout(loadout({ topId: null }));
+  assert.equal(noTopOnly.filter((id) => id === 'clumsy_dodge').length, 3);
+});
+
 test('돌진 베기 only enters the deck when 카타나 is equipped alongside 신체 강화', () => {
   const withKatana = buildDeckFromLoadout(loadout({ weaponIds: ['katana'], moduleIds: ['module_body'] }));
   assert.ok(withKatana.includes('module_charge_slash'));

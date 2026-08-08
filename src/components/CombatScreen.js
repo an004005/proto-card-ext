@@ -14,10 +14,12 @@ import { TargetingOverlay } from './TargetingOverlay.js';
 import { HistoryControls } from './HistoryControls.js';
 import { PlayLog } from './PlayLog.js';
 import { InventoryPopup } from './InventoryPopup.js';
+import { PileListPopup } from './PileListPopup.js';
 
 export function CombatScreen() {
   const [draggingCard, setDraggingCard] = useState(null);
   const [showInventory, setShowInventory] = useState(false);
+  const [openPile, setOpenPile] = useState(null); // null | 'draw' | 'discard'
   const combat = combatStateSignal.value;
   if (!combat) return null;
 
@@ -27,7 +29,7 @@ export function CombatScreen() {
   const pileCounts = pileCountsSignal.value;
   const ammoMax = ammoMaxSignal.value;
   const stage = overloadStageSignal.value;
-  const consumables = snapshotSignal.value.playerState.loadout.consumables;
+  const consumableSlots = snapshotSignal.value.playerState.loadout.consumableSlots;
 
   const playableMap = {};
   for (const card of hand) playableMap[card.instanceId] = isCardPlayable(combat, card.instanceId);
@@ -84,19 +86,20 @@ export function CombatScreen() {
               enemy=${enemy}
               targetable=${needsEnemyTarget && (targetKind !== 'machine_enemy' || enemy.isMachine)}
               onDrop=${handleDropOnEnemy}
+              playerVulnerable=${!!player.statuses.vulnerable}
             />
           `)}
         </div>
       </div>
 
       <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        ${consumables.map((c) => {
-          const def = CONSUMABLE_DEFINITIONS[c.defId];
+        ${consumableSlots.filter(Boolean).map((item) => {
+          const def = CONSUMABLE_DEFINITIONS[item.defId];
           return html`
             <button
-              key=${c.defId} class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }}
-              onClick=${() => dispatch({ type: 'USE_CONSUMABLE', defId: c.defId })}
-            >${def.name} ×${c.count}</button>
+              key=${item.id} class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }}
+              onClick=${() => dispatch({ type: 'USE_CONSUMABLE', itemId: item.id })}
+            >${def.name}</button>
           `;
         })}
       </div>
@@ -106,20 +109,23 @@ export function CombatScreen() {
       <div style=${{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 'var(--space-3)', flex: 1 }}>
         <${TargetingOverlay} active=${needsEnemyTarget} />
         <div style=${{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', justifyContent: 'center' }}>
-          <${DrawPileBox} count=${pileCounts.draw} />
+          <${DrawPileBox} count=${pileCounts.draw} onClick=${() => setOpenPile('draw')} />
           <${Hand}
             cards=${hand} playableMap=${playableMap}
             draggingInstanceId=${draggingCard?.instanceId ?? null}
             onCardDragStart=${(card) => setDraggingCard(card)}
             onCardDragEnd=${() => setDraggingCard(null)}
             stage=${stage} overload=${combat.overload} powers=${player.powers}
+            inventory=${snapshotSignal.value.playerState.inventory}
           />
-          <${DiscardPileBox} count=${pileCounts.discard} exhaustCount=${pileCounts.exhaust} />
+          <${DiscardPileBox} count=${pileCounts.discard} exhaustCount=${pileCounts.exhaust} onClick=${() => setOpenPile('discard')} />
         </div>
         <${EndTurnButton} disabled=${combat.phase !== 'player_turn'} />
       </div>
 
       ${showInventory ? html`<${InventoryPopup} onClose=${() => setShowInventory(false)} />` : null}
+      ${openPile === 'draw' ? html`<${PileListPopup} title="뽑을 카드" cards=${combat.piles.drawPile} onClose=${() => setOpenPile(null)} />` : null}
+      ${openPile === 'discard' ? html`<${PileListPopup} title="버린 카드" cards=${combat.piles.discardPile} onClose=${() => setOpenPile(null)} />` : null}
     </div>
   `;
 }

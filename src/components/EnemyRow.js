@@ -3,7 +3,7 @@ import { IntentIcon } from './IntentIcon.js';
 import { useDamagePopups, DamagePopupLayer } from './DamagePopup.js';
 import { StatusTag } from './StatusTag.js';
 
-export function EnemyRow({ enemy, targetable = false, onDrop }) {
+export function EnemyRow({ enemy, targetable = false, onDrop, playerVulnerable = false }) {
   const [hovering, setHovering] = useState(false);
   const dead = enemy.hp <= 0;
   const hpPct = dead ? 0 : Math.max(0, Math.round((enemy.hp / enemy.maxHp) * 100));
@@ -29,7 +29,7 @@ export function EnemyRow({ enemy, targetable = false, onDrop }) {
           <span style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '14px' }}>${enemy.name}</span>
           ${enemy.isMachine ? html`<span class="tag tag-outline" style=${{ fontSize: '9px', padding: '1px 5px' }}>기계</span>` : null}
         </span>
-        ${!dead && enemy.intent ? html`<${IntentIcon} intent=${enemy.intent} />` : null}
+        ${!dead && enemy.intent ? html`<${IntentIcon} intent=${enemy.intent} enemyStatuses=${enemy.statuses} playerVulnerable=${playerVulnerable} />` : null}
       </div>
       <div style=${{ height: '14px', background: 'var(--color-neutral-300)', border: '1px solid var(--color-divider)', position: 'relative' }}>
         <div style=${{ height: '100%', background: 'var(--color-accent-600)', width: `${hpPct}%` }}></div>

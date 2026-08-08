@@ -58,3 +58,37 @@ test('applyStatus can reduce a permanent stack (e.g. atkBonus) back to zero with
   statuses = applyStatus(statuses, 'atkBonus', -2);
   assert.equal(statuses.atkBonus, undefined);
 });
+
+test('인공물(artifact) consumes a stack to negate a debuff instead of applying it', () => {
+  let statuses = { artifact: 1 };
+  statuses = applyStatus(statuses, 'weak', 2);
+  assert.equal(statuses.weak, undefined); // blocked entirely, not even partially applied
+  assert.equal(statuses.artifact, undefined); // consumed down to 0 -> deleted
+
+  // once artifact is gone, debuffs apply normally
+  statuses = applyStatus(statuses, 'vulnerable', 1);
+  assert.equal(statuses.vulnerable, 1);
+});
+
+test('인공물(artifact) only blocks debuffs, not buffs like atkBonus/armor', () => {
+  let statuses = { artifact: 1 };
+  statuses = applyStatus(statuses, 'atkBonus', 3);
+  assert.equal(statuses.atkBonus, 3);
+  assert.equal(statuses.artifact, 1); // untouched — atkBonus isn't a debuff
+
+  statuses = applyStatus(statuses, 'armor', 2);
+  assert.equal(statuses.armor, 2);
+  assert.equal(statuses.artifact, 1);
+});
+
+test('인공물(artifact) blocks one debuff per stack, then lets the rest through', () => {
+  let statuses = { artifact: 2 };
+  statuses = applyStatus(statuses, 'weak', 1);
+  assert.equal(statuses.weak, undefined);
+  assert.equal(statuses.artifact, 1);
+  statuses = applyStatus(statuses, 'fragile', 1);
+  assert.equal(statuses.fragile, undefined);
+  assert.equal(statuses.artifact, undefined);
+  statuses = applyStatus(statuses, 'entangled', 1);
+  assert.equal(statuses.entangled, 1); // no artifact left, applies normally
+});

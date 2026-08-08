@@ -6,6 +6,9 @@ import { CARD_DEFINITIONS } from '../data/cards.js';
 
 /** @typedef {import('./types.js').Loadout} Loadout */
 
+export const MAX_WEAPON_SLOTS = 2;
+export const EMPTY_SLOT_FILLER_COUNT = 3;
+
 /**
  * @param {{defId: string, count: number}[]} cardList
  * @returns {string[]}
@@ -41,6 +44,13 @@ export function buildDeckFromLoadout(loadout) {
       for (let i = 0; i < entry.count; i++) defIds.push(entry.defId);
     }
   }
+
+  // 무기 미장착 슬롯 1칸당 맨손공격 3장, 상의/하의 미장착 슬롯 1칸당 어설픈 회피 3장을 보충한다.
+  const emptyWeaponSlots = Math.max(0, MAX_WEAPON_SLOTS - weaponIds.length);
+  for (let i = 0; i < emptyWeaponSlots * EMPTY_SLOT_FILLER_COUNT; i++) defIds.push('bare_hands_attack');
+  const emptyArmorSlots = (loadout.topId ? 0 : 1) + (loadout.bottomId ? 0 : 1);
+  for (let i = 0; i < emptyArmorSlots * EMPTY_SLOT_FILLER_COUNT; i++) defIds.push('clumsy_dodge');
+
   return defIds;
 }
 

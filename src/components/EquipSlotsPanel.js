@@ -14,7 +14,7 @@ export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped 
           const cell = html`
             <div
               draggable=${manage && sl.filled}
-              onDragStart=${manage && sl.filled ? () => onDragEquipped(sl.equipmentId) : undefined}
+              onDragStart=${manage && sl.filled ? () => onDragEquipped(sl) : undefined}
               onDragOver=${manage ? (e) => e.preventDefault() : undefined}
               onDrop=${manage ? (e) => { e.preventDefault(); onDropOnSlot(); } : undefined}
               style=${{

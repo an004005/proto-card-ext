@@ -8,13 +8,15 @@
 
 /**
  * @param {number} capacity
+ * @param {string} [idPrefix] distinguishes ids across a player's multiple item collections
+ *   (inventory vs warehouse) so an itemId is unique regardless of which one it's looked up in.
  * @returns {Inventory}
  */
-export function createInventory(capacity) {
+export function createInventory(capacity, idPrefix = 'item') {
   // nextItemId lives on the inventory itself (not module-level mutable state) so item ids stay
   // a pure function of prior state — required for the same seed to always reproduce the same
   // run, including item ids, under headless replay.
-  return { capacity, items: [], nextItemId: 1 };
+  return { capacity, items: [], nextItemId: 1, idPrefix };
 }
 
 /**
@@ -33,7 +35,7 @@ export function createItem(kind, extra = {}) {
  * @returns {Inventory}
  */
 export function addItem(inventory, item) {
-  const id = `item-${inventory.nextItemId}`;
+  const id = `${inventory.idPrefix || 'item'}-${inventory.nextItemId}`;
   return { ...inventory, nextItemId: inventory.nextItemId + 1, items: [...inventory.items, { id, ...item }] };
 }
 

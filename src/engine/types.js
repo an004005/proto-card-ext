@@ -9,10 +9,11 @@
 /**
  * @typedef {Object} Item
  * @property {string} id
- * @property {'junk'|'currency'|'equipment'|'ammo'} kind
+ * @property {'junk'|'currency'|'equipment'|'ammo'|'consumable'} kind
  * @property {number} [value] junk/currency only
  * @property {string} [equipmentId] equipment only
  * @property {number} [amount] ammo only (1-10 per stack)
+ * @property {string} [defId] consumable only — 1 slot = 1 unit, no stacking
  */
 
 /**
@@ -20,6 +21,7 @@
  * @property {number} capacity
  * @property {Item[]} items acquisition order — items past `capacity` are "burden"
  * @property {number} nextItemId
+ * @property {string} idPrefix keeps ids unique across a player's separate collections (inventory vs warehouse)
  */
 
 // ---- loadout / player (out-of-combat) ----
@@ -31,7 +33,9 @@
  * @property {?string} bottomId
  * @property {string[]} moduleIds
  * @property {string[]} implantIds
- * @property {{defId: string, count: number}[]} consumables
+ * @property {(?Item)[]} consumableSlots 3 fixed 퀵슬롯 — equipped consumable Items pulled out of
+ *   inventory whole (kind: 'consumable'), so their original itemId/defId survive the round trip
+ *   back to inventory on unequip. null = empty slot.
  */
 
 /**
@@ -40,7 +44,8 @@
  * @property {number} maxHp
  * @property {number} overload
  * @property {Loadout} loadout
- * @property {Inventory} inventory
+ * @property {Inventory} inventory 용량 제한 있음 — 런에 들고 나가는 짐, 과적(짐) 규칙 적용 대상
+ * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
  */
 
 // ---- map ----
@@ -92,7 +97,7 @@
  * @typedef {Object} CardDef
  * @property {string} id
  * @property {string} name
- * @property {'attack'|'skill'|'power'|'curse'} type
+ * @property {'attack'|'skill'|'power'|'curse'|'status'} type 'status' = 과적(짐) 카드 전용(§6), 몬스터 저주(curse)와 구분
  * @property {?('melee'|'ranged')} attackKind
  * @property {number} [cost] absent when `stageTable` is used instead
  * @property {number} [ammoCost]
@@ -226,6 +231,7 @@
  * @property {(Move|{random: RandomMoveBranch})[]} sequence
  * @property {boolean} [loop] default true; false parks on the final move once reached
  * @property {number} [standingArmor]
+ * @property {Statuses} [startingStatuses] e.g. { artifact: 1 } — merged into the enemy's statuses on spawn
  * @property {boolean} [doubleActionIfPlayerHasBurden]
  * @property {number} [phaseTransitionHpFraction] 0-1, of maxHp
  * @property {string} [phaseTransitionInsertCurse]

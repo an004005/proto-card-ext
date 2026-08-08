@@ -4,6 +4,7 @@ import { getEffectiveCost, resolveCard } from '../engine/combatEngine.js';
 import { getStage, applyStageScale } from '../engine/overloadEngine.js';
 import { STATUS_LABELS, POWER_LABELS } from '../data/statusEffects.js';
 import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
+import { describeItem } from '../data/itemDisplay.js';
 import { Tooltip } from './Tooltip.js';
 import { OverloadGauge } from './OverloadGauge.js';
 
@@ -12,6 +13,7 @@ export const TYPE_INFO = {
   skill: { color: 'var(--color-neutral-700)', label: 'SKILL · 스킬', cls: 'tag-neutral' },
   power: { color: 'var(--color-accent-2-700)', label: 'POWER · 파워', cls: 'tag-accent-2' },
   curse: { color: 'var(--color-neutral-500)', label: 'CURSE · 저주', cls: 'tag-neutral' },
+  status: { color: 'var(--color-neutral-600)', label: 'STATUS · 상태이상', cls: 'tag-neutral' },
 };
 
 const STAGE_LABELS = ['0단계 (노멀)', '1단계 (최적)', '2단계 (과열)', '3단계 (멜트다운)'];
@@ -73,9 +75,10 @@ function buildStageRows(def) {
   });
 }
 
-export function CardDetailTooltip({ def, cost, type, overload }) {
+export function CardDetailTooltip({ def, cost, type, overload, item }) {
   const stage = getStage(overload ?? 0);
   const rows = buildStageRows(def);
+  const itemInfo = item ? describeItem(item) : null;
   return html`
     <div style=${{ width: '260px' }}>
       <div style=${{ display: 'flex', gap: '10px', paddingBottom: '10px', borderBottom: '1px solid var(--color-neutral-700)', marginBottom: '10px' }}>
@@ -91,6 +94,12 @@ export function CardDetailTooltip({ def, cost, type, overload }) {
           ${def.overloadGain ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.75 }}>과부화 부여 +${def.overloadGain}</div>` : null}
         </div>
       </div>
+
+      ${itemInfo ? html`
+        <div style=${{ fontSize: '10px', padding: '6px 8px', marginBottom: '10px', border: `1px solid ${itemInfo.color}`, background: 'var(--color-surface)' }}>
+          연결된 아이템: <strong>${itemInfo.name}</strong>${itemInfo.sub ? ` — ${itemInfo.sub}` : ''}
+        </div>
+      ` : null}
 
       <div>
         ${rows.map((row) => html`
@@ -123,7 +132,7 @@ export function CardDetailTooltip({ def, cost, type, overload }) {
 
 export function Card({
   card, playable = true, armed = false, width = 140, onClick,
-  draggable = false, onDragStart, onDragEnd, stage = 0, overload = 0, powers = {},
+  draggable = false, onDragStart, onDragEnd, stage = 0, overload = 0, powers = {}, inventory = null,
 }) {
   const def = CARD_DEFINITIONS[card.defId];
   const type = TYPE_INFO[def.type] || TYPE_INFO.skill;
@@ -131,9 +140,10 @@ export function Card({
     .filter(Boolean).join(' ');
   const isDraggable = draggable && playable;
   const cost = getEffectiveCost(def, stage, powers);
+  const item = card.itemId && inventory ? inventory.items.find((i) => i.id === card.itemId) : null;
 
   return html`
-    <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${overload} />`}>
+    <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${overload} item=${item} />`}>
       <div
         class=${classNames}
         style=${{

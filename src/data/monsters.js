@@ -74,7 +74,7 @@ export const MONSTER_DEFINITIONS = {
   slithering_strangler: {
     id: 'slithering_strangler', name: '미끈거리는 교살마', hp: 54, isMachine: false, tier: 'normal',
     sequence: [
-      { id: 'constrict_grip', damage: 0, effects: [{ kind: 'applyStatus', status: 'constrict', amount: 1, target: 'player' }] },
+      { id: 'constrict_grip', damage: 0, effects: [{ kind: 'applyStatus', status: 'constrict', amount: 3, target: 'player' }] },
       { random: [
         { weight: 50, move: { id: 'coil', damage: 7, effects: [{ kind: 'block', value: 5, target: 'self' }] } },
         { weight: 50, move: { id: 'bite2', damage: 12 } },
@@ -83,6 +83,7 @@ export const MONSTER_DEFINITIONS = {
   },
   cubex_construct: {
     id: 'cubex_construct', name: '큐브형 구조체', hp: 65, isMachine: true, tier: 'normal',
+    startingStatuses: { artifact: 1 },
     sequence: [
       { id: 'charge', damage: 0, effects: [{ kind: 'applyStatus', status: 'atkBonus', amount: 2, target: 'self' }] },
       { id: 'burst1', damage: 7, effects: [{ kind: 'applyStatus', status: 'atkBonus', amount: 2, target: 'self' }] },

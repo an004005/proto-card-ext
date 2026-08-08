@@ -225,29 +225,37 @@ export const CARD_DEFINITIONS = {
   },
 
   // ---- 모듈 5: 전자기 간섭 ----
-  // ---- 루팅 저주 (잡템/환금템이 과적(짐) 상태로 넘어가면 덱에 삽입, §6) ----
-  // 평소엔 unplayable(과적 아님). 소지 아이템이 과적(짐)으로 넘어가면 combatEngine이
-  // 카드 인스턴스의 itemId를 통해 동적으로 playable 처리 — 이 defId 자체는 항상 unplayable.
+  // ---- 과적(짐) 상태이상 카드 (잡템/환금템/미장착 장비·소모품/탄약이 과적 상태로 넘어가면
+  // 덱에 삽입, §6). 몬스터가 넣는 저주(curse)와 구분되는 별도 type: 'status' — 페널티가
+  // 아니라 "짊어진 짐" 그 자체를 나타낸다. 평소엔 unplayable(과적 아님). 소지 아이템이
+  // 과적(짐)으로 넘어가면 combatEngine이 카드 인스턴스의 itemId를 통해 동적으로 playable
+  // 처리 — 이 defId 자체는 항상 unplayable.
   junk_item: {
-    id: 'junk_item', name: '잡템', type: 'curse', attackKind: null,
+    id: 'junk_item', name: '잡템', type: 'status', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
   currency_item: {
-    id: 'currency_item', name: '환금템', type: 'curse', attackKind: null,
+    id: 'currency_item', name: '환금템', type: 'status', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
   equipment_item: {
-    id: 'equipment_item', name: '미장착 장비', type: 'curse', attackKind: null,
+    id: 'equipment_item', name: '미장착 장비', type: 'status', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
   ammo_item: {
-    id: 'ammo_item', name: '탄약 더미', type: 'curse', attackKind: null,
+    id: 'ammo_item', name: '탄약 더미', type: 'status', attackKind: null,
+    unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
+    effects: [{ kind: 'removeInventoryItem' }],
+    description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
+  },
+  consumable_item: {
+    id: 'consumable_item', name: '미장착 소모품', type: 'status', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
@@ -301,4 +309,23 @@ export const CARD_DEFINITIONS = {
     effects: [{ kind: 'applyStun', target: 'enemy', amount: 1 }],
     description: '적 대상(기계 아니어도) 스턴 1턴. 소멸. 과부화 +15 (단계 무관).',
   },
+
+  // ---- 미장착 슬롯 보충 카드 (§ 무기/상의/하의 빈 칸당 자동 편입, equipmentEngine 참고) ----
+  bare_hands_attack: {
+    id: 'bare_hands_attack', name: '맨손공격', type: 'attack', attackKind: 'melee',
+    cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
+    effects: [{ kind: 'damage', value: 3, attackKind: 'melee' }],
+    description: '피해 3. 무기 미장착 슬롯 1칸당 3장씩 덱에 자동 편입.',
+  },
+  clumsy_dodge: {
+    id: 'clumsy_dodge', name: '어설픈 회피', type: 'skill', attackKind: null,
+    cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
+    effects: [{ kind: 'block', value: 3 }],
+    description: '방어 3. 상의/하의 미장착 슬롯 1칸당 3장씩 덱에 자동 편입.',
+  },
+};
+
+/** 인벤토리 아이템 kind -> 그 아이템이 과적(짐) 상태일 때 덱에 들어가는 status 카드 defId. */
+export const BURDEN_CARD_DEF_BY_KIND = {
+  junk: 'junk_item', currency: 'currency_item', equipment: 'equipment_item', ammo: 'ammo_item', consumable: 'consumable_item',
 };
