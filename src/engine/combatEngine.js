@@ -1,10 +1,11 @@
 // Pure combat state machine for the Card Extraction ruleset. Every export is
 // (state, ...args) => newState — no DOM/Preact, runnable headlessly under `node --test`.
 import * as cardEngine from './cardEngine.js';
-import { computeDamage, computeBlock, applyDamage, decayStatusesAtTurnEnd, applyStatus, applyArmorAtTurnStart } from './statusEngine.js';
+import { computeDamage, computeBlock, applyDamage, decayStatusesAtTurnEnd, applyStatus, applyArmorAtTurnStart, applyPoisonAtTurnStart } from './statusEngine.js';
 import { getStage, gainOverload, isLethalOverload } from './overloadEngine.js';
 import { currentMove, advanceAiState, createInitialAiState } from './monsterAI.js';
 import { isItemBurdenGivenOrder } from './inventoryEngine.js';
+import { nextInt } from './rng.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
@@ -190,6 +191,7 @@ export function createCombatState({
   const piles = cardEngine.createEmptyPiles();
   const deck = cardEngine.buildDeck(deckEntries);
   const shuffled = cardEngine.shuffleIntoDrawPile(piles, deck, rngState);
+  shuffled.piles = cardEngine.moveInnateCardsToFront(shuffled.piles, (defId) => !!CARD_DEFINITIONS[defId].innate);
 
   const staggerCounts = {};
   const enemies = [];
@@ -241,6 +243,9 @@ export function beginEnemyFirst(state) {
 /** @param {CombatState} state @returns {CombatState} */
 export function startPlayerTurn(state) {
   let player = { ...state.player, block: 0, energy: state.player.maxEnergy };
+  player = applyPoisonAtTurnStart(player);
+  const opening = checkWinLoss({ ...state, player });
+  if (opening.phase === 'defeat') return opening;
 
   const drawCount = HAND_SIZE + (player.extraDrawPerTurn || 0);
   const drawn = cardEngine.drawCards(state.piles, drawCount, state.rngState);
@@ -368,6 +373,40 @@ function damageTarget(state, scope, enemyId, amount, ignoresBlock, sourceEnemyId
 }
 
 /**
+ * 조건부 스케일링(scalesBy): handSize/exhaustPileSize/discardPileSize/strengthStacks/playerBlock/
+ * targetVulnerableStacks/targetPoisonStacks 카운트 × scalesByAmount 만큼을 flat 보너스로 더한다 —
+ * 스테이지 스케일링과 무관하게 그대로 가산.
+ * @param {CardEffect} effect
+ * @param {CombatState} state
+ * @param {EffectContext} context
+ * @returns {number}
+ */
+function computeScalesByBonus(effect, state, context) {
+  if (!effect.scalesBy) return 0;
+  const per = effect.scalesByAmount ?? 1;
+  let count = 0;
+  switch (effect.scalesBy) {
+    case 'handSize': count = state.piles.hand.length; break;
+    case 'exhaustPileSize': count = state.piles.exhaustPile.length; break;
+    case 'discardPileSize': count = state.piles.discardPile.length; break;
+    case 'strengthStacks': count = context.source === 'player' ? (state.player.statuses.strength || 0) : ((context.sourceStatuses && context.sourceStatuses.strength) || 0); break;
+    case 'playerBlock': count = state.player.block; break;
+    case 'targetVulnerableStacks': {
+      const enemy = state.enemies.find((e) => e.id === context.cardTargetId);
+      count = (enemy && enemy.statuses.vulnerable) || 0;
+      break;
+    }
+    case 'targetPoisonStacks': {
+      const enemy = state.enemies.find((e) => e.id === context.cardTargetId);
+      count = (enemy && enemy.statuses.poison) || 0;
+      break;
+    }
+    default: count = 0;
+  }
+  return count * per;
+}
+
+/**
  * @param {CombatState} state
  * @param {CardEffect} effect
  * @param {EffectContext} context
@@ -376,50 +415,53 @@ function damageTarget(state, scope, enemyId, amount, ignoresBlock, sourceEnemyId
 function applyOneEffect(state, effect, context) {
   switch (effect.kind) {
     case 'damage': {
-      const target = resolveTargetScope(effect, context);
-      const stage = getStage(state.overload);
-      let flatBonus = 0;
-      if (context.source === 'player') {
-        flatBonus = getModuleDamageBonus(effect.attackKind, stage, state.player.powers);
-        if (effect.attackKind === 'ranged' && state.player.temporaryEffects.nextRangedBonus) {
-          flatBonus += state.player.temporaryEffects.nextRangedBonus.amount;
+      let s = state;
+      const hitsCount = effect.hits || 1;
+      for (let hit = 0; hit < hitsCount; hit++) {
+        const target = resolveTargetScope(effect, context);
+        const stage = getStage(s.overload);
+        let flatBonus = 0;
+        if (context.source === 'player') {
+          flatBonus = getModuleDamageBonus(effect.attackKind, stage, s.player.powers) + (s.player.statuses.strength || 0);
+          if (effect.attackKind === 'ranged' && s.player.temporaryEffects.nextRangedBonus) {
+            flatBonus += s.player.temporaryEffects.nextRangedBonus.amount;
+          }
+        } else {
+          flatBonus = (context.sourceStatuses && ((context.sourceStatuses.atkBonus || 0) + (context.sourceStatuses.strength || 0))) || 0;
         }
-      } else {
-        flatBonus = (context.sourceStatuses && context.sourceStatuses.atkBonus) || 0;
-      }
-      const weak = context.source === 'player' ? !!state.player.statuses.weak : !!context.sourceStatuses?.weak;
-      const amount = computeDamage(effect.value, {
-        stage, scalesWithStage: context.scalesWithStage, flatBonus, weak,
-        vulnerable: false, // vulnerable is resolved per-target below (depends on defender)
-      });
-      const ignoresBlock = context.ignoresBlock && effect.attackKind === 'ranged';
+        flatBonus += computeScalesByBonus(effect, s, context);
+        const weak = context.source === 'player' ? !!s.player.statuses.weak : !!context.sourceStatuses?.weak;
+        const amount = computeDamage(effect.value, {
+          stage, scalesWithStage: context.scalesWithStage, flatBonus, weak,
+          vulnerable: false, // vulnerable is resolved per-target below (depends on defender)
+        });
+        const ignoresBlock = context.ignoresBlock && effect.attackKind === 'ranged';
 
-      if (target.scope === 'all_enemies') {
-        let s = state;
-        for (const enemy of livingEnemies(s)) {
-          const vulnerableAmount = enemy.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
-          s = damageTarget(s, 'enemy', enemy.id, vulnerableAmount, ignoresBlock, null);
+        if (target.scope === 'all_enemies') {
+          for (const enemy of livingEnemies(s)) {
+            const vulnerableAmount = enemy.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
+            s = damageTarget(s, 'enemy', enemy.id, vulnerableAmount, ignoresBlock, null);
+          }
+        } else if (target.scope === 'enemy') {
+          const enemy = s.enemies.find((e) => e.id === target.enemyId);
+          if (enemy && enemy.hp > 0) {
+            const vulnerableAmount = enemy.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
+            s = damageTarget(s, 'enemy', target.enemyId, vulnerableAmount, ignoresBlock, null);
+          }
+        } else if (target.scope === 'player') {
+          if (s.player.hp > 0) {
+            const vulnerableAmount = s.player.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
+            s = damageTarget(s, 'player', null, vulnerableAmount, false, context.enemyId);
+          }
         }
-        return s;
       }
-      if (target.scope === 'enemy') {
-        const enemy = state.enemies.find((e) => e.id === target.enemyId);
-        if (!enemy || enemy.hp <= 0) return state;
-        const vulnerableAmount = enemy.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
-        return damageTarget(state, 'enemy', target.enemyId, vulnerableAmount, ignoresBlock, null);
-      }
-      if (target.scope === 'player') {
-        if (state.player.hp <= 0) return state;
-        const vulnerableAmount = state.player.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
-        return damageTarget(state, 'player', null, vulnerableAmount, false, context.enemyId);
-      }
-      return state;
+      return s;
     }
     case 'block': {
       const target = resolveTargetScope(effect, context);
       const stage = getStage(state.overload);
       if (target.scope === 'player') {
-        const flatBonus = getModuleBlockBonus(stage, state.player.powers);
+        const flatBonus = getModuleBlockBonus(stage, state.player.powers) + (state.player.statuses.dexterity || 0) + computeScalesByBonus(effect, state, context);
         const fragile = !!state.player.statuses.fragile;
         const gained = computeBlock(effect.value, { stage, scalesWithStage: context.scalesWithStage, flatBonus, fragile });
         return { ...state, player: { ...state.player, block: state.player.block + gained } };
@@ -468,8 +510,12 @@ function applyOneEffect(state, effect, context) {
       return { ...state, piles: drawn.piles, rngState: drawn.rngState };
     }
     case 'discardRandomFromHand': {
-      const result = cardEngine.discardRandomFromHand(state.piles, state.rngState);
-      return { ...state, piles: result.piles, rngState: result.rngState };
+      if (state.piles.hand.length === 0) return state;
+      const { value: index, state: rng } = nextInt(state.rngState, state.piles.hand.length);
+      const card = state.piles.hand[index];
+      const nextHand = state.piles.hand.filter((_, idx) => idx !== index);
+      const s = { ...state, piles: { ...state.piles, hand: nextHand }, rngState: rng };
+      return discardCardWithSlyTrigger(s, card, context);
     }
     case 'activatePower':
       return { ...state, player: { ...state.player, powers: { ...state.player.powers, [effect.power]: { active: true } } } };
@@ -485,6 +531,31 @@ function applyOneEffect(state, effect, context) {
     default:
       throw new Error(`Unsupported effect kind: ${effect.kind}`);
   }
+}
+
+/**
+ * 교활(Sly): 손패에서 "플레이된 것이 아니라 버려진" 카드가 sly 카드면, 버림 더미로 가기 전에
+ * 무료(0코스트)로 즉시 효과를 발동시킨다. 발동 중 또 다른 discardRandomFromHand 효과가 트리거되면
+ * 자연스럽게 재귀 호출된다(교활 카드가 교활 카드를 버리는 연쇄).
+ * @param {CombatState} state
+ * @param {import('./types.js').CardInstance} card
+ * @param {EffectContext} context
+ * @returns {CombatState}
+ */
+function discardCardWithSlyTrigger(state, card, context) {
+  const def = CARD_DEFINITIONS[card.defId];
+  if (!def.sly) {
+    return { ...state, piles: cardEngine.moveToDiscard(state.piles, card) };
+  }
+  const resolved = resolveCard(def, getStage(state.overload));
+  let s = applyEffects(state, resolved.effects, {
+    source: 'player', cardTargetId: context.cardTargetId,
+    ignoresBlock: false, itemId: card.itemId,
+  });
+  s = checkWinLoss(s);
+  if (s.phase !== 'player_turn') return s;
+  s = { ...s, piles: def.exhausts ? cardEngine.moveToExhaust(s.piles, card) : cardEngine.moveToDiscard(s.piles, card) };
+  return s;
 }
 
 /**
@@ -581,10 +652,13 @@ export function endPlayerTurn(state) {
   if (player.statuses.constrict) player = applyDamage(player, 1, false);
 
   // 어지러움처럼 휘발성(volatile) 카드는 손패에 남아있으면 버림 더미로 가지 않고 그대로 소진된다.
-  const volatileCards = s.piles.hand.filter((c) => CARD_DEFINITIONS[c.defId].volatile);
-  const keptHand = s.piles.hand.filter((c) => !CARD_DEFINITIONS[c.defId].volatile);
-  let piles = cardEngine.discardHand({ ...s.piles, hand: keptHand });
+  // 보존(retain) 카드는 버려지지도 소진되지도 않고 손패에 그대로 유지된다.
+  const volatileCards = s.piles.hand.filter((c) => CARD_DEFINITIONS[c.defId].volatile && !CARD_DEFINITIONS[c.defId].retain);
+  const retainedCards = s.piles.hand.filter((c) => CARD_DEFINITIONS[c.defId].retain);
+  const discardableCards = s.piles.hand.filter((c) => !CARD_DEFINITIONS[c.defId].volatile && !CARD_DEFINITIONS[c.defId].retain);
+  let piles = cardEngine.discardHand({ ...s.piles, hand: discardableCards });
   for (const c of volatileCards) piles = cardEngine.moveToExhaust(piles, c);
+  piles = { ...piles, hand: retainedCards };
 
   player = { ...player, temporaryEffects: {}, statuses: decayStatusesAtTurnEnd(player.statuses) };
   return checkWinLoss({ ...s, piles, player, phase: 'enemy_turn' });
@@ -650,7 +724,10 @@ export function resolveEnemyTurn(state) {
       enemy = { ...enemy, statuses: { ...enemy.statuses, armor: MONSTER_DEFINITIONS[enemy.defId].standingArmor } };
     }
     enemy = applyArmorAtTurnStart(enemy);
+    enemy = applyPoisonAtTurnStart(enemy);
     s = setCombatant(s, 'enemy', enemyId, enemy);
+    s = checkWinLoss(s);
+    if (s.phase !== 'enemy_turn') return s;
 
     const actionsThisTurn = enemy.doubleActionActive ? 2 : 1;
     for (let action = 0; action < actionsThisTurn; action++) {
@@ -713,7 +790,12 @@ export function advanceTurnWithSteps(state) {
       enemy = { ...enemy, statuses: { ...enemy.statuses, armor: MONSTER_DEFINITIONS[enemy.defId].standingArmor } };
     }
     enemy = applyArmorAtTurnStart(enemy);
+    const poisonedBefore = (enemy.statuses.poison || 0) > 0;
+    enemy = applyPoisonAtTurnStart(enemy);
     s = setCombatant(s, 'enemy', enemyId, enemy);
+    s = checkWinLoss(s);
+    if (poisonedBefore) steps.push({ state: s, actor: 'enemy', actorId: enemyId, label: '중독', kind: 'action' });
+    if (s.phase !== 'enemy_turn') return { state: s, steps };
 
     const actionsThisTurn = enemy.doubleActionActive ? 2 : 1;
     for (let action = 0; action < actionsThisTurn; action++) {

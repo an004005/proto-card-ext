@@ -82,6 +82,9 @@
  * @property {string} [target] 'self'|'player'|'enemy'|'machine_enemy'|'all_enemies'
  * @property {'melee'|'ranged'} [attackKind]
  * @property {number} [count]
+ * @property {number} [hits] damage 효과 반복 타격 횟수(다단히트, 기본 1) — 매 타격마다 개별로 방어도에 흡수됨
+ * @property {'handSize'|'exhaustPileSize'|'discardPileSize'|'strengthStacks'|'playerBlock'|'targetVulnerableStacks'|'targetPoisonStacks'} [scalesBy] damage/block 값에 조건부 고정 보너스를 더함
+ * @property {number} [scalesByAmount] scalesBy 카운트 1당 보너스(기본 1)
  * @property {string} [power]
  * @property {boolean} [ignoresBlock]
  */
@@ -111,6 +114,9 @@
  * @property {string} [requiresWeapon]
  * @property {number} [damagePerTurnHeld] 감염류 저주: 턴 종료 시 손패에 있으면 장당 이만큼 피해
  * @property {boolean} [volatile] 어지러움류 저주: 턴 종료 시 손패에 있으면 소진(버림 더미 대신)
+ * @property {boolean} [retain] 보존(사일런트): 턴 종료 시 버려지지 않고 손패에 유지됨
+ * @property {boolean} [innate] 선천성: 전투 시작 시 뽑기 더미 맨 앞에 배치되어 첫 턴에 반드시 잡힘
+ * @property {boolean} [sly] 교활(사일런트): 턴 종료 전에 손패에서 버려지면(플레이된 것이 아니라) 무료로 자동 발동 후 버림 더미로 이동
  * @property {string} description
  */
 
@@ -131,7 +137,7 @@
 
 // ---- combat ----
 
-/** @typedef {Object.<string, number>} Statuses weak/vulnerable/armor/stun/reflect/atkBonus/fragile/entangled/constrict — all optional numeric stacks. */
+/** @typedef {Object.<string, number>} Statuses weak/vulnerable/armor/stun/reflect/atkBonus/fragile/entangled/constrict/strength/dexterity/poison — all optional numeric stacks. */
 
 /**
  * @typedef {Object} PlayerCombatState

@@ -8,7 +8,7 @@
 /** @type {string[]} */
 export const DECAYING_STATUSES = ['weak', 'vulnerable', 'fragile', 'entangled'];
 /** 디버프로 취급되어 인공물(artifact)이 스택당 1회 무시할 수 있는 상태이상. */
-export const DEBUFF_STATUSES = ['weak', 'vulnerable', 'fragile', 'entangled', 'constrict', 'stun'];
+export const DEBUFF_STATUSES = ['weak', 'vulnerable', 'fragile', 'entangled', 'constrict', 'stun', 'poison'];
 /** @type {Object.<string, string>} */
 export const STATUS_LABELS = {
   weak: '약화',
@@ -21,6 +21,9 @@ export const STATUS_LABELS = {
   entangled: '뒤얽힘',
   constrict: '조이기',
   artifact: '인공물',
+  strength: '힘',
+  dexterity: '민첩',
+  poison: '중독',
 };
 
 // Active module powers — not part of `statuses`, but still worth surfacing during combat so
@@ -50,5 +53,8 @@ export const STATUS_DESCRIPTIONS = {
   fragile: '카드로 얻는 방어도 0.75배. 보유자 턴 종료 시 스택 1 감소.',
   entangled: '공격 카드 코스트에 스택만큼 가산. 보유자 턴 종료 시 스택 1 감소.',
   constrict: '보유자(플레이어) 턴 종료 시 고정 1피해(방어도로 막을 수 있음). 시전한 적이 죽으면 소멸, 그 외엔 감소하지 않음.',
-  artifact: '디버프(약화/취약/손상/뒤얽힘/조이기/스턴)를 부여받을 때마다 스택 1을 소모해 대신 무효화.',
+  artifact: '디버프(약화/취약/손상/뒤얽힘/조이기/스턴/중독)를 부여받을 때마다 스택 1을 소모해 대신 무효화.',
+  strength: '가하는 공격 피해에 스택만큼 고정 보너스. 감소하지 않음(전투 종료까지 유지).',
+  dexterity: '획득하는 방어도에 스택만큼 고정 보너스. 감소하지 않음(전투 종료까지 유지).',
+  poison: '보유자 턴이 시작될 때 스택만큼 고정 피해(방어도 무시), 이후 스택 1 감소.',
 };

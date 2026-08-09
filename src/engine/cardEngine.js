@@ -121,6 +121,19 @@ export function discardHand(piles) {
 }
 
 /**
+ * 선천성(innate) 카드가 드로우 더미 맨 앞에 오도록 재정렬한다 — 셔플 직후(전투 시작) 1회만 호출.
+ * @param {Piles} piles
+ * @param {(defId: string) => boolean} isInnate
+ * @returns {Piles}
+ */
+export function moveInnateCardsToFront(piles, isInnate) {
+  const innate = piles.drawPile.filter((c) => isInnate(c.defId));
+  if (innate.length === 0) return piles;
+  const rest = piles.drawPile.filter((c) => !isInnate(c.defId));
+  return { ...piles, drawPile: [...innate, ...rest] };
+}
+
+/**
  * Used for monster-inserted curses (점액/공물) — always lands in the discard pile so it's
  * drawn naturally on a future turn, same as STS-style curse insertion.
  * @param {Piles} piles

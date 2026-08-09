@@ -71,6 +71,19 @@ export function applyArmorAtTurnStart(combatant) {
 }
 
 /**
+ * 중독(poison): 보유자 턴이 시작될 때 스택만큼 방어도 무시 고정 피해, 이후 스택 1 감소.
+ * @template {{hp: number, block: number, statuses: Statuses}} T
+ * @param {T} combatant
+ * @returns {T}
+ */
+export function applyPoisonAtTurnStart(combatant) {
+  const poisonStacks = getStacks(combatant.statuses, 'poison');
+  if (poisonStacks <= 0) return combatant;
+  const damaged = applyDamage(combatant, poisonStacks, true);
+  return { ...damaged, statuses: applyStatus(damaged.statuses, 'poison', -1) };
+}
+
+/**
  * Damage formula: stage-scale base -> + flat module/atk bonuses -> weak (x0.75) -> vulnerable (x1.5).
  * @param {number} baseValue
  * @param {{stage: number, scalesWithStage: boolean, flatBonus?: number, weak?: boolean, vulnerable?: boolean}} opts
