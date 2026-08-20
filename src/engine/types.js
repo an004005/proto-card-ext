@@ -249,6 +249,8 @@
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
  * @property {Record<string, {observedAt: number, hasThreat: boolean}>} observations 기본 정찰 결과(§6.2).
+ * @property {Record<string, number>} fieldCooldowns instanceId -> readyAt (능동 현장 효과, §11.1).
+ * @property {{edgeId: string, expiresAt: number}[]} activeBarriers 역장 강화 임시 장벽 — 적 이동만 막는다(§map-equipment-capability-mapping.md).
  * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
  * @property {Record<string, ThreatRuntimeState>} threats
  * @property {NoiseEvent[]} noiseEvents

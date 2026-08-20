@@ -101,6 +101,8 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     overloadFloor,
     overloadGainMultiplier: overloadConfig.overloadGainMultiplier ?? 1,
     observations: {},
+    fieldCooldowns: {},
+    activeBarriers: [],
     exits: /** @type {any} */ (exits),
     threats,
     noiseEvents: [],
@@ -169,6 +171,22 @@ export function reportNoise(state, sourceNodeId, intensity, createdAt = state.ti
 }
 
 /**
+ * §7.1/§4.2 가짜 목표 생성 (전자기 간섭 모듈의 원격 침투 등) — 구조는 소음 사건과 동일하지만
+ * `falseTargets`에 들어가고, 조사 실패해도 소음 사건과 별개로 §7.4 구역 경계도를 올린다는 점은
+ * 같지만 소음처럼 "실제로 들린 것"은 아니라는 게 유일한 의미 차이다(selectThreatTarget에서는
+ * 소음과 함께 §7.1 우선순위 점수로 경쟁한다).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} sourceNodeId
+ * @param {1|2|3} intensity
+ * @param {number} duration
+ * @param {number} [createdAt]
+ */
+export function reportFalseTarget(state, sourceNodeId, intensity, duration, createdAt = state.time) {
+  const event = { id: freshId('falseTarget'), sourceNodeId, intensity, createdAt, expiresAt: createdAt + duration };
+  return { ...state, falseTargets: [...state.falseTargets, event] };
+}
+
+/**
  * Simulates a direct sighting of the player by a threat (the trigger a future combat/field-action
  * layer will call). Puts the threat straight into pursuit — the top priority per CONTEXT.md's
  * "행동 목표 우선순위".
@@ -214,6 +232,18 @@ function escalateSectorAlert(state, sectorId, eventId) {
 }
 
 /**
+ * 역장 강화 임시 장벽(module_forcefield)이 걸린 엣지를 뺀 이동 가능 엣지 집합 — "적 이동만
+ * 차단, 플레이어는 통과 가능"이므로 위협 목표 선택/이동에만 쓰고 플레이어 이동에는 쓰지 않는다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {import('./types.js').FacilityEdge[]}
+ */
+function edgesForThreatMovement(state) {
+  if (state.activeBarriers.length === 0) return state.graph.edges;
+  const barrierIds = new Set(state.activeBarriers.map((b) => b.edgeId));
+  return state.graph.edges.filter((e) => !barrierIds.has(e.id));
+}
+
+/**
  * CONTEXT.md "행동 목표 우선순위": 직접 목격·추적 -> 활성 탈출 신호 -> 가장 크게 들린 소음/가짣
  * 목표 -> 순찰. Re-evaluated every world tick except while already pursuing (pursuit always wins).
  * @param {import('./types.js').FacilityRunState} state
@@ -225,7 +255,7 @@ function selectThreatTarget(state, threat) {
     return { kind: 'player', nodeId: threat.lastKnownPlayerNodeId };
   }
 
-  const hopsFromThreat = bfsHopDistances(state.graph.edges, threat.nodeId);
+  const hopsFromThreat = bfsHopDistances(edgesForThreatMovement(state), threat.nodeId);
 
   /** @type {{exitId: 'A'|'B', nodeId: string, createdAt: number, hops: number}[]} */
   const activeSignals = [];
@@ -316,7 +346,7 @@ function updateThreat(state, threat, tickTime) {
 
   if (tickTime < next.nextMoveAt) return { threat: next, rngState: state.rngState, sectorAlerts: state.sectorAlerts };
 
-  const stepped = stepToward(state.graph.edges, next.nodeId, target.nodeId, state.rngState);
+  const stepped = stepToward(edgesForThreatMovement(state), next.nodeId, target.nodeId, state.rngState);
   next.nodeId = stepped.nodeId;
 
   const interval = resolveMoveInterval(state, next);
@@ -445,8 +475,11 @@ function applyTimerBoundary(state, t) {
 
   const noiseEvents = state.noiseEvents.filter((e) => e.expiresAt !== t);
   const falseTargets = state.falseTargets.filter((e) => e.expiresAt !== t);
+  const activeBarriers = state.activeBarriers.filter((b) => b.expiresAt !== t);
 
-  return { ...state, time: t, exits, noiseEvents, falseTargets };
+  return {
+    ...state, time: t, exits, noiseEvents, falseTargets, activeBarriers,
+  };
 }
 
 /**
@@ -610,4 +643,46 @@ export function useOpportunity(state, opportunityId, mode) {
   if (noise > 0 && state.playerNodeId) next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (noise), state.time);
   next = advanceTime(next, state.time + time);
   return { state: next, keyGranted: opportunity.keyEligible };
+}
+
+/**
+ * §11.1/docs/map-equipment-capability-mapping.md 능동 현장 효과. `contract`는 caller가
+ * capabilityEngine.listFieldActiveEquipment(loadout)에서 골라 넘긴다 — 안전/신속/강행 접근을
+ * 적용하지 않으며(§6.3 매핑 문서 note) 표의 시간·Overload·지속시간이 최종값이다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} instanceId 장비 인스턴스 id — 쿨다운 키.
+ * @param {import('../data/facilityEquipmentCapabilities.js').MapEquipmentContract['fieldAction']} contract
+ * @param {string} [targetId] snapshot_scan은 불필요, remote_intrusion은 대상 노드, temporary_barrier는 대상 엣지.
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function useFieldEquipment(state, instanceId, contract, targetId) {
+  if (state.phase !== 'active') throw new Error('run already ended');
+  if (!state.playerNodeId) throw new Error('player is not at a node');
+  if (!contract) throw new Error(`${instanceId} has no active field effect`);
+  const readyAt = state.fieldCooldowns[instanceId] || 0;
+  if (state.time < readyAt) throw new Error(`${instanceId} is on cooldown until ${readyAt}`);
+
+  let next = applyOverloadDelta(state, contract.overloadGain);
+  const completesAt = state.time + contract.timeCost;
+
+  if (contract.kind === 'snapshot_scan') {
+    const hops = bfsHopDistances(state.graph.edges, state.playerNodeId);
+    const threatNodes = new Set(Object.values(state.threats).map((t) => t.nodeId));
+    const observations = { ...next.observations };
+    for (const node of state.graph.nodes) {
+      const h = hops.get(node.id);
+      if (h !== undefined && h <= contract.range) observations[node.id] = { observedAt: completesAt, hasThreat: threatNodes.has(node.id) };
+    }
+    next = { ...next, observations };
+  } else if (contract.kind === 'remote_intrusion') {
+    if (!targetId) throw new Error('remote_intrusion requires a target node');
+    next = reportFalseTarget(next, targetId, 2, contract.duration ?? 200, completesAt);
+  } else if (contract.kind === 'temporary_barrier') {
+    if (!targetId) throw new Error('temporary_barrier requires a target edge');
+    if (!state.graph.edges.some((e) => e.id === targetId)) throw new Error(`unknown edge ${targetId}`);
+    next = { ...next, activeBarriers: [...next.activeBarriers, { edgeId: targetId, expiresAt: completesAt + (contract.duration ?? 0) }] };
+  }
+
+  next = { ...next, fieldCooldowns: { ...next.fieldCooldowns, [instanceId]: completesAt + contract.cooldown } };
+  return advanceTime(next, completesAt);
 }

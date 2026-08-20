@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
-  openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta,
+  openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment,
 } from '../src/engine/runEngine.js';
+import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL, STANDARD_EDGE_TIME_COST,
   OVERLOAD_MELTDOWN, BASIC_RECON_TIME, FARM_TIME,
 } from '../src/data/facilityLayout.js';
-import { buildAdjacency } from '../src/engine/graphUtils.js';
+import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
 
 function makeRun(seed = 1, overloadConfig) {
   const { graph } = generateFacilityGraph(seed);
@@ -233,6 +234,44 @@ test('useOpportunity consumes the opportunity, costs FARM_TIME, and reports the 
   assert.equal(result.state.time, before + FARM_TIME);
   assert.ok(result.state.graph.opportunities.find((o) => o.id === opportunity.id).consumed);
   assert.throws(() => useOpportunity(result.state, opportunity.id, 'normal'));
+});
+
+test('module_spatial snapshot_scan reveals threat presence within its range and respects cooldown', () => {
+  let state = makeRun(1);
+  const contract = MAP_EQUIPMENT_CAPABILITIES.module_spatial.fieldAction;
+  const before = state.time;
+  const startNodeId = state.playerNodeId;
+  state = useFieldEquipment(state, 'inst1', contract);
+  assert.equal(state.time, before + contract.timeCost);
+  assert.equal(state.overload, contract.overloadGain);
+  const hops = bfsHopDistances(state.graph.edges, startNodeId);
+  const observedWithinRange = Object.keys(state.observations).every((nodeId) => hops.get(nodeId) <= contract.range);
+  assert.ok(observedWithinRange);
+  assert.ok(Object.keys(state.observations).length > 1);
+
+  assert.throws(() => useFieldEquipment(state, 'inst1', contract), /cooldown/);
+});
+
+test('module_forcefield temporary_barrier blocks threat pathing through the edge but not player movement', () => {
+  let state = makeRun(1);
+  const threatId = Object.keys(state.threats)[0];
+  const threat = state.threats[threatId];
+  const barrierEdge = state.graph.edges.find((e) => e.from === threat.patrolRoute[0] || e.to === threat.patrolRoute[0]);
+  state = { ...state, playerNodeId: barrierEdge.from };
+  const contract = MAP_EQUIPMENT_CAPABILITIES.module_forcefield.fieldAction;
+  state = useFieldEquipment(state, 'inst2', contract, barrierEdge.id);
+  assert.equal(state.activeBarriers.length, 1);
+
+  // Player can still cross it (unless it's also 'blocked'/'oneWay', which fixture edges aren't).
+  if (!barrierEdge.features.includes('blocked') && !barrierEdge.features.includes('oneWay')) {
+    const other = barrierEdge.from === state.playerNodeId ? barrierEdge.to : barrierEdge.from;
+    const moved = moveToAdjacentNode(state, other);
+    assert.equal(moved.playerNodeId, other);
+  }
+
+  // it expires after its duration.
+  const expired = advanceTime(state, state.time + contract.duration);
+  assert.equal(expired.activeBarriers.length, 0);
 });
 
 // #9 Overload 100은 HP와 무관한 즉시 패배이며, 장착 임플란트 바닥 아래로는 감소하지 않는다.
