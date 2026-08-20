@@ -146,6 +146,102 @@
  * @property {ThreatRoster[]} threats
  */
 
+// ---- run engine (§5, §7 시간 틱·위협 AI·소음/흔적/추적·탈출 상태 기계) ----
+// PendingAction 기반의 일반 행동 처리(§5.1)는 아직 없다 — 현장 행동(§6)이 아직 없기 때문이다.
+// 이 단계는 시간/위협/소음/탈출 상태 기계만 독립적으로 구현하고 테스트한다.
+
+/**
+ * @typedef {Object} NoiseEvent
+ * @property {string} id
+ * @property {string} sourceNodeId
+ * @property {1|2|3} intensity
+ * @property {number} createdAt
+ * @property {number} expiresAt
+ */
+
+/** @typedef {NoiseEvent} FalseTarget 구조는 소음 사건과 동일하다 (§3.1). */
+
+/**
+ * @typedef {Object} Evidence
+ * @property {string} id
+ * @property {string} nodeId
+ * @property {1|2} tier 1=흔적, 2=강한 흔적.
+ * @property {string} createdBySectorId
+ */
+
+/**
+ * @typedef {Object.<string, number>} SectorAlertLevels 0~3.
+ */
+
+/**
+ * @typedef {Object} SectorAlertState
+ * @property {0|1|2|3} level
+ * @property {string[]} resolvedEventIds 같은 소음 사건의 중복 상승 방지.
+ */
+
+/**
+ * @typedef {{kind: 'player', nodeId: string}
+ *   | {kind: 'exitSignal', exitId: 'A'|'B', nodeId: string, createdAt: number}
+ *   | {kind: 'noise', eventId: string, nodeId: string, score: number, createdAt: number}
+ *   | {kind: 'falseTarget', eventId: string, nodeId: string, score: number, createdAt: number}
+ *   | {kind: 'patrol', nodeId: string}} ThreatTarget
+ */
+
+/**
+ * @typedef {Object} ThreatRuntimeState
+ * @property {string} id
+ * @property {FacilitySectorId} sectorId
+ * @property {2|3|4} size
+ * @property {string[]} patrolRoute
+ * @property {number} patrolIndex
+ * @property {string} nodeId 현재 위치.
+ * @property {'patrol'|'investigate'|'alert'|'pursuit'|'exit_guard'} mode
+ * @property {0|1|2|3} alert
+ * @property {number} nextMoveAt
+ * @property {string|null} lastKnownPlayerNodeId
+ * @property {0|1|2|3} pursuitStrength
+ * @property {ThreatTarget|null} target
+ * @property {{eventId: string, nodeId: string, expiresAt: number}|null} investigationMemory
+ */
+
+/**
+ * @typedef {Object} KeyExitRuntimeState
+ * @property {'key'} kind
+ * @property {string} nodeId
+ */
+
+/**
+ * @typedef {Object} StandardExitRuntimeState
+ * @property {'standard'} kind
+ * @property {'A'|'B'} exitId
+ * @property {string} nodeId
+ * @property {'closed'|'requesting'|'opening'|'open'|'disabled'} status
+ * @property {number} disabledAt
+ * @property {number|null} interactionEndsAt 요청 행동(50) 완료 시각.
+ * @property {number|null} opensAt
+ * @property {number|null} openEndsAt
+ * @property {string|null} requestId
+ * @property {number|null} signalStartedAt
+ */
+
+/** @typedef {KeyExitRuntimeState | StandardExitRuntimeState} ExitRuntimeState */
+
+/**
+ * @typedef {Object} FacilityRunState
+ * @property {FacilityGraph} graph
+ * @property {number} time
+ * @property {import('./rng.js').RngState} rngState
+ * @property {'active'|'collapsed'} phase
+ * @property {string|null} playerNodeId 이 단계에서는 정적 참조만 — 이동 엔진은 다음 단계.
+ * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
+ * @property {Record<string, ThreatRuntimeState>} threats
+ * @property {NoiseEvent[]} noiseEvents
+ * @property {FalseTarget[]} falseTargets
+ * @property {Evidence[]} evidence
+ * @property {Record<FacilitySectorId, SectorAlertState>} sectorAlerts
+ * @property {{threatId: string, nodeId: string}|null} combatTrigger 위협이 playerNodeId에 도착하면 채워진다.
+ */
+
 // ---- cards ----
 
 /**

@@ -90,3 +90,33 @@ export const ENTRANCE_THREAT_MAX_GROUP_SIZE = 2;
 
 export const GENERATION_MAX_ATTEMPTS = 64;
 export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
+
+// ---- 시간·틱·탈출 (구현 명세 §2, §5, §7) ----
+
+export const RUN_COLLAPSE_TIME = 4000; // §2.3 t===4000 붕괴, 다른 모든 사건보다 우선.
+export const WORLD_TICK_INTERVAL = 10; // §5.1 "전역 시간이 10 시간 포인트 진행될 때마다 1회".
+
+export const EXIT_A_DISABLED_AT = 2500;
+export const EXIT_B_DISABLED_AT = 3900;
+export const EXIT_REQUEST_TIME = 50;
+export const EXIT_OPEN_WINDOW = 100;
+
+// 유효 Hacking -2~-1/0/1/2/3/4 -> 개방 대기 (§2.2, §CONTEXT 탈출 카운트다운). effectiveHacking을
+// -2..4 범위로 clamp한 뒤 이 배열의 (value+2) 인덱스로 조회한다.
+export const EXIT_OPEN_WAIT_BY_HACKING = [300, 300, 300, 250, 200, 150, 100];
+
+export const NOISE_DURATION = 100; // §7.1 "일반 소음은 100포인트 동안 지속".
+export const INVESTIGATION_MEMORY_DURATION = 300; // §7.1 "출처 도착 또는 기억 만료 전까지".
+export const EVIDENCE_TRACE_DURATION_LIGHT = null; // §7.2: 흔적은 시간 만료가 아니라 발견/정리로만 사라진다.
+
+// §CONTEXT.md "순찰 경로": mode별 다음 엣지 이동 간격. 구역 경계도 2/3은 조사·경계에 한해 더
+// 빨라진다(아래 SECTOR_ALERT_INVESTIGATE_INTERVAL로 override).
+export const THREAT_MOVE_INTERVAL = { patrol: 100, investigate: 80, alert: 80, pursuit: 60, exit_guard: 80 };
+/** @type {Partial<Record<0|1|2|3, number>>} sectorAlertLevel -> interval override */
+export const SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 70, 3: 60 };
+
+/** @type {Record<0|1|2|3, 0|1|2>} */
+export const SECTOR_ALERT_MIN_ENEMY_ALERT = { 0: 0, 1: 1, 2: 2, 3: 2 }; // §7.4
+
+/** @type {Record<1|2|3|4, number>} §7.1 소음 단계 -> 홉 범위 */
+export const NOISE_HOP_RANGE = { 1: 1, 2: 2, 3: 3, 4: Infinity };

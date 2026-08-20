@@ -1,0 +1,442 @@
+// Time/threat-AI/noise/pursuit/exit-lifecycle engine (docs/extraction-map-implementation-spec.md
+// §5, §7). Pure and deterministic like facilityGraph.js — every function returns a new state and
+// threads rngState explicitly.
+//
+// Scope note: §5.1's generic `PendingAction` queue (recon/farm/hack/swap/etc.) is NOT built here
+// — those are concrete field actions that don't exist yet (Capability system is a later phase).
+// This module implements the time/world-tick/threat/exit machinery that those actions will later
+// plug into: `advanceTime` processes the timer/expiry/threat-movement events from §5.1.2 and §5.2
+// on their own, and `requestExtraction`/`reportNoise`/`reportSighting` are the minimal external
+// inputs needed to drive and test that machinery independently. The `PLAY_CARD`/`MOVE_EDGE`-style
+// command surface is added once real field actions exist.
+
+import { createRngState, pick } from './rng.js';
+import { bfsHopDistances, buildAdjacency } from './graphUtils.js';
+import {
+  RUN_COLLAPSE_TIME, WORLD_TICK_INTERVAL, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
+  EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
+  INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
+  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS,
+} from '../data/facilityLayout.js';
+
+let seq = 0;
+/** @param {string} prefix */
+function freshId(prefix) { return `${prefix}${seq++}`; }
+
+/**
+ * @param {number} effectiveHacking -2..4
+ */
+function exitOpenWaitFor(effectiveHacking) {
+  const clamped = Math.max(-2, Math.min(4, effectiveHacking));
+  return EXIT_OPEN_WAIT_BY_HACKING[clamped + 2];
+}
+
+/**
+ * @param {import('./types.js').FacilityGraph} graph
+ * @param {number} seed
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function createRunState(graph, seed) {
+  /** @type {Record<string, import('./types.js').ExitRuntimeState>} */
+  const exits = {};
+  for (const placement of graph.exits) {
+    if (placement.exitId === 'key') {
+      exits.key = { kind: 'key', nodeId: placement.nodeId };
+    } else {
+      exits[placement.exitId] = {
+        kind: 'standard',
+        exitId: placement.exitId,
+        nodeId: placement.nodeId,
+        status: 'closed',
+        disabledAt: placement.exitId === 'A' ? EXIT_A_DISABLED_AT : EXIT_B_DISABLED_AT,
+        interactionEndsAt: null,
+        opensAt: null,
+        openEndsAt: null,
+        requestId: null,
+        signalStartedAt: null,
+      };
+    }
+  }
+
+  /** @type {Record<string, import('./types.js').ThreatRuntimeState>} */
+  const threats = {};
+  for (const roster of graph.threats) {
+    threats[roster.id] = {
+      id: roster.id,
+      sectorId: roster.sectorId,
+      size: roster.size,
+      patrolRoute: roster.patrolRoute,
+      patrolIndex: 0,
+      nodeId: roster.patrolRoute[0],
+      mode: 'patrol',
+      alert: 0,
+      nextMoveAt: THREAT_MOVE_INTERVAL.patrol,
+      lastKnownPlayerNodeId: null,
+      pursuitStrength: 0,
+      target: null,
+      investigationMemory: null,
+    };
+  }
+
+  /** @type {Record<string, import('./types.js').SectorAlertState>} */
+  const sectorAlerts = {};
+  for (const sectorId of SECTOR_IDS) sectorAlerts[sectorId] = { level: 0, resolvedEventIds: [] };
+
+  return {
+    graph,
+    time: 0,
+    rngState: createRngState(seed),
+    phase: 'active',
+    playerNodeId: graph.startNodeId,
+    exits: /** @type {any} */ (exits),
+    threats,
+    noiseEvents: [],
+    falseTargets: [],
+    evidence: [],
+    sectorAlerts,
+    combatTrigger: null,
+  };
+}
+
+/**
+ * §CONTEXT.md 탈출구 요청. Throws on an invalid request (spec has no "soft fail" for this — the
+ * UI only offers the button when eligible, so an ineligible call here is a caller bug).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {'A'|'B'} exitId
+ * @param {number} effectiveHacking -2..4
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function requestExtraction(state, exitId, effectiveHacking) {
+  const exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (state.exits[exitId]);
+  if (state.phase !== 'active') throw new Error('run already ended');
+  if (exit.status !== 'closed') throw new Error(`exit ${exitId} is not closed (status=${exit.status})`);
+  if (state.time >= exit.disabledAt) throw new Error(`exit ${exitId} is disabled`);
+
+  const interactionEndsAt = state.time + EXIT_REQUEST_TIME;
+  const opensAt = interactionEndsAt + exitOpenWaitFor(effectiveHacking);
+  const requestId = freshId('req');
+  return {
+    ...state,
+    exits: {
+      ...state.exits,
+      [exitId]: {
+        ...exit, status: 'requesting', interactionEndsAt, opensAt, requestId, signalStartedAt: state.time,
+      },
+    },
+  };
+}
+
+/**
+ * §7.1 소음 사건 생성. `createdAt` defaults to the current time (callers driving a live run don't
+ * need to pass it; tests that want to construct a noise event at an arbitrary past time can).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} sourceNodeId
+ * @param {1|2|3} intensity
+ * @param {number} [createdAt]
+ */
+export function reportNoise(state, sourceNodeId, intensity, createdAt = state.time) {
+  const event = { id: freshId('noise'), sourceNodeId, intensity, createdAt, expiresAt: createdAt + NOISE_DURATION };
+  return { ...state, noiseEvents: [...state.noiseEvents, event] };
+}
+
+/**
+ * Simulates a direct sighting of the player by a threat (the trigger a future combat/field-action
+ * layer will call). Puts the threat straight into pursuit — the top priority per CONTEXT.md's
+ * "행동 목표 우선순위".
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} threatId
+ * @param {string} playerNodeId
+ */
+export function reportSighting(state, threatId, playerNodeId) {
+  const threat = state.threats[threatId];
+  return {
+    ...state,
+    threats: {
+      ...state.threats,
+      [threatId]: {
+        ...threat,
+        mode: 'pursuit',
+        alert: 3,
+        lastKnownPlayerNodeId: playerNodeId,
+        pursuitStrength: 3,
+        target: { kind: 'player', nodeId: playerNodeId },
+      },
+    },
+  };
+}
+
+/** @param {import('./types.js').FacilityRunState} state @param {import('./types.js').FacilitySectorId} sectorId */
+function sectorMinAlert(state, sectorId) {
+  return /** @type {0|1|2|3} */ (SECTOR_ALERT_MIN_ENEMY_ALERT[state.sectorAlerts[sectorId].level] ?? 0);
+}
+
+/**
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').FacilitySectorId} sectorId
+ * @param {string} eventId
+ */
+function escalateSectorAlert(state, sectorId, eventId) {
+  const current = state.sectorAlerts[sectorId];
+  if (current.resolvedEventIds.includes(eventId)) return state.sectorAlerts;
+  return {
+    ...state.sectorAlerts,
+    [sectorId]: { level: /** @type {0|1|2|3} */ (Math.min(3, current.level + 1)), resolvedEventIds: [...current.resolvedEventIds, eventId] },
+  };
+}
+
+/**
+ * CONTEXT.md "행동 목표 우선순위": 직접 목격·추적 -> 활성 탈출 신호 -> 가장 크게 들린 소음/가짣
+ * 목표 -> 순찰. Re-evaluated every world tick except while already pursuing (pursuit always wins).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} threat
+ * @returns {import('./types.js').ThreatTarget}
+ */
+function selectThreatTarget(state, threat) {
+  if (threat.mode === 'pursuit' && threat.lastKnownPlayerNodeId) {
+    return { kind: 'player', nodeId: threat.lastKnownPlayerNodeId };
+  }
+
+  const hopsFromThreat = bfsHopDistances(state.graph.edges, threat.nodeId);
+
+  /** @type {{exitId: 'A'|'B', nodeId: string, createdAt: number, hops: number}[]} */
+  const activeSignals = [];
+  for (const exitId of /** @type {const} */ (['A', 'B'])) {
+    const exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (state.exits[exitId]);
+    if (!exit.signalStartedAt || !['requesting', 'opening', 'open'].includes(exit.status)) continue;
+    const hops = hopsFromThreat.get(exit.nodeId);
+    if (hops === undefined) continue;
+    activeSignals.push({ exitId, nodeId: exit.nodeId, createdAt: exit.signalStartedAt, hops });
+  }
+  if (activeSignals.length > 0) {
+    activeSignals.sort((a, b) => (a.hops - b.hops) || (b.createdAt - a.createdAt));
+    const best = activeSignals[0];
+    return { kind: 'exitSignal', exitId: best.exitId, nodeId: best.nodeId, createdAt: best.createdAt };
+  }
+
+  /** @type {{kind: 'noise'|'falseTarget', eventId: string, nodeId: string, score: number, createdAt: number}[]} */
+  const candidates = [];
+  /** @param {import('./types.js').NoiseEvent[]} events @param {'noise'|'falseTarget'} kind */
+  const considerSources = (events, kind) => {
+    for (const event of events) {
+      if (state.time >= event.expiresAt) continue;
+      const hops = hopsFromThreat.get(event.sourceNodeId);
+      if (hops === undefined) continue;
+      const range = NOISE_HOP_RANGE[event.intensity];
+      if (hops > range) continue;
+      candidates.push({ kind, eventId: event.id, nodeId: event.sourceNodeId, score: event.intensity - hops, createdAt: event.createdAt });
+    }
+  };
+  considerSources(state.noiseEvents, 'noise');
+  considerSources(state.falseTargets, 'falseTarget');
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => (b.score - a.score) || (b.createdAt - a.createdAt));
+    const best = candidates[0];
+    return { kind: best.kind, eventId: best.eventId, nodeId: best.nodeId, score: best.score, createdAt: best.createdAt };
+  }
+
+  const nextIndex = (threat.patrolIndex + 1) % threat.patrolRoute.length;
+  return { kind: 'patrol', nodeId: threat.patrolRoute[nextIndex] };
+}
+
+/**
+ * One edge step from `fromNodeId` toward `toNodeId` along a shortest path. Ties are broken by
+ * `rngState` for seed-determined variety. Returns `fromNodeId` unchanged if already there or if
+ * the target is unreachable (defensive — the base graph is always fully connected in this phase).
+ * @param {import('./types.js').FacilityEdge[]} edges
+ * @param {string} fromNodeId
+ * @param {string} toNodeId
+ * @param {import('./rng.js').RngState} rngState
+ */
+function stepToward(edges, fromNodeId, toNodeId, rngState) {
+  if (fromNodeId === toNodeId) return { nodeId: fromNodeId, rngState };
+  const distancesFromTarget = bfsHopDistances(edges, toNodeId);
+  const myDistance = distancesFromTarget.get(fromNodeId);
+  if (myDistance === undefined) return { nodeId: fromNodeId, rngState };
+  const adjacency = buildAdjacency(edges);
+  const candidates = [...(adjacency.get(fromNodeId) || [])].filter((n) => distancesFromTarget.get(n) === myDistance - 1);
+  if (candidates.length === 0) return { nodeId: fromNodeId, rngState };
+  const { value: nodeId, state: nextState } = pick(rngState, candidates);
+  return { nodeId, rngState: nextState };
+}
+
+/**
+ * §5.2 step 2-3 for one threat: pick a target, and — only if `nextMoveAt` is due — take one step
+ * toward it, rescheduling the next move per its mode/sector-alert interval. Returns the pieces
+ * that changed rather than mutating `state`, so the caller can thread rngState/sectorAlerts
+ * across all threats in a tick explicitly.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} threat
+ * @param {number} tickTime
+ * @returns {{threat: import('./types.js').ThreatRuntimeState, rngState: import('./rng.js').RngState, sectorAlerts: Record<string, import('./types.js').SectorAlertState>}}
+ */
+function updateThreat(state, threat, tickTime) {
+  const target = selectThreatTarget(state, threat);
+  /** @type {import('./types.js').ThreatRuntimeState} */
+  let next = { ...threat, target };
+
+  // Mode follows the target kind (exit signals hold the marker at "exit_guard" once arrived;
+  // that transition happens in resolveArrival, not here).
+  if (target.kind === 'player') next.mode = 'pursuit';
+  else if (target.kind === 'exitSignal' && next.mode !== 'exit_guard') next.mode = 'alert';
+  else if (target.kind === 'noise' || target.kind === 'falseTarget') {
+    if (next.mode !== 'exit_guard' && next.mode !== 'pursuit') next.mode = 'investigate';
+  } else if (target.kind === 'patrol' && next.mode !== 'exit_guard') {
+    next.mode = next.alert > 0 ? next.mode : 'patrol';
+  }
+  next.alert = /** @type {0|1|2|3} */ (Math.max(sectorMinAlert(state, next.sectorId), next.alert));
+
+  if (tickTime < next.nextMoveAt) return { threat: next, rngState: state.rngState, sectorAlerts: state.sectorAlerts };
+
+  const stepped = stepToward(state.graph.edges, next.nodeId, target.nodeId, state.rngState);
+  next.nodeId = stepped.nodeId;
+
+  const interval = resolveMoveInterval(state, next);
+  next.nextMoveAt = tickTime + interval;
+
+  let sectorAlerts = state.sectorAlerts;
+  if (next.nodeId === target.nodeId) {
+    const resolved = resolveArrival(state, next, target);
+    next = resolved.threat;
+    sectorAlerts = resolved.sectorAlerts;
+  }
+
+  return { threat: next, rngState: stepped.rngState, sectorAlerts };
+}
+
+/**
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} threat
+ */
+function resolveMoveInterval(state, threat) {
+  const alertLevel = state.sectorAlerts[threat.sectorId].level;
+  if ((threat.mode === 'investigate' || threat.mode === 'alert') && SECTOR_ALERT_INVESTIGATE_INTERVAL[alertLevel]) {
+    return SECTOR_ALERT_INVESTIGATE_INTERVAL[alertLevel];
+  }
+  return THREAT_MOVE_INTERVAL[threat.mode];
+}
+
+/**
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} threat
+ * @param {import('./types.js').ThreatTarget} target
+ * @returns {{threat: import('./types.js').ThreatRuntimeState, sectorAlerts: Record<string, import('./types.js').SectorAlertState>}}
+ */
+function resolveArrival(state, threat, target) {
+  if (target.kind === 'patrol') {
+    return { threat: { ...threat, patrolIndex: (threat.patrolIndex + 1) % threat.patrolRoute.length }, sectorAlerts: state.sectorAlerts };
+  }
+  if (target.kind === 'exitSignal') {
+    return { threat: { ...threat, mode: 'exit_guard' }, sectorAlerts: state.sectorAlerts };
+  }
+  if (target.kind === 'noise' || target.kind === 'falseTarget') {
+    // Arrived at the source but the player isn't actually there (a real sighting would have
+    // short-circuited to reportSighting/pursuit before this runs) -> §7.4 escalate once.
+    const sectorAlerts = state.playerNodeId !== threat.nodeId
+      ? escalateSectorAlert(state, threat.sectorId, target.eventId)
+      : state.sectorAlerts;
+    return {
+      threat: {
+        ...threat,
+        mode: 'patrol',
+        investigationMemory: { eventId: target.eventId, nodeId: target.nodeId, expiresAt: state.time + INVESTIGATION_MEMORY_DURATION },
+      },
+      sectorAlerts,
+    };
+  }
+  if (target.kind === 'player') {
+    // §7.3 추적 강도: arrived at the last known position without a fresh sighting -> strength
+    // decays; at 0 the marker gives up and returns to patrol.
+    const nextStrength = /** @type {0|1|2|3} */ (Math.max(0, threat.pursuitStrength - 1));
+    const threatOut = nextStrength === 0
+      ? { ...threat, mode: /** @type {const} */ ('patrol'), pursuitStrength: /** @type {const} */ (0), lastKnownPlayerNodeId: null }
+      : { ...threat, pursuitStrength: nextStrength };
+    return { threat: threatOut, sectorAlerts: state.sectorAlerts };
+  }
+  return { threat, sectorAlerts: state.sectorAlerts };
+}
+
+/**
+ * §5.2: threat target selection + due movement + player-collision check for every threat, once.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} tickTime
+ */
+function worldTick(state, tickTime) {
+  /** @type {Record<string, import('./types.js').ThreatRuntimeState>} */
+  const nextThreats = {};
+  // Each threat sees the previous threats' already-updated state (sectorAlerts/rngState threaded
+  // through workingState) but not their moves within this same tick — §5.2 doesn't require
+  // ordering between markers, only that each picks a target and moves at most once per tick.
+  let workingState = state;
+  for (const threat of Object.values(state.threats)) {
+    const { threat: updated, rngState, sectorAlerts } = updateThreat(workingState, threat, tickTime);
+    nextThreats[threat.id] = updated;
+    workingState = { ...workingState, rngState, sectorAlerts, threats: { ...workingState.threats, [threat.id]: updated } };
+  }
+
+  let combatTrigger = state.combatTrigger;
+  if (state.playerNodeId) {
+    const collided = Object.values(nextThreats).find((t) => t.nodeId === state.playerNodeId);
+    if (collided) combatTrigger = { threatId: collided.id, nodeId: collided.nodeId };
+  }
+
+  return { ...workingState, threats: nextThreats, combatTrigger };
+}
+
+/**
+ * §5.1.2 steps 1-6 at a single instant `t`: collapse, exit timers, noise/false-target expiry.
+ * World-tick threat logic (step 7) is handled separately by the caller, only on 10-point
+ * boundaries.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} t
+ * @returns {import('./types.js').FacilityRunState}
+ */
+function applyTimerBoundary(state, t) {
+  if (t >= RUN_COLLAPSE_TIME) return { ...state, time: RUN_COLLAPSE_TIME, phase: /** @type {const} */ ('collapsed') };
+
+  let exits = state.exits;
+  for (const exitId of /** @type {const} */ (['A', 'B'])) {
+    let exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (exits[exitId]);
+    if (exit.status === 'requesting' && exit.interactionEndsAt === t) {
+      exit = { ...exit, status: 'opening' };
+    }
+    if (exit.status === 'opening' && exit.opensAt === t) {
+      exit = { ...exit, status: 'open', openEndsAt: t + EXIT_OPEN_WINDOW };
+    }
+    if (exit.status === 'open' && exit.openEndsAt === t) {
+      const disabled = t >= exit.disabledAt;
+      exit = {
+        ...exit, status: disabled ? 'disabled' : 'closed', signalStartedAt: null, requestId: null, interactionEndsAt: null, opensAt: null, openEndsAt: null,
+      };
+    }
+    if (exit.status === 'closed' && exit.disabledAt === t) {
+      exit = { ...exit, status: 'disabled' };
+    }
+    exits = { ...exits, [exitId]: exit };
+  }
+
+  const noiseEvents = state.noiseEvents.filter((e) => e.expiresAt !== t);
+  const falseTargets = state.falseTargets.filter((e) => e.expiresAt !== t);
+
+  return { ...state, time: t, exits, noiseEvents, falseTargets };
+}
+
+/**
+ * §5.1/§5.1.2/§5.2: advance `state.time` to `targetTime`, processing every 10-point boundary's
+ * timer events and (on that same boundary) one round of threat target-selection/movement. Stops
+ * early if the run collapses at 4000.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} targetTime
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function advanceTime(state, targetTime) {
+  let current = state;
+  let t = current.time;
+  while (t < targetTime && current.phase === 'active') {
+    const nextBoundary = Math.min(targetTime, Math.ceil((t + 1) / WORLD_TICK_INTERVAL) * WORLD_TICK_INTERVAL, RUN_COLLAPSE_TIME);
+    current = applyTimerBoundary(current, nextBoundary);
+    if (current.phase !== 'active') break;
+    if (nextBoundary % WORLD_TICK_INTERVAL === 0) current = worldTick(current, nextBoundary);
+    t = nextBoundary;
+  }
+  return current;
+}
