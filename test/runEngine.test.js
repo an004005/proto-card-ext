@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import {
-  createRunState, advanceTime, requestExtraction, reportNoise, reportSighting,
+  createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
 } from '../src/engine/runEngine.js';
 import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
-  EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
+  EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL, STANDARD_EDGE_TIME_COST,
 } from '../src/data/facilityLayout.js';
+import { buildAdjacency } from '../src/engine/graphUtils.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -129,6 +130,20 @@ test('noise events expire after their duration and only reach threats within hop
 
   const expired = advanceTime(state, 101);
   assert.equal(expired.noiseEvents.length, 0, 'noise event should have expired by t=101');
+});
+
+test('moveToAdjacentNode requires an edge, costs STANDARD_EDGE_TIME_COST, and tracks visited nodes', () => {
+  let state = makeRun(21);
+  const adjacency = buildAdjacency(state.graph.edges);
+  const neighbor = [...adjacency.get(state.playerNodeId)][0];
+  const before = state.time;
+  state = moveToAdjacentNode(state, neighbor);
+  assert.equal(state.playerNodeId, neighbor);
+  assert.equal(state.time, before + STANDARD_EDGE_TIME_COST);
+  assert.ok(state.visitedNodeIds.includes(neighbor));
+
+  const nonNeighbor = state.graph.nodes.map((n) => n.id).find((id) => id !== state.playerNodeId && !adjacency.get(state.playerNodeId).has(id));
+  assert.throws(() => moveToAdjacentNode(state, nonNeighbor));
 });
 
 test('a direct sighting immediately puts a threat into pursuit, overriding noise/patrol', () => {

@@ -232,7 +232,8 @@
  * @property {number} time
  * @property {import('./rng.js').RngState} rngState
  * @property {'active'|'collapsed'} phase
- * @property {string|null} playerNodeId 이 단계에서는 정적 참조만 — 이동 엔진은 다음 단계.
+ * @property {string|null} playerNodeId
+ * @property {string[]} visitedNodeIds 탐사 안개(§10.2)용 — 시작 노드부터 포함.
  * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
  * @property {Record<string, ThreatRuntimeState>} threats
  * @property {NoiseEvent[]} noiseEvents

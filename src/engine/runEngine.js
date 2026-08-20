@@ -16,7 +16,7 @@ import {
   RUN_COLLAPSE_TIME, WORLD_TICK_INTERVAL, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
-  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS,
+  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS, STANDARD_EDGE_TIME_COST,
 } from '../data/facilityLayout.js';
 
 let seq = 0;
@@ -88,6 +88,7 @@ export function createRunState(graph, seed) {
     rngState: createRngState(seed),
     phase: 'active',
     playerNodeId: graph.startNodeId,
+    visitedNodeIds: [graph.startNodeId],
     exits: /** @type {any} */ (exits),
     threats,
     noiseEvents: [],
@@ -439,4 +440,33 @@ export function advanceTime(state, targetTime) {
     t = nextBoundary;
   }
   return current;
+}
+
+/**
+ * Minimal player movement for the §10 map UI, ahead of the real Capability-costed action system
+ * (phase 4). Uses the flat Mobility-0 corridor cost (§6.2, STANDARD_EDGE_TIME_COST) regardless of
+ * loadout — every baseline's effective Mobility changes only the *cost*, never whether movement
+ * is possible, so this stays a faithful (if unoptimized) preview of the real thing. Movement is
+ * treated as atomic rather than a `MovementAction` with mid-edge occupancy (§5.1.1) — that
+ * distinction only matters for interrupting a move partway through, which doesn't exist yet
+ * either. `playerNodeId` moves to the destination immediately and `advanceTime` runs the cost, so
+ * arrival-collision detection (via `combatTrigger`) reuses the same per-tick check `worldTick`
+ * already does against `state.playerNodeId`.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} destinationNodeId
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function moveToAdjacentNode(state, destinationNodeId) {
+  if (state.phase !== 'active') throw new Error('run already ended');
+  if (!state.playerNodeId) throw new Error('player is not at a node');
+  const connected = state.graph.edges.some(
+    (e) => (e.from === state.playerNodeId && e.to === destinationNodeId) || (e.to === state.playerNodeId && e.from === destinationNodeId),
+  );
+  if (!connected) throw new Error(`${destinationNodeId} is not adjacent to ${state.playerNodeId}`);
+
+  const visitedNodeIds = state.visitedNodeIds.includes(destinationNodeId)
+    ? state.visitedNodeIds
+    : [...state.visitedNodeIds, destinationNodeId];
+  const moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null };
+  return advanceTime(moved, moved.time + STANDARD_EDGE_TIME_COST);
 }
