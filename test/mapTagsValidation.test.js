@@ -1,0 +1,54 @@
+// #18/#19 데이터 검증: 실행 가능한 카드/소모품은 전부 mapTags를, 몬스터의 모든 move는 전부
+// mapNoise를 갖는다 (docs/card-map-tag-mapping.md). 새 정의가 매핑 없이 추가되면 여기서 실패한다.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { CARD_DEFINITIONS } from '../src/data/cards.js';
+import { CONSUMABLE_DEFINITIONS } from '../src/data/consumables.js';
+import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
+
+const NOT_EXECUTABLE = new Set([
+  'junk_item', 'currency_item', 'equipment_item', 'ammo_item', 'consumable_item',
+  'infected_curse', 'wound_curse', 'dizziness_curse', 'mucus_curse', 'offering_curse',
+]);
+
+const VALID_TRAITS = new Set([
+  'assassination', 'melee', 'firearm', 'explosive', 'hack', 'deception', 'escape',
+  'perception', 'electronic', 'healing', 'stabilize',
+]);
+
+function assertValidMapTags(mapTags, label) {
+  assert.ok(mapTags, `${label}: missing mapTags`);
+  assert.ok([0, 1, 2, 3].includes(mapTags.noise), `${label}: noise ${mapTags.noise} out of 0..3`);
+  assert.ok(Array.isArray(mapTags.traits), `${label}: traits must be an array`);
+  for (const trait of mapTags.traits) assert.ok(VALID_TRAITS.has(trait), `${label}: unknown trait ${trait}`);
+  assert.ok([0, 1].includes(mapTags.disengageProgress), `${label}: disengageProgress ${mapTags.disengageProgress} out of 0..1`);
+}
+
+test('every executable card defines valid mapTags; excluded (non-executable) cards do not need it', () => {
+  for (const [id, def] of Object.entries(CARD_DEFINITIONS)) {
+    if (NOT_EXECUTABLE.has(id)) continue;
+    assertValidMapTags(def.mapTags, `card ${id}`);
+  }
+});
+
+test('non-executable card IDs match the doc-authored exclusion list exactly', () => {
+  const actuallyExcluded = Object.keys(CARD_DEFINITIONS).filter((id) => !CARD_DEFINITIONS[id].mapTags);
+  assert.deepEqual(actuallyExcluded.sort(), [...NOT_EXECUTABLE].sort());
+});
+
+test('every consumable defines valid mapTags', () => {
+  for (const [id, def] of Object.entries(CONSUMABLE_DEFINITIONS)) {
+    assertValidMapTags(def.mapTags, `consumable ${id}`);
+  }
+});
+
+test('every monster move (including random branches) defines mapNoise 0..3', () => {
+  for (const [monsterId, def] of Object.entries(MONSTER_DEFINITIONS)) {
+    for (const entry of def.sequence) {
+      const moves = entry.random ? entry.random.map((branch) => branch.move) : [entry];
+      for (const move of moves) {
+        assert.ok([0, 1, 2, 3].includes(move.mapNoise), `${monsterId}.${move.id}: mapNoise ${move.mapNoise} out of 0..3`);
+      }
+    }
+  }
+});

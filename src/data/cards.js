@@ -21,6 +21,7 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'damage', value: 6, attackKind: 'melee' }],
     description: '피해 6.',
+    mapTags: { noise: 1, traits: ['melee'], disengageProgress: 0 },
   },
   katana_parry: {
     id: 'katana_parry', name: '튕겨내기', type: 'skill', attackKind: null,
@@ -30,6 +31,7 @@ export const CARD_DEFINITIONS = {
       { kind: 'applyStatus', status: 'reflect', amount: 3, target: 'self' },
     ],
     description: '방어 8. 공격받으면 3 반사.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
 
   // ---- 라이플 ----
@@ -38,18 +40,21 @@ export const CARD_DEFINITIONS = {
     cost: 0, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 5,
     effects: [{ kind: 'damage', value: 8, attackKind: 'ranged' }],
     description: '피해 8. 총알 1 소모.',
+    mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
   },
   rifle_suppress: {
     id: 'rifle_suppress', name: '제압사격', type: 'attack', attackKind: 'ranged',
     cost: 1, ammoCost: 3, exhausts: false, scalesWithStage: true, overloadGain: 10,
     effects: [{ kind: 'damage', value: 10, attackKind: 'ranged', target: 'all_enemies' }],
     description: '광역 피해 10. 총알 3 소모.',
+    mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
   },
   rifle_buttstock: {
     id: 'rifle_buttstock', name: '개머리판 타격', type: 'attack', attackKind: 'melee',
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'damage', value: 5, attackKind: 'melee' }],
     description: '피해 5 (총알 무소모 예비 수단).',
+    mapTags: { noise: 1, traits: ['melee'], disengageProgress: 0 },
   },
 
   // ---- 단검 ----
@@ -58,6 +63,7 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'damage', value: 4, attackKind: 'melee' }],
     description: '피해 4.',
+    mapTags: { noise: 0, traits: ['melee', 'assassination'], disengageProgress: 0 },
   },
   dagger_stab: {
     id: 'dagger_stab', name: '찌르기', type: 'attack', attackKind: 'melee',
@@ -67,6 +73,7 @@ export const CARD_DEFINITIONS = {
       { kind: 'applyStatus', status: 'vulnerable', amount: 1, target: 'self' },
     ],
     description: '피해 9. 자신에게 취약 1턴.',
+    mapTags: { noise: 0, traits: ['melee', 'assassination'], disengageProgress: 0 },
   },
 
   // ---- 권총 ----
@@ -75,6 +82,7 @@ export const CARD_DEFINITIONS = {
     cost: 0, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'damage', value: 6, attackKind: 'ranged' }],
     description: '피해 6. 총알 1 소모.',
+    mapTags: { noise: 1, traits: ['firearm'], disengageProgress: 0 },
   },
 
   // ---- 공용 (총기 전용, §신규 재장전) ----
@@ -83,6 +91,7 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'reload' }],
     description: '예비 탄약에서 최대 장전수까지 장전.',
+    mapTags: { noise: 1, traits: ['firearm'], disengageProgress: 0 },
   },
 
   // ---- 중갑상의 ----
@@ -91,18 +100,21 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'block', value: 6 }],
     description: '방어 6.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   heavy_top_block: {
     id: 'heavy_top_block', name: '막기', type: 'skill', attackKind: null,
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'block', value: 9 }],
     description: '방어 9.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   heavy_top_curse: {
     id: 'heavy_top_curse', name: '무게 저주', type: 'curse', attackKind: null,
     cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '1코 소멸 (효과 없음). 이 전투에서만 제외 — 다음 전투에 복귀.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
 
   // ---- 경갑상의 ----
@@ -111,12 +123,14 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'block', value: 6 }],
     description: '방어 6.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   light_top_deflect: {
     id: 'light_top_deflect', name: '흘려내기', type: 'skill', attackKind: null,
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'block', value: 8 }, { kind: 'draw', count: 1 }],
     description: '방어 8. 카드 1장 드로우.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
 
   // ---- 전술하의 ----
@@ -128,18 +142,21 @@ export const CARD_DEFINITIONS = {
       { kind: 'applyStatus', status: 'weak', amount: 1, target: 'enemy' },
     ],
     description: '피해 3, 약화 1턴 부여.',
+    mapTags: { noise: 0, traits: ['deception'], disengageProgress: 1 },
   },
   tactical_bottom_dash: {
     id: 'tactical_bottom_dash', name: '질주', type: 'skill', attackKind: null,
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'discardRandomFromHand' }, { kind: 'block', value: 9 }],
     description: '무작위로 1장 버리고 방어 9.',
+    mapTags: { noise: 0, traits: ['escape'], disengageProgress: 1 },
   },
   tactical_bottom_dodge: {
     id: 'tactical_bottom_dodge', name: '회피', type: 'skill', attackKind: null,
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'block', value: 6 }],
     description: '방어 6.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
 
   // ---- 중장하의 ----
@@ -148,18 +165,21 @@ export const CARD_DEFINITIONS = {
     cost: 2, exhausts: false, scalesWithStage: true, overloadGain: 5,
     effects: [{ kind: 'block', value: 16 }],
     description: '방어 16.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   heavy_bottom_shove: {
     id: 'heavy_bottom_shove', name: '밀쳐내기', type: 'attack', attackKind: 'melee',
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'block', value: 5 }, { kind: 'damage', value: 5, attackKind: 'melee' }],
     description: '방어 5, 피해 5.',
+    mapTags: { noise: 1, traits: ['melee', 'escape'], disengageProgress: 1 },
   },
   heavy_bottom_curse: {
     id: 'heavy_bottom_curse', name: '무게 저주', type: 'curse', attackKind: null,
     cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '1코 소멸 (효과 없음). 이 전투에서만 제외 — 다음 전투에 복귀.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
 
   // ---- 모듈 1: 신경 강화 (파워·가변) ----
@@ -168,6 +188,7 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, overloadGain: 10, powerKind: 'variable', power: 'neuralBoost',
     effects: [{ kind: 'activatePower', power: 'neuralBoost' }],
     description: '방어력 버프 활성화 (매턴 현재 과부화 단계 기준으로 재계산).',
+    mapTags: { noise: 0, traits: ['electronic'], disengageProgress: 0 },
   },
 
   // ---- 모듈 2: 신체 강화 (파워·가변 + 돌진 베기 고정) ----
@@ -176,6 +197,7 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, overloadGain: 10, powerKind: 'variable', power: 'bodyBoost',
     effects: [{ kind: 'activatePower', power: 'bodyBoost' }],
     description: '근접 공격력 버프 활성화 (매턴 현재 과부화 단계 기준으로 재계산).',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   module_charge_slash: {
     id: 'module_charge_slash', name: '돌진 베기', type: 'attack', attackKind: 'melee',
@@ -187,6 +209,7 @@ export const CARD_DEFINITIONS = {
       { cost: 3, effects: [{ kind: 'damage', value: 10, attackKind: 'melee' }, { kind: 'block', value: 10 }] },
     ],
     description: '카타나 장착 시에만 덱에 추가. 단계별 코스트/수치 상이.',
+    mapTags: { noise: 2, traits: ['melee', 'escape'], disengageProgress: 1 },
   },
 
   // ---- 모듈 3: 역장 강화 (파워·고정 + 역장 방출 고정) ----
@@ -200,6 +223,7 @@ export const CARD_DEFINITIONS = {
       { cost: 2, armorPerTurn: 4 },
     ],
     description: '사용 시점 단계로 고정된 만큼 갑옷을 즉시 1회 획득 (턴 종료 시 방어도로 전환).',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   module_forcefield_blast: {
     id: 'module_forcefield_blast', name: '역장 방출', type: 'attack', attackKind: null,
@@ -211,6 +235,7 @@ export const CARD_DEFINITIONS = {
       { cost: 1, effects: [{ kind: 'damage', value: 8, target: 'all_enemies' }, { kind: 'applyStatus', status: 'vulnerable', amount: 1, target: 'all_enemies' }, { kind: 'applyStatus', status: 'weak', amount: 1, target: 'all_enemies' }] },
     ],
     description: '전투당 1회(소멸). 단계별 코스트/수치 상이.',
+    mapTags: { noise: 3, traits: ['explosive'], disengageProgress: 0 },
   },
 
   // ---- 모듈 4: 공간 지각 (파워·가변 + 투시 고정) ----
@@ -219,6 +244,7 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, overloadGain: 10, powerKind: 'variable', power: 'spatialAwareness',
     effects: [{ kind: 'activatePower', power: 'spatialAwareness' }],
     description: '원거리 공격력 버프 활성화 (매턴 현재 과부화 단계 기준으로 재계산).',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   module_xray_vision: {
     id: 'module_xray_vision', name: '투시', type: 'skill', attackKind: null,
@@ -230,6 +256,7 @@ export const CARD_DEFINITIONS = {
       { cost: 1, effects: [{ kind: 'grantNextRangedBonus', amount: 3, ignoresBlock: false }] },
     ],
     description: '다음 원거리 공격에 피해 보너스 부여. 1단계에서는 방어 무시.',
+    mapTags: { noise: 0, traits: ['perception', 'electronic'], disengageProgress: 0 },
   },
 
   // ---- 모듈 5: 전자기 간섭 ----
@@ -275,6 +302,7 @@ export const CARD_DEFINITIONS = {
     unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '아무 효과 없음. 1코로 사용해 소멸.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   // 장비 내구도가 4 미만이면 (4-내구도)장만큼 전투 시작 시 이 카드가 덱에 삽입됨(§신규 내구도).
   // 어느 장비 손상인지는 구분하지 않는 범용 카드 — sticky_curse와 동일 패턴, 소지 아이템과
@@ -284,6 +312,7 @@ export const CARD_DEFINITIONS = {
     unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '아무 효과 없음. 1코로 사용해 소멸. 장비 내구도 저하로 이번 전투에만 발생.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   infected_curse: {
     id: 'infected_curse', name: '감염', type: 'curse', attackKind: null,
@@ -325,6 +354,7 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 15,
     effects: [{ kind: 'applyStun', target: 'enemy', amount: 1 }],
     description: '적 대상(기계 아니어도) 스턴 1턴. 소멸. 과부화 +15 (단계 무관).',
+    mapTags: { noise: 0, traits: ['hack'], disengageProgress: 1 },
   },
 
   // ---- 미장착 슬롯 보충 카드 (§ 무기/상의/하의 빈 칸당 자동 편입, equipmentEngine 참고) ----
@@ -333,12 +363,14 @@ export const CARD_DEFINITIONS = {
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'damage', value: 3, attackKind: 'melee' }],
     description: '피해 3. 무기 미장착 슬롯 1칸당 3장씩 덱에 자동 편입.',
+    mapTags: { noise: 1, traits: ['melee'], disengageProgress: 0 },
   },
   clumsy_dodge: {
     id: 'clumsy_dodge', name: '어설픈 회피', type: 'skill', attackKind: null,
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
     effects: [{ kind: 'block', value: 3 }],
     description: '방어 3. 상의/하의 미장착 슬롯 1칸당 3장씩 덱에 자동 편입.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
 };
 

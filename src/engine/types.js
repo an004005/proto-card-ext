@@ -305,7 +305,17 @@
  * @property {boolean} [innate] 선천성: 전투 시작 시 뽑기 더미 맨 앞에 배치되어 첫 턴에 반드시 잡힘
  * @property {boolean} [sly] 교활(사일런트): 턴 종료 전에 손패에서 버려지면(플레이된 것이 아니라) 무료로 자동 발동 후 버림 더미로 이동
  * @property {string} description
+ * @property {MapTags} [mapTags] 맵 소음/이탈 태그 (구현 명세 §9.1, docs/card-map-tag-mapping.md). 실행 불가 카드(잡템/저주 등) 제외, 실행 가능한 카드는 전부 명시 — 데이터 검증 테스트가 강제한다.
  */
+
+/**
+ * @typedef {Object} MapTags 구현 명세 §9.1.
+ * @property {0|1|2|3} noise
+ * @property {MapTrait[]} traits
+ * @property {0|1} disengageProgress
+ */
+
+/** @typedef {'assassination'|'melee'|'firearm'|'explosive'|'hack'|'deception'|'escape'|'perception'|'electronic'|'healing'|'stabilize'} MapTrait */
 
 /**
  * @typedef {Object} CardInstance
@@ -354,6 +364,7 @@
 /**
  * @typedef {Object} Move
  * @property {string} id
+ * @property {0|1|2|3} mapNoise 맵 소음 (구현 명세 §9.1, docs/card-map-tag-mapping.md) — 피해 보정용 attackKind와는 별개.
  * @property {number} damage
  * @property {number} [hits]
  * @property {CardEffect[]} [effects]
