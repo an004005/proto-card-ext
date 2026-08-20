@@ -78,6 +78,74 @@
  * @property {string[]} visitedNodeIds
  */
 
+// ---- facility graph (48-node extraction map, docs/extraction-map-implementation-spec.md §3-4) ----
+// These types describe the generated graph shape only (facilityGraph.js). The broader RunState
+// from the spec (time, threats' live mode/alert, exits' request lifecycle, etc.) is added in a
+// later phase once the time/threat engine lands.
+
+/** @typedef {'entrance'|'labs'|'security'|'power'} FacilitySectorId */
+
+/**
+ * @typedef {Object} FacilityNode
+ * @property {string} id
+ * @property {FacilitySectorId} sectorId
+ */
+
+/** @typedef {'oneWay'|'blocked'|'electronic'} SpecialEdgeFeature */
+
+/**
+ * @typedef {Object} FacilityEdge
+ * @property {string} id
+ * @property {string} from
+ * @property {string} to
+ * @property {boolean} bidirectional
+ * @property {number} timeCost Mobility 0 기준 base 시간 비용.
+ * @property {SpecialEdgeFeature[]} features 빈 배열 = 일반 복도.
+ */
+
+/**
+ * @typedef {Object} ExitPlacement
+ * @property {'A'|'B'|'key'} exitId
+ * @property {string} nodeId
+ * @property {FacilitySectorId} sectorId
+ * @property {number} weightedDistanceFromStart Mobility 0 기준.
+ */
+
+/**
+ * @typedef {Object} SectorLandmark
+ * @property {string} id
+ * @property {string} nodeId
+ * @property {FacilitySectorId} sectorId
+ * @property {string[]} approaches
+ */
+
+/**
+ * @typedef {Object} Opportunity
+ * @property {string} id
+ * @property {string} nodeId
+ * @property {boolean} keyEligible 맵 생성 시 고정된 1% 판정 결과 (§5.1.1).
+ * @property {boolean} consumed
+ */
+
+/**
+ * @typedef {Object} ThreatRoster
+ * @property {string} id
+ * @property {FacilitySectorId} sectorId
+ * @property {2|3|4} size
+ * @property {string[]} patrolRoute 2~4개 노드, 순서대로 순회.
+ */
+
+/**
+ * @typedef {Object} FacilityGraph
+ * @property {FacilityNode[]} nodes
+ * @property {FacilityEdge[]} edges
+ * @property {string} startNodeId
+ * @property {ExitPlacement[]} exits A/B/key 순서 무관, 3개.
+ * @property {SectorLandmark[]} landmarks
+ * @property {Opportunity[]} opportunities
+ * @property {ThreatRoster[]} threats
+ */
+
 // ---- cards ----
 
 /**
