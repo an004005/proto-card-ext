@@ -27,6 +27,11 @@ export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped 
               ${sl.filled ? html`
                 <span style=${{ fontSize: '11px', fontWeight: 700 }}>${sl.name}</span>
                 ${sl.cardCount !== undefined ? html`<span class="tag tag-outline" style=${{ fontSize: '9px', alignSelf: 'flex-start' }}>+${sl.cardCount}장</span>` : null}
+                ${sl.durability !== undefined ? html`
+                  <span class="tag tag-outline" style=${{ fontSize: '9px', alignSelf: 'flex-start', color: sl.durability <= 3 ? 'var(--color-accent-700)' : undefined }}>
+                    내구 ${sl.durability}${sl.durability <= 0 ? ' (파손)' : ''}
+                  </span>
+                ` : null}
               ` : html`<span style=${{ fontSize: '16px', opacity: 0.35 }}>+</span>`}
             </div>
           `;

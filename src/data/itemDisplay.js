@@ -4,10 +4,11 @@ import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } f
 import { MODULE_DEFINITIONS } from './modules.js';
 import { IMPLANT_DEFINITIONS } from './implants.js';
 import { CONSUMABLE_DEFINITIONS } from './consumables.js';
+import { MAX_DURABILITY } from '../engine/equipmentEngine.js';
 
 /** @typedef {import('../engine/types.js').Item} Item */
 
-const EQUIPMENT_DEFS = {
+export const EQUIPMENT_DEFS = {
   ...WEAPON_DEFINITIONS, ...ARMOR_TOP_DEFINITIONS, ...ARMOR_BOTTOM_DEFINITIONS, ...MODULE_DEFINITIONS, ...IMPLANT_DEFINITIONS,
 };
 
@@ -29,9 +30,14 @@ export function describeItem(item) {
   if (item.kind === 'currency') return { name: '환금템', sub: `가치 ${item.value}cr`, color: 'var(--color-accent-2-700)' };
   if (item.kind === 'ammo') return { name: '탄약 더미', sub: `${item.amount}발`, color: 'var(--color-accent-2-700)' };
   if (item.kind === 'consumable') return { name: CONSUMABLE_DEFINITIONS[item.defId ?? '']?.name || item.defId || '', sub: '미장착 소모품', color: 'var(--color-neutral-700)' };
+
+  // 임플란트는 §신규 내구도 시스템 대상이 아니므로(카드가 없어 닳지 않음) 내구도를 표시하지 않는다.
+  const category = EQUIPMENT_CATEGORY_LABEL[item.equipmentId ?? ''] || '미장착 장비';
+  const showsDurability = category !== '임플란트' && item.durability !== undefined;
+  const broken = showsDurability && item.durability <= 0;
   return {
     name: EQUIPMENT_DEFS[item.equipmentId ?? '']?.name || item.equipmentId || '',
-    sub: EQUIPMENT_CATEGORY_LABEL[item.equipmentId ?? ''] || '미장착 장비',
-    color: 'var(--color-accent)',
+    sub: showsDurability ? `${category} · 내구도 ${item.durability}/${MAX_DURABILITY}${broken ? ' (파손)' : ''}` : category,
+    color: broken ? 'var(--color-neutral-500)' : 'var(--color-accent)',
   };
 }

@@ -10,10 +10,11 @@ import {
 import {
   generateMap, createMapState, getNode, getAvailableNodeIds, markNodeDone, pickAmbushEncounter,
 } from './mapEngine.js';
-import { rollRewardSlots } from './rewardEngine.js';
+import { rollRewardSlots, rollLootDurability } from './rewardEngine.js';
 import {
   buildDeckFromLoadout, computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus,
-  computeOverloadGainMultiplier, getImplantEffect,
+  computeOverloadGainMultiplier, getImplantEffect, computeMaxLoadBonus, computeDamagedCurseEntries,
+  applyDurabilityDecay, MAX_DURABILITY,
 } from './equipmentEngine.js';
 import {
   createInventory, addItem, removeItem, createItem, isItemBurdenGivenOrder,
@@ -36,7 +37,7 @@ import { MAP_REST_HP_RESTORE_PERCENT } from '../data/mapLayout.js';
 
 export const BASE_MAX_HP = 70;
 export const BASE_INVENTORY_CAPACITY = 10;
-const SLOT_LIMITS = { weaponIds: 2, moduleIds: 2, implantIds: 3 };
+const SLOT_LIMITS = { weapons: 2, modules: 2, implantIds: 3 };
 const CONSUMABLE_SLOT_COUNT = 3;
 
 /**
@@ -62,7 +63,8 @@ export function gameReducer(snapshot, command) {
     case 'CONFIRM_REWARDS': return confirmRewards(snapshot);
     case 'EQUIP_ITEM': return equipItem(snapshot, command.itemId);
     case 'EQUIP_ITEM_FROM_WAREHOUSE': return equipItemFromWarehouse(snapshot, command.itemId);
-    case 'UNEQUIP_ITEM': return unequipItem(snapshot, command.equipmentId);
+    case 'UNEQUIP_ITEM': return unequipItem(snapshot, command.itemId);
+    case 'UNEQUIP_IMPLANT': return unequipImplant(snapshot, command.equipmentId);
     case 'UNEQUIP_CONSUMABLE': return unequipConsumable(snapshot, command.itemId);
     case 'MOVE_TO_INVENTORY': return moveItemBetweenCollections(snapshot, command.itemId, 'warehouse', 'inventory');
     case 'MOVE_TO_WAREHOUSE': return moveItemBetweenCollections(snapshot, command.itemId, 'inventory', 'warehouse');
@@ -79,10 +81,10 @@ export function gameReducer(snapshot, command) {
 /** @returns {Loadout} */
 function defaultLoadout() {
   return {
-    weaponIds: [],
-    topId: null,
-    bottomId: null,
-    moduleIds: [],
+    weapons: [],
+    top: null,
+    bottom: null,
+    modules: [],
     implantIds: [],
     consumableSlots: new Array(CONSUMABLE_SLOT_COUNT).fill(null),
   };
@@ -97,7 +99,11 @@ function defaultLoadout() {
  * @returns {Inventory}
  */
 function buildStartingWarehouse(loadout) {
-  const equippedIds = new Set([loadout.topId, loadout.bottomId, ...loadout.weaponIds, ...loadout.moduleIds, ...loadout.implantIds].filter(Boolean));
+  const equippedIds = new Set([
+    loadout.top?.equipmentId, loadout.bottom?.equipmentId,
+    ...loadout.weapons.map((i) => i.equipmentId), ...loadout.modules.map((i) => i.equipmentId),
+    ...loadout.implantIds,
+  ].filter(Boolean));
   const allPoolIds = [
     ...WAREHOUSE_STARTING_POOL.weapons, ...WAREHOUSE_STARTING_POOL.tops, ...WAREHOUSE_STARTING_POOL.bottoms,
     ...WAREHOUSE_STARTING_POOL.modules, ...WAREHOUSE_STARTING_POOL.implants,
@@ -107,7 +113,7 @@ function buildStartingWarehouse(loadout) {
   let warehouse = createInventory(Infinity, 'wh-item');
   for (const equipmentId of allPoolIds) {
     if (equippedIds.has(equipmentId)) continue;
-    warehouse = addItem(warehouse, createItem('equipment', { equipmentId }));
+    warehouse = addItem(warehouse, createItem('equipment', { equipmentId, durability: MAX_DURABILITY }));
   }
   for (const c of WAREHOUSE_STARTING_POOL.consumables) {
     const entry = typeof c === 'string' ? { defId: c, count: 1 } : c;
@@ -133,6 +139,7 @@ function newRun(seed) {
     combatContext: null,
     pendingReward: null,
     pendingUnknownNodeId: null,
+    combatSummary: null,
     rngState: createRngState(seed),
   };
 }
@@ -147,6 +154,9 @@ function updateLoadout(snapshot, patch) {
 }
 
 /**
+ * 임플란트 전용 — 무기/상의/하의/모듈은 인스턴스화(§신규) 이후 Item 전체를 저장하므로 defId
+ * 문자열 토글만 하는 이 커맨드로는 다룰 수 없어져, EQUIP_ITEM(_FROM_WAREHOUSE)/UNEQUIP_ITEM
+ * 경로로 일원화했다. 임플란트만 여전히 defId 문자열이라 이 경로가 남아 있다.
  * @param {GameSnapshot} snapshot
  * @param {'weapon'|'top'|'bottom'|'module'|'implant'} slotType
  * @param {string} id
@@ -154,18 +164,12 @@ function updateLoadout(snapshot, patch) {
  */
 function setLoadoutSlot(snapshot, slotType, id) {
   if (snapshot.currentScreen !== 'loadout') return snapshot;
+  if (slotType !== 'implant') return snapshot;
   const loadout = snapshot.playerState.loadout;
-  if (slotType === 'top' || slotType === 'bottom') {
-    const key = `${slotType}Id`;
-    if (loadout[key] === id) return snapshot;
-    return updateLoadout(snapshot, { [key]: id });
-  }
-  const key = `${slotType}Ids`;
-  const current = loadout[key];
-  if (!current) return snapshot;
-  if (current.includes(id)) return updateLoadout(snapshot, { [key]: current.filter((x) => x !== id) });
-  if (current.length >= SLOT_LIMITS[key]) return snapshot;
-  return updateLoadout(snapshot, { [key]: [...current, id] });
+  const current = loadout.implantIds;
+  if (current.includes(id)) return updateLoadout(snapshot, { implantIds: current.filter((x) => x !== id) });
+  if (current.length >= SLOT_LIMITS.implantIds) return snapshot;
+  return updateLoadout(snapshot, { implantIds: [...current, id] });
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
@@ -196,10 +200,13 @@ function canFillEmptyLoadoutSlot(loadout, item) {
   if (item.kind === 'consumable') return loadout.consumableSlots.includes(null);
   if (item.kind !== 'equipment') return false;
   const category = getEquipmentCategory(item.equipmentId);
-  if (category === 'top' || category === 'bottom') return !loadout[`${category}Id`];
-  if (!category) return false;
-  const key = `${category}Ids`;
-  return loadout[key].length < SLOT_LIMITS[key] && !loadout[key].includes(item.equipmentId);
+  if (category === 'top' || category === 'bottom') return !loadout[category];
+  if (category === 'weapon') return loadout.weapons.length < SLOT_LIMITS.weapons;
+  if (category === 'module') return loadout.modules.length < SLOT_LIMITS.modules;
+  // 임플란트는 여전히 defId 중복 불가(같은 패시브 두 번 장착 방지) — 무기/모듈은 §신규
+  // 인스턴스화로 중복 소유·장착이 허용되므로 여기서 dedup하지 않는다.
+  if (category === 'implant') return loadout.implantIds.length < SLOT_LIMITS.implantIds && !loadout.implantIds.includes(item.equipmentId);
+  return false;
 }
 
 /**
@@ -248,23 +255,6 @@ function getAllEquipmentIds() {
   ];
 }
 
-/** @param {Loadout} loadout @returns {string[]} */
-function getOwnedEquipmentIds(loadout) {
-  return [loadout.topId, loadout.bottomId, ...loadout.weaponIds, ...loadout.moduleIds, ...loadout.implantIds].filter(Boolean);
-}
-
-/**
- * Reward equipment pool excludes anything already equipped OR sitting unequipped in inventory
- * (avoids handing out duplicate copies of gear the player already owns).
- * @param {PlayerState} ps
- * @returns {string[]}
- */
-function getAllOwnedEquipmentIds(ps) {
-  const equipped = getOwnedEquipmentIds(ps.loadout);
-  const stored = ps.inventory.items.filter((i) => i.kind === 'equipment').map((i) => i.equipmentId);
-  return [...equipped, ...stored];
-}
-
 /**
  * @param {string} equipmentId
  * @returns {?('weapon'|'top'|'bottom'|'module'|'implant')}
@@ -280,17 +270,19 @@ function getEquipmentCategory(equipmentId) {
 
 /**
  * @param {PlayerState} playerState
- * @returns {{defId: string, itemId?: string}[]}
+ * @returns {{defId: string, itemId?: string, equipmentInstanceId?: string}[]}
  */
 export function getDeckEntries(playerState) {
-  const equipmentEntries = buildDeckFromLoadout(playerState.loadout).map((defId) => ({ defId }));
+  const equipmentEntries = buildDeckFromLoadout(playerState.loadout);
+  // 내구도 4 미만인 장착 장비마다 이번 전투에만 삽입되는 손상 저주 카드(§신규 내구도).
+  const curseEntries = computeDamagedCurseEntries(playerState.loadout);
   const inv = playerState.inventory;
   const orderedIds = inv.items.map((i) => i.id);
   // 잡템·환금템·미장착 장비·탄약 모두 과적(짐) 상태로 넘어간 것만 저주 카드로 덱에 들어간다.
   const lootEntries = inv.items
     .filter((i) => BURDEN_CARD_DEF_BY_KIND[i.kind] && isItemBurdenGivenOrder(orderedIds, [], inv.capacity, i.id))
     .map((i) => ({ defId: BURDEN_CARD_DEF_BY_KIND[i.kind], itemId: i.id }));
-  return [...equipmentEntries, ...lootEntries];
+  return [...equipmentEntries, ...curseEntries, ...lootEntries];
 }
 
 /**
@@ -307,10 +299,11 @@ function startCombat(snapshot, monsterIds, hpMultiplier, isAmbush, context) {
   const extraDrawImplant = getImplantEffect(loadout, 'extraDrawPerTurn');
   const aoeImplant = getImplantEffect(loadout, 'turnStartAoeDamage');
   const usableAmmo = getUsableAmmo(ps.inventory);
+  const maxLoad = computeMaxLoadBonus(loadout);
 
   let combat = createCombatState({
     deckEntries: getDeckEntries(ps), monsterIds, hpMultiplier,
-    playerHp: ps.hp, playerMaxHp: ps.maxHp, ammo: usableAmmo,
+    playerHp: ps.hp, playerMaxHp: ps.maxHp, usableAmmo, maxLoad,
     overload: ps.overload, overloadFloor: computeFloorOverload(loadout),
     overloadGainMultiplier: computeOverloadGainMultiplier(loadout),
     extraDrawPerTurn: extraDrawImplant ? extraDrawImplant.amount : 0,
@@ -472,10 +465,26 @@ function finalizeIfCombatEnded(snapshot) {
   let inventory = ps.inventory;
   for (const itemId of combat.player.removedItemIds) inventory = removeItem(inventory, itemId);
   const ammoAtStart = (snapshot.combatContext && snapshot.combatContext.ammoAtStart) || 0;
-  const ammoSpent = Math.max(0, ammoAtStart - combat.player.ammo);
+  const ammoRemaining = combat.player.loaded + combat.player.reserve;
+  const ammoSpent = Math.max(0, ammoAtStart - ammoRemaining);
   if (ammoSpent > 0) inventory = spendAmmo(inventory, ammoSpent);
-  const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, inventory };
-  const s = { ...snapshot, playerState, activeCombatState: null };
+
+  // 장비 내구도(§신규): 전투 중 축적된 감소 판정을 여기서 실제로 적용. 파괴된 장비는 로드아웃에서
+  // 자동 해제되지만 삭제되진 않고 인벤토리에 파손 상태로 남는다(수리 시스템은 아직 없음).
+  const decayResult = applyDurabilityDecay(ps.loadout, combat.player.durabilityDecayInstanceIds);
+  for (const destroyed of decayResult.destroyedItems) {
+    const { id, ...rest } = destroyed;
+    inventory = addItem(inventory, rest);
+  }
+  const combatSummary = (decayResult.changes.length || decayResult.destroyedItems.length)
+    ? {
+      durabilityChanges: decayResult.changes,
+      destroyed: decayResult.destroyedItems.map((i) => ({ itemId: i.id, equipmentId: i.equipmentId })),
+    }
+    : null;
+
+  const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, inventory, loadout: decayResult.loadout };
+  const s = { ...snapshot, playerState, activeCombatState: null, combatSummary };
 
   const context = snapshot.combatContext;
   const tier = context && context.kind === 'ambush' ? 'normal' : ((context && context.tier) || 'normal');
@@ -492,9 +501,7 @@ function finalizeIfCombatEnded(snapshot) {
  * @returns {GameSnapshot}
  */
 function startReward(snapshot, tier, nodeId) {
-  const ps = snapshot.playerState;
-  const owned = getAllOwnedEquipmentIds(ps);
-  const { slots, rngState } = rollRewardSlots(tier, owned, getAllEquipmentIds(), snapshot.rngState);
+  const { slots, rngState } = rollRewardSlots(tier, getAllEquipmentIds(), snapshot.rngState);
   return {
     ...snapshot, rngState,
     pendingReward: { slots, selections: {}, nodeId, tier },
@@ -523,21 +530,25 @@ function confirmRewards(snapshot) {
   const { slots, selections, nodeId, tier } = snapshot.pendingReward;
   let ps = snapshot.playerState;
   let inventory = ps.inventory;
+  let rng = snapshot.rngState;
 
   for (const slot of slots) {
     const idx = selections[slot.key];
     if (idx === undefined) continue;
     const opt = slot.options[idx];
     if (!opt) continue;
-    if (opt.kind === 'equipment') inventory = addItem(inventory, createItem('equipment', { equipmentId: opt.equipmentId }));
-    else if (opt.kind === 'currency') inventory = addItem(inventory, createItem('currency', { value: opt.value }));
+    if (opt.kind === 'equipment') {
+      const rolled = rollLootDurability(rng);
+      rng = rolled.state;
+      inventory = addItem(inventory, createItem('equipment', { equipmentId: opt.equipmentId, durability: rolled.value }));
+    } else if (opt.kind === 'currency') inventory = addItem(inventory, createItem('currency', { value: opt.value }));
     else if (opt.kind === 'junk') inventory = addItem(inventory, createItem('junk', { value: opt.value }));
     else if (opt.kind === 'ammo') inventory = addAmmo(inventory, opt.amount);
     else if (opt.kind === 'consumable') inventory = addItem(inventory, createItem('consumable', { defId: opt.defId }));
   }
 
   ps = { ...ps, inventory };
-  const s = { ...snapshot, playerState: ps, pendingReward: null };
+  const s = { ...snapshot, playerState: ps, pendingReward: null, rngState: rng, combatSummary: null };
 
   if (tier === 'boss') return { ...s, currentScreen: 'extractionComplete' };
 
@@ -583,33 +594,71 @@ function equipItemFrom(snapshot, fromKey, itemId) {
   if (!item) return snapshot;
   if (item.kind === 'consumable') return equipConsumableFrom(snapshot, fromKey, item);
   if (item.kind !== 'equipment') return snapshot;
-  const equipmentId = item.equipmentId;
-  const category = getEquipmentCategory(equipmentId);
+  // 파손(내구도 0) 장비는 수리 시스템이 아직 없어 재장착 불가(§신규 내구도).
+  if (item.durability <= 0) return snapshot;
+  const category = getEquipmentCategory(item.equipmentId);
   if (!category) return snapshot;
 
   let loadout = ps.loadout;
   let inventory = fromKey === 'inventory' ? removeItem(ps.inventory, itemId) : ps.inventory;
   const warehouse = fromKey === 'warehouse' ? removeItem(ps.warehouse, itemId) : ps.warehouse;
+  // 밀려나는 무기/상의/하의/모듈은 인스턴스 전체(내구도 포함)를 그대로 인벤토리로 되돌린다.
+  /** @param {import('./types.js').Item} bumpedItem */
+  const bumpItemToInventory = (bumpedItem) => { const { id, ...rest } = bumpedItem; inventory = addItem(inventory, rest); };
+  // 임플란트는 여전히 defId 문자열로만 로드아웃에 저장되므로(§신규 인스턴스화 제외 대상),
+  // 밀려날 때 새 인스턴스로 재생성한다 — 내구도는 원래 무의미하므로 손실이 아니다.
   /** @param {string} bumpedEquipmentId */
-  const bumpToInventory = (bumpedEquipmentId) => { inventory = addItem(inventory, createItem('equipment', { equipmentId: bumpedEquipmentId })); };
+  const bumpImplantToInventory = (bumpedEquipmentId) => { inventory = addItem(inventory, createItem('equipment', { equipmentId: bumpedEquipmentId, durability: MAX_DURABILITY })); };
 
-  if (category === 'top' || category === 'bottom') {
-    const key = `${category}Id`;
-    const prevId = loadout[key];
-    if (prevId) bumpToInventory(prevId);
-    loadout = { ...loadout, [key]: equipmentId };
-  } else {
-    const key = `${category}Ids`;
-    let ids = loadout[key];
-    if (ids.includes(equipmentId)) return snapshot;
-    if (ids.length >= SLOT_LIMITS[key]) {
-      bumpToInventory(ids[0]);
+  if (category === 'implant') {
+    if (loadout.implantIds.includes(item.equipmentId)) return snapshot;
+    let ids = loadout.implantIds;
+    if (ids.length >= SLOT_LIMITS.implantIds) {
+      bumpImplantToInventory(ids[0]);
       ids = ids.slice(1);
     }
-    loadout = { ...loadout, [key]: [...ids, equipmentId] };
+    loadout = { ...loadout, implantIds: [...ids, item.equipmentId] };
+  } else if (category === 'top' || category === 'bottom') {
+    const prev = loadout[category];
+    if (prev) bumpItemToInventory(prev);
+    loadout = { ...loadout, [category]: item };
+  } else {
+    // 무기/모듈은 §신규 인스턴스화로 같은 종류 중복 장착도 허용된다.
+    const key = category === 'weapon' ? 'weapons' : 'modules';
+    let items = loadout[key];
+    if (items.length >= SLOT_LIMITS[key]) {
+      bumpItemToInventory(items[0]);
+      items = items.slice(1);
+    }
+    loadout = { ...loadout, [key]: [...items, item] };
   }
 
   return { ...snapshot, playerState: { ...ps, loadout, inventory, warehouse } };
+}
+
+/**
+ * 무기/상의/하의/모듈 전용 — §신규 인스턴스화 이후 같은 종류를 중복 장착할 수 있어 defId만으론
+ * 어느 걸 해제할지 특정할 수 없으므로, 인스턴스 id(itemId) 기준으로 식별한다. 임플란트는
+ * unequipImplant를 사용.
+ * @param {GameSnapshot} snapshot
+ * @param {string} itemId
+ * @returns {GameSnapshot}
+ */
+function unequipItem(snapshot, itemId) {
+  if (!EQUIP_ALLOWED_SCREENS.includes(snapshot.currentScreen)) return snapshot;
+  const ps = snapshot.playerState;
+  let loadout = ps.loadout;
+  let removed = null;
+
+  if (loadout.top && loadout.top.id === itemId) { removed = loadout.top; loadout = { ...loadout, top: null }; }
+  else if (loadout.bottom && loadout.bottom.id === itemId) { removed = loadout.bottom; loadout = { ...loadout, bottom: null }; }
+  else if (loadout.weapons.some((w) => w.id === itemId)) { removed = loadout.weapons.find((w) => w.id === itemId); loadout = { ...loadout, weapons: loadout.weapons.filter((w) => w.id !== itemId) }; }
+  else if (loadout.modules.some((m) => m.id === itemId)) { removed = loadout.modules.find((m) => m.id === itemId); loadout = { ...loadout, modules: loadout.modules.filter((m) => m.id !== itemId) }; }
+  else return snapshot;
+
+  const { id, ...rest } = removed;
+  const inventory = addItem(ps.inventory, rest);
+  return { ...snapshot, playerState: { ...ps, loadout, inventory } };
 }
 
 /**
@@ -617,25 +666,14 @@ function equipItemFrom(snapshot, fromKey, itemId) {
  * @param {string} equipmentId
  * @returns {GameSnapshot}
  */
-function unequipItem(snapshot, equipmentId) {
+function unequipImplant(snapshot, equipmentId) {
   if (!EQUIP_ALLOWED_SCREENS.includes(snapshot.currentScreen)) return snapshot;
   const ps = snapshot.playerState;
-  const category = getEquipmentCategory(equipmentId);
-  if (!category) return snapshot;
-  let loadout = ps.loadout;
-
-  if (category === 'top' || category === 'bottom') {
-    const key = `${category}Id`;
-    if (loadout[key] !== equipmentId) return snapshot;
-    loadout = { ...loadout, [key]: null };
-  } else {
-    const key = `${category}Ids`;
-    if (!loadout[key].includes(equipmentId)) return snapshot;
-    loadout = { ...loadout, [key]: loadout[key].filter((id) => id !== equipmentId) };
-  }
-
-  const inventory = addItem(ps.inventory, createItem('equipment', { equipmentId }));
-  return { ...snapshot, playerState: { ...ps, loadout, inventory } };
+  const loadout = ps.loadout;
+  if (!loadout.implantIds.includes(equipmentId)) return snapshot;
+  const newLoadout = { ...loadout, implantIds: loadout.implantIds.filter((id) => id !== equipmentId) };
+  const inventory = addItem(ps.inventory, createItem('equipment', { equipmentId, durability: MAX_DURABILITY }));
+  return { ...snapshot, playerState: { ...ps, loadout: newLoadout, inventory } };
 }
 
 /**

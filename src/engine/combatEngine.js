@@ -5,7 +5,7 @@ import { computeDamage, computeBlock, applyDamage, decayStatusesAtTurnEnd, apply
 import { getStage, gainOverload, isLethalOverload } from './overloadEngine.js';
 import { currentMove, advanceAiState, createInitialAiState } from './monsterAI.js';
 import { isItemBurdenGivenOrder } from './inventoryEngine.js';
-import { nextInt } from './rng.js';
+import { nextInt, nextFloat } from './rng.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
@@ -21,6 +21,7 @@ import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
 /** @typedef {import('./types.js').EffectContext} EffectContext */
 
 const HAND_SIZE = 5;
+const DURABILITY_DECAY_CHANCE = 0.01;
 
 // ---- card resolution helpers ----
 
@@ -131,7 +132,7 @@ export function isCardPlayable(state, instanceId) {
   const resolved = resolveCard(def, stage);
   const cost = resolved.cost + getCostModifierFromStatuses(def, state.player.statuses);
   if (state.player.energy < cost) return false;
-  if (def.ammoCost && state.player.ammo < def.ammoCost) return false;
+  if (def.ammoCost && state.player.loaded < def.ammoCost) return false;
   return true;
 }
 
@@ -166,12 +167,13 @@ function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier, double
 
 /**
  * @param {Object} params
- * @param {{defId: string, itemId?: string}[]} params.deckEntries
+ * @param {{defId: string, itemId?: string, equipmentInstanceId?: string}[]} params.deckEntries
  * @param {string[]} params.monsterIds
  * @param {number} [params.hpMultiplier]
  * @param {number} params.playerHp
  * @param {number} params.playerMaxHp
- * @param {number} params.ammo
+ * @param {number} params.usableAmmo total ammo pulled in from inventory reserve at combat start
+ * @param {number} params.maxLoad cap on player.loaded, sum of equipped weapons' maxLoadBonus
  * @param {number} params.overload
  * @param {number} params.overloadFloor
  * @param {number} params.overloadGainMultiplier
@@ -184,7 +186,7 @@ function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier, double
  * @returns {CombatState} phase 'setup' — caller must run beginPlayerFirst() or beginEnemyFirst()
  */
 export function createCombatState({
-  deckEntries, monsterIds, hpMultiplier, playerHp, playerMaxHp, ammo,
+  deckEntries, monsterIds, hpMultiplier, playerHp, playerMaxHp, usableAmmo, maxLoad,
   overload, overloadFloor, overloadGainMultiplier, extraDrawPerTurn, turnStartAoeDamage,
   inventoryItemIdsInOrder, inventoryCapacity, hasBurdenItems, rngState,
 }) {
@@ -204,6 +206,10 @@ export function createCombatState({
     rng = created.rngState;
   });
 
+  // 전투 시작 시 장전을 최대치로 채우고 진입(재고가 허락하는 한) — 나머지는 reserve로 남는다.
+  const loaded = Math.min(maxLoad, usableAmmo);
+  const reserve = usableAmmo - loaded;
+
   // phase 'setup' — caller must run beginPlayerFirst() or beginEnemyFirst() (ambush, §7.3)
   // to actually open the combat; neither has happened yet.
   return {
@@ -212,13 +218,14 @@ export function createCombatState({
     overload, overloadFloor, overloadGainMultiplier,
     player: {
       hp: playerHp, maxHp: playerMaxHp, block: 0,
-      energy: 3, maxEnergy: 3, ammo,
+      energy: 3, maxEnergy: 3, loaded, reserve, maxLoad,
       statuses: {}, powers: {}, temporaryEffects: {},
       extraDrawPerTurn: extraDrawPerTurn || 0,
       turnStartAoeDamage: turnStartAoeDamage || 0,
       inventoryItemIdsInOrder: inventoryItemIdsInOrder || [],
       inventoryCapacity: inventoryCapacity || 30,
       removedItemIds: [],
+      durabilityDecayInstanceIds: [],
     },
     enemies,
     piles: shuffled.piles,
@@ -528,6 +535,11 @@ function applyOneEffect(state, effect, context) {
       if (!context.itemId) return state;
       return { ...state, player: { ...state.player, removedItemIds: [...state.player.removedItemIds, context.itemId] } };
     }
+    case 'reload': {
+      const gained = Math.min(state.player.maxLoad - state.player.loaded, state.player.reserve);
+      if (gained <= 0) return state;
+      return { ...state, player: { ...state.player, loaded: state.player.loaded + gained, reserve: state.player.reserve - gained } };
+    }
     default:
       throw new Error(`Unsupported effect kind: ${effect.kind}`);
   }
@@ -606,7 +618,7 @@ export function playCard(state, instanceId, targetId) {
     player: {
       ...state.player,
       energy: state.player.energy - resolved.cost - getCostModifierFromPowers(def, stage, state.player.powers) - getCostModifierFromStatuses(def, state.player.statuses),
-      ammo: def.ammoCost ? state.player.ammo - def.ammoCost : state.player.ammo,
+      loaded: def.ammoCost ? state.player.loaded - def.ammoCost : state.player.loaded,
     },
   };
 
@@ -630,6 +642,16 @@ export function playCard(state, instanceId, targetId) {
 
   if (def.type !== 'power') {
     s = { ...s, piles: def.exhausts ? cardEngine.moveToExhaust(s.piles, card) : cardEngine.moveToDiscard(s.piles, card) };
+  }
+
+  // 장비 내구도(§신규): 이 카드가 장비 인스턴스 소속이면(손상 저주카드/필러/과적 카드는 제외)
+  // 1% 확률로 그 인스턴스에 감소 1회 축적 — 실제 적용은 전투 종료 후(finalizeIfCombatEnded).
+  if (card.equipmentInstanceId) {
+    const roll = nextFloat(s.rngState);
+    s = { ...s, rngState: roll.state };
+    if (roll.value < DURABILITY_DECAY_CHANCE) {
+      s = { ...s, player: { ...s.player, durabilityDecayInstanceIds: [...s.player.durabilityDecayInstanceIds, card.equipmentInstanceId] } };
+    }
   }
 
   return checkWinLoss(s);

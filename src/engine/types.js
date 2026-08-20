@@ -12,6 +12,10 @@
  * @property {'junk'|'currency'|'equipment'|'ammo'|'consumable'} kind
  * @property {number} [value] junk/currency only
  * @property {string} [equipmentId] equipment only
+ * @property {number} [durability] equipment only — 0-MAX_DURABILITY, set uniformly on creation
+ *   (see equipmentEngine.js). Only meaningful for weapon/top/bottom/module (decays via their
+ *   cardList); implants carry the field too for creation-site uniformity but never read/decay it
+ *   since they have no cardList (excluded from the durability system).
  * @property {number} [amount] ammo only (1-10 per stack)
  * @property {string} [defId] consumable only — 1 slot = 1 unit, no stacking
  */
@@ -28,11 +32,14 @@
 
 /**
  * @typedef {Object} Loadout
- * @property {string[]} weaponIds
- * @property {?string} topId
- * @property {?string} bottomId
- * @property {string[]} moduleIds
- * @property {string[]} implantIds
+ * @property {Item[]} weapons equipped equipment Items pulled out of inventory whole (kind:
+ *   'equipment'), so durability survives the round trip back to inventory on unequip — same
+ *   pattern as consumableSlots below. Max 2.
+ * @property {?Item} top
+ * @property {?Item} bottom
+ * @property {Item[]} modules max 2
+ * @property {string[]} implantIds implants have no cardList so they're excluded from durability —
+ *   stay plain defId strings, unlike the other equipment slots above
  * @property {(?Item)[]} consumableSlots 3 fixed 퀵슬롯 — equipped consumable Items pulled out of
  *   inventory whole (kind: 'consumable'), so their original itemId/defId survive the round trip
  *   back to inventory on unequip. null = empty slot.
@@ -75,7 +82,7 @@
 
 /**
  * @typedef {Object} CardEffect
- * @property {string} kind 'damage'|'block'|'applyStatus'|'applyStun'|'draw'|'discardRandomFromHand'|'activatePower'|'grantNextRangedBonus'|'removeInventoryItem'
+ * @property {string} kind 'damage'|'block'|'applyStatus'|'applyStun'|'draw'|'discardRandomFromHand'|'activatePower'|'grantNextRangedBonus'|'removeInventoryItem'|'reload'
  * @property {number} [value]
  * @property {string} [status]
  * @property {number} [amount]
@@ -125,6 +132,8 @@
  * @property {string} instanceId
  * @property {string} defId
  * @property {string} [itemId] 잡템/환금템/장비/탄약 저주 카드만 — 연결된 인벤토리 아이템 id
+ * @property {string} [equipmentInstanceId] 장비(무기/상의/하의/모듈) cardList에서 온 카드만 — 그
+ *   카드를 낸 장비 인스턴스(Item.id). 필러/과적/장비손상 저주 카드는 없음.
  */
 
 /**
@@ -146,7 +155,9 @@
  * @property {number} block
  * @property {number} energy
  * @property {number} maxEnergy
- * @property {number} ammo
+ * @property {number} loaded ammo actually spendable by ammoCost cards this combat
+ * @property {number} reserve ammo held back, moved into `loaded` by the reload effect
+ * @property {number} maxLoad cap on `loaded`, sum of equipped weapons' maxLoadBonus
  * @property {Statuses} statuses
  * @property {Object.<string, {active: boolean}>} powers
  * @property {{nextRangedBonus?: {amount: number, ignoresBlock: boolean}}} temporaryEffects
@@ -155,6 +166,8 @@
  * @property {string[]} inventoryItemIdsInOrder combat-start snapshot, for live burden checks
  * @property {number} inventoryCapacity
  * @property {string[]} removedItemIds burden cards played this combat (synced back post-combat)
+ * @property {string[]} durabilityDecayInstanceIds equipmentInstanceId pushed once per successful
+ *   1% decay roll this combat (may repeat) — resolved into actual durability loss post-combat
  * @property {number} [stolenValueThisCombat]
  */
 
@@ -290,7 +303,15 @@
  * @property {?CombatContext} combatContext
  * @property {?PendingReward} pendingReward
  * @property {?string} pendingUnknownNodeId
+ * @property {?CombatSummary} combatSummary post-combat durability report, shown once on the
+ *   reward screen then cleared by CONFIRM_REWARDS
  * @property {RngState} rngState
+ */
+
+/**
+ * @typedef {Object} CombatSummary
+ * @property {{itemId: string, equipmentId: string, from: number, to: number}[]} durabilityChanges
+ * @property {{itemId: string, equipmentId: string}[]} destroyed
  */
 
 export {};

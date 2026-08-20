@@ -66,23 +66,31 @@ function driveToNextCombatOrEnd(s, guardLimit = 30) {
 test('NEW_RUN starts on the loadout screen with nothing equipped', () => {
   const s = gameReducer(null, { type: 'NEW_RUN', seed: 1 });
   assert.equal(s.currentScreen, 'loadout');
-  assert.deepEqual(s.playerState.loadout.weaponIds, []);
-  assert.equal(s.playerState.loadout.topId, null);
-  assert.equal(s.playerState.loadout.bottomId, null);
-  assert.deepEqual(s.playerState.loadout.moduleIds, []);
+  assert.deepEqual(s.playerState.loadout.weapons, []);
+  assert.equal(s.playerState.loadout.top, null);
+  assert.equal(s.playerState.loadout.bottom, null);
+  assert.deepEqual(s.playerState.loadout.modules, []);
   assert.deepEqual(s.playerState.loadout.implantIds, []);
 });
 
-test('SET_LOADOUT_SLOT toggles multi-select slots and respects the 2-weapon limit', () => {
+// 무기/상의/하의/모듈은 §신규 인스턴스화 이후 Item 전체를 저장하므로(중복 장착도 허용) defId
+// 문자열 토글만 하는 SET_LOADOUT_SLOT으로는 다룰 수 없다 — EQUIP_ITEM(_FROM_WAREHOUSE)/
+// UNEQUIP_ITEM으로 일원화됐고, SET_LOADOUT_SLOT은 여전히 defId 문자열인 임플란트 전용으로 축소.
+test('SET_LOADOUT_SLOT toggles implant slots (3-limit) and no-ops for non-implant slot types', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 1 });
-  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'weapon', id: 'katana' }); // add
-  assert.deepEqual(s.playerState.loadout.weaponIds, ['katana']);
-  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'weapon', id: 'katana' }); // toggle off -> remove
-  assert.deepEqual(s.playerState.loadout.weaponIds, []);
+  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant1' }); // add
+  assert.deepEqual(s.playerState.loadout.implantIds, ['implant1']);
+  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant1' }); // toggle off -> remove
+  assert.deepEqual(s.playerState.loadout.implantIds, []);
+  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant1' });
+  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant3' });
+  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant5' });
+  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant6' }); // 4th -> no-op
+  assert.equal(s.playerState.loadout.implantIds.length, 3);
+
+  const before = s;
   s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'weapon', id: 'katana' });
-  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'weapon', id: 'dagger' });
-  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'weapon', id: 'rifle' }); // 3rd -> no-op
-  assert.equal(s.playerState.loadout.weaponIds.length, 2);
+  assert.equal(s, before); // weapon/top/bottom/module no longer go through this command
 });
 
 test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seeds starting ammo, and generates the map', () => {
@@ -198,28 +206,44 @@ test('junk and currency items only enter the deck as curse cards once they are b
   assert.equal(currencyCount, items.length - capacity); // only the currency items past capacity (burden) are included
 });
 
-test('EQUIP_ITEM/UNEQUIP_ITEM move gear between the loadout and the inventory, and are blocked mid-combat', () => {
+test('EQUIP_ITEM/UNEQUIP_ITEM move gear (by instance itemId) between the loadout and the inventory, and are blocked mid-combat', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = {
     ...s,
     playerState: {
       ...s.playerState,
-      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-rifle', kind: 'equipment', equipmentId: 'rifle' }] },
-      loadout: { ...s.playerState.loadout, weaponIds: ['katana'] },
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-rifle', kind: 'equipment', equipmentId: 'rifle', durability: 10 }] },
+      loadout: { ...s.playerState.loadout, weapons: [{ id: 'item-katana', kind: 'equipment', equipmentId: 'katana', durability: 10 }] },
     },
   };
 
   s = gameReducer(s, { type: 'EQUIP_ITEM', itemId: 'item-rifle' });
-  assert.deepEqual(s.playerState.loadout.weaponIds.sort(), ['katana', 'rifle']);
+  assert.deepEqual(s.playerState.loadout.weapons.map((w) => w.equipmentId).sort(), ['katana', 'rifle']);
   assert.ok(!s.playerState.inventory.items.some((i) => i.id === 'item-rifle'));
 
-  s = gameReducer(s, { type: 'UNEQUIP_ITEM', equipmentId: 'rifle' });
-  assert.deepEqual(s.playerState.loadout.weaponIds, ['katana']);
-  assert.ok(s.playerState.inventory.items.some((i) => i.kind === 'equipment' && i.equipmentId === 'rifle'));
+  const equippedRifleId = s.playerState.loadout.weapons.find((w) => w.equipmentId === 'rifle').id;
+  s = gameReducer(s, { type: 'UNEQUIP_ITEM', itemId: equippedRifleId });
+  assert.deepEqual(s.playerState.loadout.weapons.map((w) => w.equipmentId), ['katana']);
+  assert.ok(s.playerState.inventory.items.some((i) => i.kind === 'equipment' && i.equipmentId === 'rifle' && i.durability === 10));
 
   const midCombat = driveToNextCombatOrEnd(s);
   assert.equal(midCombat.currentScreen, 'combat');
-  const blocked = gameReducer(midCombat, { type: 'UNEQUIP_ITEM', equipmentId: 'katana' });
+  const equippedKatanaId = midCombat.playerState.loadout.weapons[0].id;
+  const blocked = gameReducer(midCombat, { type: 'UNEQUIP_ITEM', itemId: equippedKatanaId });
   assert.equal(blocked, midCombat); // guarded to currentScreen === 'map', no-op mid-combat
+});
+
+test('EQUIP_ITEM refuses to (re-)equip a broken (durability 0) item', () => {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-broken', kind: 'equipment', equipmentId: 'rifle', durability: 0 }] },
+    },
+  };
+  const after = gameReducer(s, { type: 'EQUIP_ITEM', itemId: 'item-broken' });
+  assert.equal(after, s); // no-op — broken gear can't be re-equipped (no repair system yet)
 });

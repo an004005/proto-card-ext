@@ -1,7 +1,7 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal, combatAnimationSignal, combatPlaybackDurationSignal } from '../state/runState.js';
-import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadStageSignal, ammoMaxSignal } from '../state/combatStateAdapter.js';
+import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadStageSignal } from '../state/combatStateAdapter.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { isCardPlayable, getCardTargetKind } from '../engine/combatEngine.js';
@@ -29,7 +29,6 @@ export function CombatScreen() {
   const enemies = enemiesSignal.value;
   const player = playerCombatSignal.value;
   const pileCounts = pileCountsSignal.value;
-  const ammoMax = ammoMaxSignal.value;
   const stage = overloadStageSignal.value;
   const consumableSlots = snapshotSignal.value.playerState.loadout.consumableSlots;
 
@@ -89,7 +88,7 @@ export function CombatScreen() {
       </div>
 
       <div style=${{ display: 'flex', gap: 'var(--space-4)', justifyContent: 'center', alignItems: 'stretch' }}>
-        <${PlayerStatusBar} player=${player} overload=${combat.overload} overloadFloor=${combat.overloadFloor} ammoMax=${ammoMax} animation=${animation?.actor === 'player' ? animation : null} />
+        <${PlayerStatusBar} player=${player} overload=${combat.overload} overloadFloor=${combat.overloadFloor} animation=${animation?.actor === 'player' ? animation : null} />
         <div style=${{ width: '2px', background: 'var(--color-divider)', alignSelf: 'stretch' }}></div>
         <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
           ${enemies.map((enemy) => html`

@@ -67,7 +67,8 @@ function summarize(command, before) {
     case 'CONFIRM_REWARDS': return 'CONFIRM_REWARDS';
     case 'EQUIP_ITEM': return `EQUIP_ITEM ${command.itemId}`;
     case 'EQUIP_ITEM_FROM_WAREHOUSE': return `EQUIP_ITEM_FROM_WAREHOUSE ${command.itemId}`;
-    case 'UNEQUIP_ITEM': return `UNEQUIP_ITEM ${command.equipmentId}`;
+    case 'UNEQUIP_ITEM': return `UNEQUIP_ITEM ${command.itemId}`;
+    case 'UNEQUIP_IMPLANT': return `UNEQUIP_IMPLANT ${command.equipmentId}`;
     case 'UNEQUIP_CONSUMABLE': return `UNEQUIP_CONSUMABLE ${command.itemId}`;
     case 'MOVE_TO_INVENTORY': return `MOVE_TO_INVENTORY ${command.itemId}`;
     case 'MOVE_TO_WAREHOUSE': return `MOVE_TO_WAREHOUSE ${command.itemId}`;

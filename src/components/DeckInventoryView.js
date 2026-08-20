@@ -32,8 +32,9 @@ function ItemTooltipContent({ item }) {
   const info = describeItem(item);
   if (item.kind === 'equipment') {
     const def = EQUIPMENT_DEFS[item.equipmentId];
-    if (def?.cardList) return html`<${EquipmentTooltipContent} name=${def.name} cardList=${def.cardList} />`;
-    return html`<div style=${{ width: '220px' }}><div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '13px', marginBottom: '6px' }}>${info.name}</div><div style=${{ fontSize: '11px', opacity: 0.85 }}>${def?.description || '패시브 장비 — 장착 시 효과 적용'}</div></div>`;
+    const durabilityLine = item.durability !== undefined ? html`<div style=${{ fontSize: '10px', opacity: 0.7, marginTop: '4px' }}>${info.sub}</div>` : null;
+    if (def?.cardList) return html`<div><${EquipmentTooltipContent} name=${def.name} cardList=${def.cardList} />${durabilityLine}</div>`;
+    return html`<div style=${{ width: '220px' }}><div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '13px', marginBottom: '6px' }}>${info.name}</div><div style=${{ fontSize: '11px', opacity: 0.85 }}>${def?.description || '패시브 장비 — 장착 시 효과 적용'}</div>${durabilityLine}</div>`;
   }
   if (item.kind === 'consumable') {
     const def = CONSUMABLE_DEFINITIONS[item.defId];
@@ -114,7 +115,8 @@ export function DeckInventoryView({ loadout, inventory = null, warehouse = null,
   function handleDropOnInventoryArea(e) {
     e.preventDefault();
     if (!dragPayload) return;
-    if (dragPayload.type === 'equippedItem') dispatch({ type: 'UNEQUIP_ITEM', equipmentId: dragPayload.equipmentId });
+    if (dragPayload.type === 'equippedItem') dispatch({ type: 'UNEQUIP_ITEM', itemId: dragPayload.itemId });
+    else if (dragPayload.type === 'equippedImplant') dispatch({ type: 'UNEQUIP_IMPLANT', equipmentId: dragPayload.equipmentId });
     else if (dragPayload.type === 'equippedConsumable') dispatch({ type: 'UNEQUIP_CONSUMABLE', itemId: dragPayload.itemId });
     setDragPayload(null);
   }
@@ -135,7 +137,11 @@ export function DeckInventoryView({ loadout, inventory = null, warehouse = null,
     <div style=${{ display: 'flex', gap: 'var(--space-4)', flex: 1, alignItems: 'flex-start' }}>
       <${EquipSlotsPanel}
         allEquipSlots=${allEquipSlots} manage=${manage}
-        onDragEquipped=${(sl) => setDragPayload(sl.catKey === 'consumable' ? { type: 'equippedConsumable', itemId: sl.itemId } : { type: 'equippedItem', equipmentId: sl.equipmentId })}
+        onDragEquipped=${(sl) => setDragPayload(
+          sl.catKey === 'consumable' ? { type: 'equippedConsumable', itemId: sl.itemId }
+            : sl.catKey === 'implant' ? { type: 'equippedImplant', equipmentId: sl.equipmentId }
+              : { type: 'equippedItem', itemId: sl.itemId },
+        )}
         onDropOnSlot=${handleDropOnSlot}
       />
 

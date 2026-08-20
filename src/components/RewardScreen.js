@@ -1,7 +1,8 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { describeItem } from '../data/itemDisplay.js';
+import { combatSummarySignal } from '../state/combatStateAdapter.js';
+import { describeItem, EQUIPMENT_DEFS } from '../data/itemDisplay.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 
 const CATEGORY_INFO = {
@@ -31,10 +32,24 @@ export function RewardScreen() {
   const { slots, selections } = pending;
   const activeSlot = activeSlotKey ? slots.find((s) => s.key === activeSlotKey) : null;
   const claimedCount = Object.keys(selections).length;
+  const summary = combatSummarySignal.value;
 
   return html`
     <div style=${{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 'var(--space-8)', gap: 'var(--space-6)' }}>
       <h2 style=${{ margin: 0 }}>전투 승리 — 보상 선택</h2>
+
+      ${summary ? html`
+        <div style=${{ width: '400px', border: '2px solid var(--color-divider)', padding: 'var(--space-3)', fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style=${{ fontWeight: 800, letterSpacing: '0.04em', marginBottom: '2px' }}>이번 전투 장비 내구도 변화</div>
+          ${summary.durabilityChanges.map((c, i) => html`
+            <div key=${i} style=${{ opacity: 0.8 }}>${EQUIPMENT_DEFS[c.equipmentId]?.name || c.equipmentId} 내구도 ${c.from}→${c.to}</div>
+          `)}
+          ${summary.destroyed.map((d, i) => html`
+            <div key=${i} style=${{ color: 'var(--color-accent-700)', fontWeight: 700 }}>${EQUIPMENT_DEFS[d.equipmentId]?.name || d.equipmentId} 파손 — 자동 해제됨</div>
+          `)}
+        </div>
+      ` : null}
+
       <div class="hr" style=${{ width: '500px' }}></div>
 
       ${activeSlot ? html`

@@ -18,23 +18,27 @@ function nextInstanceId() {
 /**
  * @param {string} defId
  * @param {string} [itemId]
+ * @param {string} [equipmentInstanceId]
  * @returns {CardInstance}
  */
-export function createCardInstance(defId, itemId) {
+export function createCardInstance(defId, itemId, equipmentInstanceId) {
   const instance = { instanceId: nextInstanceId(), defId };
   if (itemId) instance.itemId = itemId;
+  if (equipmentInstanceId) instance.equipmentInstanceId = equipmentInstanceId;
   return instance;
 }
 
 /**
- * entries: [{defId}] for ordinary cards, or [{defId, itemId}] for loot-linked curse cards
+ * entries: [{defId}] for ordinary cards, [{defId, itemId}] for loot-linked curse cards
  * (junk_item/currency_item) whose playability depends on that specific inventory item's
- * burden status — see inventoryEngine.isItemBurdenGivenOrder.
- * @param {{defId: string, itemId?: string}[]} entries
+ * burden status — see inventoryEngine.isItemBurdenGivenOrder — or [{defId, equipmentInstanceId}]
+ * for cards from an equipped weapon/top/bottom/module's cardList, so combatEngine can attribute
+ * durability decay rolls to the right instance.
+ * @param {{defId: string, itemId?: string, equipmentInstanceId?: string}[]} entries
  * @returns {CardInstance[]}
  */
 export function buildDeck(entries) {
-  return entries.map((entry) => createCardInstance(entry.defId, entry.itemId));
+  return entries.map((entry) => createCardInstance(entry.defId, entry.itemId, entry.equipmentInstanceId));
 }
 
 /** @returns {Piles} */

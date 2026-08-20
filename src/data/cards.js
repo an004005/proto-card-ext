@@ -77,6 +77,14 @@ export const CARD_DEFINITIONS = {
     description: '피해 6. 총알 1 소모.',
   },
 
+  // ---- 공용 (총기 전용, §신규 재장전) ----
+  reload: {
+    id: 'reload', name: '재장전', type: 'skill', attackKind: null,
+    cost: 1, exhausts: false, scalesWithStage: false, overloadGain: 0,
+    effects: [{ kind: 'reload' }],
+    description: '예비 탄약에서 최대 장전수까지 장전.',
+  },
+
   // ---- 중갑상의 ----
   heavy_top_dodge: {
     id: 'heavy_top_dodge', name: '회피', type: 'skill', attackKind: null,
@@ -267,6 +275,15 @@ export const CARD_DEFINITIONS = {
     unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '아무 효과 없음. 1코로 사용해 소멸.',
+  },
+  // 장비 내구도가 4 미만이면 (4-내구도)장만큼 전투 시작 시 이 카드가 덱에 삽입됨(§신규 내구도).
+  // 어느 장비 손상인지는 구분하지 않는 범용 카드 — sticky_curse와 동일 패턴, 소지 아이템과
+  // 연결되지 않으므로 equipmentInstanceId가 없어 스스로는 내구도 감소 판정 대상이 아님.
+  equipment_damaged_curse: {
+    id: 'equipment_damaged_curse', name: '손상된 장비', type: 'curse', attackKind: null,
+    unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
+    effects: [],
+    description: '아무 효과 없음. 1코로 사용해 소멸. 장비 내구도 저하로 이번 전투에만 발생.',
   },
   infected_curse: {
     id: 'infected_curse', name: '감염', type: 'curse', attackKind: null,

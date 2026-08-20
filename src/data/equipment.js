@@ -6,6 +6,7 @@
  * @property {string} name
  * @property {'weapon'|'top'|'bottom'|'module'} slot
  * @property {{defId: string, count: number}[]} cardList
+ * @property {number} [maxLoadBonus] weapon only — adds to the shared loaded-ammo cap (§신규 재장전)
  */
 
 /** @type {Object.<string, EquipmentDef>} */
@@ -15,16 +16,16 @@ export const WEAPON_DEFINITIONS = {
     cardList: [{ defId: 'katana_slash', count: 2 }, { defId: 'katana_parry', count: 1 }],
   },
   rifle: {
-    id: 'rifle', name: '라이플', slot: 'weapon',
-    cardList: [{ defId: 'rifle_aim', count: 1 }, { defId: 'rifle_suppress', count: 1 }, { defId: 'rifle_buttstock', count: 1 }],
+    id: 'rifle', name: '라이플', slot: 'weapon', maxLoadBonus: 5,
+    cardList: [{ defId: 'rifle_aim', count: 1 }, { defId: 'rifle_suppress', count: 1 }, { defId: 'rifle_buttstock', count: 1 }, { defId: 'reload', count: 1 }],
   },
   dagger: {
     id: 'dagger', name: '단검', slot: 'weapon',
     cardList: [{ defId: 'dagger_weak_slash', count: 1 }, { defId: 'dagger_stab', count: 1 }],
   },
   pistol: {
-    id: 'pistol', name: '권총', slot: 'weapon',
-    cardList: [{ defId: 'pistol_shot', count: 2 }],
+    id: 'pistol', name: '권총', slot: 'weapon', maxLoadBonus: 3,
+    cardList: [{ defId: 'pistol_shot', count: 2 }, { defId: 'reload', count: 1 }],
   },
 };
 

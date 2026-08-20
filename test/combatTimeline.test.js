@@ -8,7 +8,7 @@ import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
 function combat(monsterIds = ['nibbit', 'nibbit']) {
   return beginPlayerFirst(createCombatState({
     deckEntries: Array.from({ length: 10 }, (_, i) => ({ defId: 'katana_slash', instanceId: `card-${i}` })),
-    monsterIds, playerHp: 70, playerMaxHp: 70, ammo: 8, overload: 0, overloadFloor: 0,
+    monsterIds, playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999, overload: 0, overloadFloor: 0,
     overloadGainMultiplier: 1, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
     inventoryItemIdsInOrder: [], inventoryCapacity: 30, rngState: { seed: 1 },
   }));

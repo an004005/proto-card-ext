@@ -23,15 +23,17 @@ export const CATEGORIES = [
 ];
 
 /**
+ * weapon/top/bottom/module은 §신규 인스턴스화로 Item 전체를 반환하고(내구도 포함), 임플란트만
+ * 여전히 defId 문자열을 반환한다(인스턴스화 대상 제외).
  * @param {Loadout} loadout
  * @param {Object} cat
- * @returns {string[]}
+ * @returns {(import('../engine/types.js').Item|string)[]}
  */
 export function getSelectedIds(loadout, cat) {
-  if (cat.key === 'weapon') return loadout.weaponIds;
-  if (cat.key === 'top') return loadout.topId ? [loadout.topId] : [];
-  if (cat.key === 'bottom') return loadout.bottomId ? [loadout.bottomId] : [];
-  if (cat.key === 'module') return loadout.moduleIds;
+  if (cat.key === 'weapon') return loadout.weapons;
+  if (cat.key === 'top') return loadout.top ? [loadout.top] : [];
+  if (cat.key === 'bottom') return loadout.bottom ? [loadout.bottom] : [];
+  if (cat.key === 'module') return loadout.modules;
   if (cat.key === 'implant') return loadout.implantIds;
   return [];
 }
@@ -51,15 +53,19 @@ export function cardCountOf(def) {
  * @returns {Object[]}
  */
 export function buildSlots(cat, loadout) {
-  const ids = getSelectedIds(loadout, cat);
+  const entries = getSelectedIds(loadout, cat);
+  const isImplant = cat.key === 'implant';
   const slots = [];
   for (let i = 0; i < cat.max; i++) {
-    const id = ids[i];
-    const def = id ? cat.defs[id] : null;
+    const entry = entries[i];
+    const equipmentId = isImplant ? entry : entry?.equipmentId;
+    const def = equipmentId ? cat.defs[equipmentId] : null;
     slots.push({
       key: `${cat.key}${i}`,
       catKey: cat.key,
-      equipmentId: id || null,
+      equipmentId: equipmentId || null,
+      itemId: isImplant ? null : (entry?.id || null),
+      durability: isImplant ? undefined : entry?.durability,
       category: cat.max > 1 ? `${cat.label}${i + 1}` : cat.label,
       filled: !!def,
       name: def?.name,
@@ -116,20 +122,20 @@ export function buildDeckGroups(loadout) {
     const cards = [];
     for (const entry of cardList) {
       const cardDef = CARD_DEFINITIONS[entry.defId];
-      if (cardDef.requiresWeapon && !loadout.weaponIds.includes(cardDef.requiresWeapon)) continue;
+      if (cardDef.requiresWeapon && !loadout.weapons.some((w) => w.equipmentId === cardDef.requiresWeapon)) continue;
       for (let i = 0; i < entry.count; i++) cards.push({ name: cardDef.name, defId: entry.defId });
     }
     if (cards.length) groups.push({ name, color, cards });
   };
-  loadout.weaponIds.forEach((id) => WEAPON_DEFINITIONS[id] && pushGroup(WEAPON_DEFINITIONS[id].name, 'var(--color-accent)', WEAPON_DEFINITIONS[id].cardList));
-  if (loadout.topId) pushGroup(ARMOR_TOP_DEFINITIONS[loadout.topId].name, 'var(--color-neutral-700)', ARMOR_TOP_DEFINITIONS[loadout.topId].cardList);
-  if (loadout.bottomId) pushGroup(ARMOR_BOTTOM_DEFINITIONS[loadout.bottomId].name, 'var(--color-neutral-700)', ARMOR_BOTTOM_DEFINITIONS[loadout.bottomId].cardList);
-  loadout.moduleIds.forEach((id) => MODULE_DEFINITIONS[id] && pushGroup(MODULE_DEFINITIONS[id].name, 'var(--color-accent-2-700)', MODULE_DEFINITIONS[id].cardList));
+  loadout.weapons.forEach((item) => WEAPON_DEFINITIONS[item.equipmentId] && pushGroup(WEAPON_DEFINITIONS[item.equipmentId].name, 'var(--color-accent)', WEAPON_DEFINITIONS[item.equipmentId].cardList));
+  if (loadout.top) pushGroup(ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId].name, 'var(--color-neutral-700)', ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId].cardList);
+  if (loadout.bottom) pushGroup(ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId].name, 'var(--color-neutral-700)', ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId].cardList);
+  loadout.modules.forEach((item) => MODULE_DEFINITIONS[item.equipmentId] && pushGroup(MODULE_DEFINITIONS[item.equipmentId].name, 'var(--color-accent-2-700)', MODULE_DEFINITIONS[item.equipmentId].cardList));
 
   // 무기/상의/하의 미장착 슬롯 보충 카드(맨손공격/어설픈 회피) — equipmentEngine.buildDeckFromLoadout과 동일 규칙.
-  const emptyWeaponSlots = Math.max(0, MAX_WEAPON_SLOTS - loadout.weaponIds.length);
+  const emptyWeaponSlots = Math.max(0, MAX_WEAPON_SLOTS - loadout.weapons.length);
   if (emptyWeaponSlots > 0) pushGroup('맨손 (미장착 무기)', 'var(--color-neutral-500)', [{ defId: 'bare_hands_attack', count: emptyWeaponSlots * EMPTY_SLOT_FILLER_COUNT }]);
-  const emptyArmorSlots = (loadout.topId ? 0 : 1) + (loadout.bottomId ? 0 : 1);
+  const emptyArmorSlots = (loadout.top ? 0 : 1) + (loadout.bottom ? 0 : 1);
   if (emptyArmorSlots > 0) pushGroup('맨몸 (미장착 상/하의)', 'var(--color-neutral-500)', [{ defId: 'clumsy_dodge', count: emptyArmorSlots * EMPTY_SLOT_FILLER_COUNT }]);
 
   return groups;

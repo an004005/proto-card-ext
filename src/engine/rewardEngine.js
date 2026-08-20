@@ -19,10 +19,19 @@ import { CONSUMABLE_DROP_WEIGHTS } from '../data/dropTables.js';
  * @param {number} max
  * @returns {{value: number, state: RngState}}
  */
-function rollRange(rngState, min, max) {
+export function rollRange(rngState, min, max) {
   if (min === max) return { value: min, state: rngState };
   const { value, state } = nextInt(rngState, max - min + 1);
   return { value: min + value, state };
+}
+
+// 장비 내구도(§신규): 드랍된 장비는 3~9 사이 랜덤 내구도로 시작(시작 장비는 별도로 항상 최대치).
+export const LOOT_DURABILITY_MIN = 3;
+export const LOOT_DURABILITY_MAX = 9;
+
+/** @param {RngState} rngState @returns {{value: number, state: RngState}} */
+export function rollLootDurability(rngState) {
+  return rollRange(rngState, LOOT_DURABILITY_MIN, LOOT_DURABILITY_MAX);
 }
 
 /**
@@ -43,14 +52,13 @@ function shuffle(rngState, array) {
 }
 
 /**
- * @param {string[]} ownedEquipmentIds
+ * 이미 소유한 장비도 다시 드랍될 수 있다(§신규 장비 인스턴스화 — 같은 종류 중복 소유 허용).
  * @param {string[]} allEquipmentIds
  * @param {RngState} rngState
  * @returns {{options: RewardOption[], state: RngState}}
  */
-function rollEquipmentOptions(ownedEquipmentIds, allEquipmentIds, rngState) {
-  const pool = allEquipmentIds.filter((id) => !ownedEquipmentIds.includes(id));
-  const shuffled = shuffle(rngState, pool);
+function rollEquipmentOptions(allEquipmentIds, rngState) {
+  const shuffled = shuffle(rngState, allEquipmentIds);
   const options = shuffled.value.slice(0, REWARD_OPTIONS_PER_SLOT).map((id) => ({ kind: 'equipment', equipmentId: id }));
   return { options, state: shuffled.state };
 }
@@ -105,16 +113,15 @@ function rollCurrencyOrJunkOptions(tier, itemWeights, itemKind, valueRange, rngS
 
 /**
  * @param {'normal'|'elite'|'boss'} tier
- * @param {string[]} ownedEquipmentIds
  * @param {string[]} allEquipmentIds
  * @param {RngState} rngState
  * @returns {{slots: RewardSlot[], rngState: RngState}}
  */
-export function rollRewardSlots(tier, ownedEquipmentIds, allEquipmentIds, rngState) {
+export function rollRewardSlots(tier, allEquipmentIds, rngState) {
   let rng = rngState;
   const slots = [];
 
-  const equipRoll = rollEquipmentOptions(ownedEquipmentIds, allEquipmentIds, rng);
+  const equipRoll = rollEquipmentOptions(allEquipmentIds, rng);
   rng = equipRoll.state;
   slots.push({ key: 'slot-equipment', category: 'equipment', options: equipRoll.options });
 

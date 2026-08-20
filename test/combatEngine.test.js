@@ -9,10 +9,10 @@ function entries(defIds) {
   return defIds.map((defId) => ({ defId }));
 }
 
-function makeCombat({ deck, monsterIds, overload = 0, overloadFloor = 0, playerHp = 70, ammo = 8, seed = 1, hpMultiplier }) {
+function makeCombat({ deck, monsterIds, overload = 0, overloadFloor = 0, playerHp = 70, ammo = 8, maxLoad = 999, seed = 1, hpMultiplier }) {
   const state = createCombatState({
     deckEntries: entries(deck), monsterIds, hpMultiplier,
-    playerHp, playerMaxHp: 70, ammo,
+    playerHp, playerMaxHp: 70, usableAmmo: ammo, maxLoad,
     overload, overloadFloor, overloadGainMultiplier: 1, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
     inventoryItemIdsInOrder: [], inventoryCapacity: 30,
     rngState: createRngState(seed),
@@ -66,7 +66,43 @@ test('playing an ammo card consumes ammo 1:1 with its ammoCost', () => {
   let state = makeCombat({ deck: Array(10).fill('rifle_suppress'), monsterIds: ['nibbit'], ammo: 5 });
   const card = findCard(state, 'rifle_suppress');
   state = playCard(state, card.instanceId, null);
-  assert.equal(state.player.ammo, 2); // 5 - 3
+  assert.equal(state.player.loaded, 2); // 5 - 3
+});
+
+test('reload effect refills loaded from reserve up to maxLoad (§신규 재장전)', () => {
+  let state = makeCombat({ deck: Array(10).fill('reload'), monsterIds: ['nibbit'], ammo: 8, maxLoad: 3 });
+  assert.equal(state.player.loaded, 3); // combat start: min(maxLoad, usableAmmo)
+  assert.equal(state.player.reserve, 5);
+  state = { ...state, player: { ...state.player, loaded: 0 } }; // simulate having spent it all
+  const card = findCard(state, 'reload');
+  state = playCard(state, card.instanceId, null);
+  assert.equal(state.player.loaded, 3); // refilled to maxLoad
+  assert.equal(state.player.reserve, 2); // 5 - 3
+
+  // reserve-limited case: less left in reserve than maxLoad allows
+  state = { ...state, player: { ...state.player, loaded: 0, reserve: 1 } };
+  const card2 = findCard(state, 'reload');
+  state = playCard(state, card2.instanceId, null);
+  assert.equal(state.player.loaded, 1);
+  assert.equal(state.player.reserve, 0);
+});
+
+test('playing a card tagged with equipmentInstanceId can accumulate a 1% durability decay roll (§신규 내구도)', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], seed: 3 });
+  let sawDecay = false;
+  for (let i = 0; i < 400 && !sawDecay; i++) {
+    const card = { instanceId: `probe-${i}`, defId: 'katana_slash', equipmentInstanceId: 'w1' };
+    state = {
+      ...state,
+      player: { ...state.player, energy: 99 },
+      enemies: state.enemies.map((e) => ({ ...e, hp: e.maxHp })),
+      piles: { ...state.piles, hand: [card] },
+    };
+    state = playCard(state, card.instanceId, state.enemies[0].id);
+    if (state.player.durabilityDecayInstanceIds.length > 0) sawDecay = true;
+  }
+  assert.ok(sawDecay, 'expected at least one 1% decay roll to hit across 400 plays');
+  assert.ok(state.player.durabilityDecayInstanceIds.every((id) => id === 'w1'));
 });
 
 test('역장 방어 locks its armor gain at the stage it was cast, and grants that much armor immediately — no lingering "power" state', () => {
@@ -170,7 +206,7 @@ test('의식의 짐승 switches to phase 2 once hp drops to (or below) 150/252',
 test('beginEnemyFirst (ambush, §7.3) resolves the first intent before the player ever acts', () => {
   const setup = createCombatState({
     deckEntries: entries(Array(5).fill('katana_slash')), monsterIds: ['vine_shambler'],
-    playerHp: 70, playerMaxHp: 70, ammo: 8, overload: 0, overloadFloor: 0, overloadGainMultiplier: 1,
+    playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999, overload: 0, overloadFloor: 0, overloadGainMultiplier: 1,
     extraDrawPerTurn: 0, turnStartAoeDamage: 0, inventoryItemIdsInOrder: [], inventoryCapacity: 30,
     rngState: createRngState(1),
   });

@@ -16,7 +16,7 @@ function powerBonus(key, stage) {
   return table ? table[stage] : null;
 }
 
-export function PlayerStatusBar({ player, overload, overloadFloor, ammoMax, animation = null }) {
+export function PlayerStatusBar({ player, overload, overloadFloor, animation = null }) {
   const hpPct = Math.max(0, Math.round((player.hp / player.maxHp) * 100));
   const stage = getStage(overload);
   const statusEntries = Object.entries(player.statuses).filter(([, v]) => v);
@@ -37,7 +37,7 @@ export function PlayerStatusBar({ player, overload, overloadFloor, ammoMax, anim
         <${DamagePopupLayer} popups=${popups} />
       </div>
       <${OverloadGauge} overload=${overload} floor=${overloadFloor} />
-      <${AmmoGauge} ammo=${player.ammo} maxAmmo=${ammoMax} />
+      <${AmmoGauge} loaded=${player.loaded} maxLoad=${player.maxLoad} reserve=${player.reserve} />
       <div style=${{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
         ${player.block > 0 ? html`<span class="tag tag-neutral">방어 ${player.block}</span>` : null}
         ${statusEntries.map(([key, value]) => html`<${StatusTag} key=${key} statusKey=${key} value=${value} cls="tag-outline" />`)}
