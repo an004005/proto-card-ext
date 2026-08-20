@@ -162,6 +162,16 @@
 /** @typedef {NoiseEvent} FalseTarget 구조는 소음 사건과 동일하다 (§3.1). */
 
 /**
+ * @typedef {Object} CapabilityValues 유효 Capability, 각 -2..4 (구현 명세 §3.1, §6.3).
+ * @property {number} perception
+ * @property {number} stealth
+ * @property {number} hacking
+ * @property {number} mobility
+ * @property {number} force
+ * @property {number} deception
+ */
+
+/**
  * @typedef {Object} Evidence
  * @property {string} id
  * @property {string} nodeId
@@ -231,9 +241,14 @@
  * @property {FacilityGraph} graph
  * @property {number} time
  * @property {import('./rng.js').RngState} rngState
- * @property {'active'|'collapsed'} phase
+ * @property {'active'|'collapsed'|'meltdown'} phase collapsed=4000 붕괴, meltdown=Overload 100.
  * @property {string|null} playerNodeId
  * @property {string[]} visitedNodeIds 탐사 안개(§10.2)용 — 시작 노드부터 포함.
+ * @property {string[]} openedEdgeIds Capability로 연 'blocked'/'electronic' 특수 엣지.
+ * @property {number} overload 0..100+ (100 이상 도달 시 phase가 즉시 'meltdown'이 된다).
+ * @property {number} overloadFloor
+ * @property {number} overloadGainMultiplier
+ * @property {Record<string, {observedAt: number, hasThreat: boolean}>} observations 기본 정찰 결과(§6.2).
  * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
  * @property {Record<string, ThreatRuntimeState>} threats
  * @property {NoiseEvent[]} noiseEvents

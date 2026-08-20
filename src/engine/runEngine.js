@@ -12,11 +12,16 @@
 
 import { createRngState, pick } from './rng.js';
 import { bfsHopDistances, buildAdjacency } from './graphUtils.js';
+import { gainOverload, reduceOverload, isLethalOverload } from './overloadEngine.js';
+import { effectiveForRequirement } from './capabilityEngine.js';
 import {
   RUN_COLLAPSE_TIME, WORLD_TICK_INTERVAL, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
   SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS, STANDARD_EDGE_TIME_COST,
+  APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME, FARM_TIME,
+  FARM_NOISE, FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
+  HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN,
 } from '../data/facilityLayout.js';
 
 let seq = 0;
@@ -34,9 +39,10 @@ function exitOpenWaitFor(effectiveHacking) {
 /**
  * @param {import('./types.js').FacilityGraph} graph
  * @param {number} seed
+ * @param {{overloadFloor?: number, overloadGainMultiplier?: number}} [overloadConfig] loadout-derived (equipmentEngine.computeFloorOverload/computeOverloadGainMultiplier) — Overload is a run-wide resource shared with combat, not map-specific.
  * @returns {import('./types.js').FacilityRunState}
  */
-export function createRunState(graph, seed) {
+export function createRunState(graph, seed, overloadConfig = {}) {
   /** @type {Record<string, import('./types.js').ExitRuntimeState>} */
   const exits = {};
   for (const placement of graph.exits) {
@@ -82,6 +88,7 @@ export function createRunState(graph, seed) {
   const sectorAlerts = {};
   for (const sectorId of SECTOR_IDS) sectorAlerts[sectorId] = { level: 0, resolvedEventIds: [] };
 
+  const overloadFloor = overloadConfig.overloadFloor ?? 0;
   return {
     graph,
     time: 0,
@@ -89,6 +96,11 @@ export function createRunState(graph, seed) {
     phase: 'active',
     playerNodeId: graph.startNodeId,
     visitedNodeIds: [graph.startNodeId],
+    openedEdgeIds: [],
+    overload: overloadFloor,
+    overloadFloor,
+    overloadGainMultiplier: overloadConfig.overloadGainMultiplier ?? 1,
+    observations: {},
     exits: /** @type {any} */ (exits),
     threats,
     noiseEvents: [],
@@ -97,6 +109,22 @@ export function createRunState(graph, seed) {
     sectorAlerts,
     combatTrigger: null,
   };
+}
+
+/**
+ * §8: apply an Overload change (positive = gain, respects the multiplier and rounds; negative =
+ * reduction, clamped to the equipped floor — see overloadEngine.js, the same rules combat uses).
+ * Reaching >=100 ends the run immediately regardless of HP (§8.1).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} amount
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function applyOverloadDelta(state, amount) {
+  const overload = amount >= 0
+    ? gainOverload(state.overload, amount, state.overloadGainMultiplier)
+    : reduceOverload(state.overload, -amount, state.overloadFloor);
+  const phase = isLethalOverload(overload) ? 'meltdown' : state.phase;
+  return { ...state, overload, phase };
 }
 
 /**
@@ -443,6 +471,22 @@ export function advanceTime(state, targetTime) {
 }
 
 /**
+ * Whether `edge` can currently be walked from `fromId` to its other end: 'oneWay' special edges
+ * only go the direction they were generated in (§4.2's vents/drop shafts), and 'blocked' special
+ * edges (locked doors/barricades) need `openBlockedEdge` first unless already in
+ * `state.openedEdgeIds`. Plain corridors and 'electronic'-only edges (cameras/checkpoints don't
+ * physically stop you, just watch) are always walkable.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').FacilityEdge} edge
+ * @param {string} fromId
+ */
+function isEdgeTraversable(state, edge, fromId) {
+  if (edge.features.includes('oneWay') && edge.from !== fromId) return false;
+  if (edge.features.includes('blocked') && !state.openedEdgeIds.includes(edge.id)) return false;
+  return true;
+}
+
+/**
  * Minimal player movement for the §10 map UI, ahead of the real Capability-costed action system
  * (phase 4). Uses the flat Mobility-0 corridor cost (§6.2, STANDARD_EDGE_TIME_COST) regardless of
  * loadout — every baseline's effective Mobility changes only the *cost*, never whether movement
@@ -459,14 +503,111 @@ export function advanceTime(state, targetTime) {
 export function moveToAdjacentNode(state, destinationNodeId) {
   if (state.phase !== 'active') throw new Error('run already ended');
   if (!state.playerNodeId) throw new Error('player is not at a node');
-  const connected = state.graph.edges.some(
-    (e) => (e.from === state.playerNodeId && e.to === destinationNodeId) || (e.to === state.playerNodeId && e.from === destinationNodeId),
-  );
-  if (!connected) throw new Error(`${destinationNodeId} is not adjacent to ${state.playerNodeId}`);
+  const usable = state.graph.edges.some((e) => {
+    const connects = (e.from === state.playerNodeId && e.to === destinationNodeId) || (e.to === state.playerNodeId && e.from === destinationNodeId);
+    return connects && isEdgeTraversable(state, e, /** @type {string} */ (state.playerNodeId));
+  });
+  if (!usable) throw new Error(`${destinationNodeId} is not currently reachable from ${state.playerNodeId}`);
 
   const visitedNodeIds = state.visitedNodeIds.includes(destinationNodeId)
     ? state.visitedNodeIds
     : [...state.visitedNodeIds, destinationNodeId];
   const moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null };
   return advanceTime(moved, moved.time + STANDARD_EDGE_TIME_COST);
+}
+
+/**
+ * §6.1 공통 접근 모드: safe/+40 time,-1 noise(min 0), rush/-40 time(min 20),+1 noise(max 3).
+ * @param {number} baseTime @param {number} baseNoise @param {'safe'|'normal'|'rush'} mode
+ */
+function applyApproachMode(baseTime, baseNoise, mode) {
+  const time = Math.max(APPROACH_MIN_TIME, baseTime + APPROACH_TIME_DELTA[mode]);
+  const noise = Math.max(0, Math.min(3, baseNoise + APPROACH_NOISE_DELTA[mode]));
+  return { time, noise };
+}
+
+/**
+ * §6.3 tier-1 Force/Hacking approach to open a 'blocked' or 'electronic' special edge. MVP scope:
+ * only tier 1 ("약한 잠금·잔해" / "현재 노드 잠금·단말") is modeled — bigger tiers (barricades,
+ * structural collapse, remote device chains) are future work. `capabilityKind` picks which of the
+ * edge's feature tags to satisfy; the caller must hold effective Capability >=1 in that kind.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} edgeId
+ * @param {'force'|'hacking'} capabilityKind
+ * @param {number} effectiveCapability -2..4
+ * @param {'safe'|'normal'|'rush'} mode
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function openSpecialEdge(state, edgeId, capabilityKind, effectiveCapability, mode) {
+  if (state.phase !== 'active') throw new Error('run already ended');
+  if (!state.playerNodeId) throw new Error('player is not at a node');
+  const playerNodeId = state.playerNodeId;
+  const edge = state.graph.edges.find((e) => e.id === edgeId);
+  if (!edge) throw new Error(`unknown edge ${edgeId}`);
+  if (state.openedEdgeIds.includes(edgeId)) return state;
+  const requiredFeature = capabilityKind === 'force' ? 'blocked' : 'electronic';
+  if (!edge.features.includes(requiredFeature)) throw new Error(`edge ${edgeId} has no '${requiredFeature}' approach`);
+  if (effectiveForRequirement(effectiveCapability) < 1) throw new Error(`${capabilityKind} too low to attempt edge ${edgeId}`);
+
+  const baseTime = capabilityKind === 'force' ? FORCE_TIER1_TIME : HACKING_TIER1_TIME;
+  const baseNoise = capabilityKind === 'force' ? FORCE_BASE_NOISE : HACKING_BASE_NOISE;
+  const { time, noise } = applyApproachMode(baseTime, baseNoise, mode);
+
+  let next = { ...state, openedEdgeIds: [...state.openedEdgeIds, edgeId] };
+  if (capabilityKind === 'hacking') {
+    const overloadGain = HACKING_TIER1_OVERLOAD_GAIN + (mode === 'rush' ? RUSH_OVERLOAD_GAIN : 0) - (mode === 'safe' ? 3 : 0);
+    next = applyOverloadDelta(next, Math.max(0, overloadGain));
+  } else if (mode !== 'safe') {
+    // §6.3 "Force... 기본 소음 2와 흔적을 남기며" — safe Force downgrades strong evidence to
+    // normal but never removes it entirely (§6.1); MVP always leaves a normal trace unless safe.
+    const tier = /** @type {1|2} */ (mode === 'rush' ? 2 : 1);
+    next = { ...next, evidence: [...next.evidence, { id: freshId('evidence'), nodeId: playerNodeId, tier, createdBySectorId: edge.from.split('_')[0] }] };
+  }
+  if (noise > 0) next = reportNoise(next, playerNodeId, /** @type {1|2|3} */ (noise), state.time);
+
+  return advanceTime(next, state.time + time);
+}
+
+/**
+ * §6.2 기본 정찰: Perception 요구 없음, 시간 80, 소음 0, 항상 성공. 현재/인접 노드에 위협이
+ * 있는지 없는지만 확정한다 — 정확한 수·경계 상태는 상세 정찰(미구현) 몫이다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function basicRecon(state) {
+  if (state.phase !== 'active') throw new Error('run already ended');
+  if (!state.playerNodeId) throw new Error('player is not at a node');
+  const targets = new Set([state.playerNodeId]);
+  for (const e of state.graph.edges) {
+    if (e.from === state.playerNodeId) targets.add(e.to);
+    if (e.to === state.playerNodeId) targets.add(e.from);
+  }
+  const threatNodes = new Set(Object.values(state.threats).map((t) => t.nodeId));
+  const observations = { ...state.observations };
+  for (const nodeId of targets) observations[nodeId] = { observedAt: state.time, hasThreat: threatNodes.has(nodeId) };
+  return advanceTime({ ...state, observations }, state.time + BASIC_RECON_TIME);
+}
+
+/**
+ * §6.2 파밍: 현재 노드의 소진되지 않은 현장 기회 하나를 소진한다. 열쇠 대상 여부는 맵 생성 때
+ * 이미 고정돼 있으므로(§5.1.1) 여기서는 그 값을 그대로 반영만 한다 — 실제 보상 지급/인벤토리
+ * 반영은 아직 없다(현장 기회 보상 콘텐츠는 이후 단계 과제).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} opportunityId
+ * @param {'safe'|'normal'|'rush'} mode
+ * @returns {{state: import('./types.js').FacilityRunState, keyGranted: boolean}}
+ */
+export function useOpportunity(state, opportunityId, mode) {
+  if (state.phase !== 'active') throw new Error('run already ended');
+  const opportunity = state.graph.opportunities.find((o) => o.id === opportunityId);
+  if (!opportunity) throw new Error(`unknown opportunity ${opportunityId}`);
+  if (opportunity.nodeId !== state.playerNodeId) throw new Error(`opportunity ${opportunityId} is not at the current node`);
+  if (opportunity.consumed) throw new Error(`opportunity ${opportunityId} already consumed`);
+
+  const { time, noise } = applyApproachMode(FARM_TIME, FARM_NOISE, mode);
+  const graph = { ...state.graph, opportunities: state.graph.opportunities.map((o) => (o.id === opportunityId ? { ...o, consumed: true } : o)) };
+  let next = { ...state, graph };
+  if (noise > 0 && state.playerNodeId) next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (noise), state.time);
+  next = advanceTime(next, state.time + time);
+  return { state: next, keyGranted: opportunity.keyEligible };
 }

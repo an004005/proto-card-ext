@@ -120,3 +120,30 @@ export const SECTOR_ALERT_MIN_ENEMY_ALERT = { 0: 0, 1: 1, 2: 2, 3: 2 }; // §7.4
 
 /** @type {Record<1|2|3|4, number>} §7.1 소음 단계 -> 홉 범위 */
 export const NOISE_HOP_RANGE = { 1: 1, 2: 2, 3: 3, 4: Infinity };
+
+// ---- Overload (§8) ----
+
+export const OVERLOAD_MELTDOWN = 100;
+export const OVERLOAD_MIN = 0;
+
+// ---- 공통 접근 모드 (§6.1) ----
+
+export const APPROACH_TIME_DELTA = { safe: 40, normal: 0, rush: -40 };
+export const APPROACH_NOISE_DELTA = { safe: -1, normal: 0, rush: 1 };
+export const APPROACH_MIN_TIME = 20;
+
+// ---- 기본 맵 행동 (§6.2) ----
+
+export const BASIC_RECON_TIME = 80;
+export const FARM_TIME = 140;
+export const FARM_NOISE = 1;
+
+// ---- Capability 행동표 tier 1 (§6.3) — MVP는 tier 1 접근만 구현한다. 더 높은 tier(예: Force
+// 2~4의 바리케이드 파괴·구조물 붕괴)는 이후 단계 과제로 남긴다.
+export const FORCE_TIER1_TIME = 100;
+export const FORCE_BASE_NOISE = 2; // §6.3 "Force 기본 소음은 2와 흔적이다."
+export const HACKING_TIER1_TIME = 80;
+export const HACKING_BASE_NOISE = 0;
+// §8.2 "Hacking 1/2/3/4 신속 접근 +3/+6/+9/+12" — MVP는 tier 1의 +3만 사용한다.
+export const HACKING_TIER1_OVERLOAD_GAIN = 3;
+export const RUSH_OVERLOAD_GAIN = 6; // §8.2 "강행 접근의 Overload 대가 +6"

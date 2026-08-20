@@ -3,16 +3,18 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
+  openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta,
 } from '../src/engine/runEngine.js';
 import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL, STANDARD_EDGE_TIME_COST,
+  OVERLOAD_MELTDOWN, BASIC_RECON_TIME, FARM_TIME,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency } from '../src/engine/graphUtils.js';
 
-function makeRun(seed = 1) {
+function makeRun(seed = 1, overloadConfig) {
   const { graph } = generateFacilityGraph(seed);
-  return createRunState(graph, seed);
+  return createRunState(graph, seed, overloadConfig);
 }
 
 test('advanceTime is deterministic for the same seed and target', () => {
@@ -177,4 +179,70 @@ test('sector alert rises by exactly 1 per resolved event, not per investigating 
   // advancing further without any new stimulus must not escalate it again.
   state = advanceTime(state, 900);
   assert.equal(state.sectorAlerts[sectorId].level, after);
+});
+
+test('a blocked edge cannot be walked until opened with Force, and oneWay edges only go one direction', () => {
+  let state = makeRun(1);
+  const blockedEdge = state.graph.edges.find((e) => e.features.includes('blocked') && !e.features.includes('electronic'));
+  assert.ok(blockedEdge, 'fixture seed should contain a plain blocked edge');
+  state = { ...state, playerNodeId: blockedEdge.from };
+  assert.throws(() => moveToAdjacentNode(state, blockedEdge.to));
+
+  state = openSpecialEdge(state, blockedEdge.id, 'force', 1, 'normal');
+  assert.ok(state.openedEdgeIds.includes(blockedEdge.id));
+  state = { ...state, playerNodeId: blockedEdge.from }; // openSpecialEdge doesn't move the player
+  state = moveToAdjacentNode(state, blockedEdge.to);
+  assert.equal(state.playerNodeId, blockedEdge.to);
+
+  const oneWayEdge = makeRun(1).graph.edges.find((e) => e.features.includes('oneWay'));
+  if (oneWayEdge) {
+    let reversed = { ...makeRun(1), playerNodeId: oneWayEdge.to };
+    assert.throws(() => moveToAdjacentNode(reversed, oneWayEdge.from), /reachable/);
+  }
+});
+
+test('openSpecialEdge requires effective capability >=1 and the matching feature tag', () => {
+  let state = makeRun(1);
+  const blockedEdge = state.graph.edges.find((e) => e.features.includes('blocked'));
+  assert.throws(() => openSpecialEdge(state, blockedEdge.id, 'force', 0, 'normal'));
+  const electronicEdge = state.graph.edges.find((e) => e.features.includes('electronic') && !e.features.includes('blocked'));
+  if (electronicEdge) assert.throws(() => openSpecialEdge(state, electronicEdge.id, 'force', 4, 'normal'));
+});
+
+test('basicRecon always succeeds, costs 80/0-noise, and records threat presence for current+adjacent nodes', () => {
+  let state = makeRun(3);
+  const before = state.time;
+  state = basicRecon(state);
+  assert.equal(state.time, before + BASIC_RECON_TIME);
+  assert.equal(state.noiseEvents.length, 0);
+  assert.ok(state.observations[state.playerNodeId]);
+  const adjacency = buildAdjacency(state.graph.edges);
+  for (const neighbor of adjacency.get(state.playerNodeId)) {
+    assert.ok(state.observations[neighbor], `neighbor ${neighbor} should be observed`);
+  }
+});
+
+test('useOpportunity consumes the opportunity, costs FARM_TIME, and reports the pre-rolled keyEligible flag', () => {
+  let state = makeRun(1);
+  const opportunity = state.graph.opportunities.find((o) => !o.consumed);
+  assert.ok(opportunity, 'fixture seed should have at least one opportunity');
+  state = { ...state, playerNodeId: opportunity.nodeId };
+  const before = state.time;
+  const result = useOpportunity(state, opportunity.id, 'normal');
+  assert.equal(result.keyGranted, opportunity.keyEligible);
+  assert.equal(result.state.time, before + FARM_TIME);
+  assert.ok(result.state.graph.opportunities.find((o) => o.id === opportunity.id).consumed);
+  assert.throws(() => useOpportunity(result.state, opportunity.id, 'normal'));
+});
+
+// #9 Overload 100은 HP와 무관한 즉시 패배이며, 장착 임플란트 바닥 아래로는 감소하지 않는다.
+test('Overload >=100 ends the run in meltdown, and reduction never drops below the floor', () => {
+  let state = makeRun(5, { overloadFloor: 15 });
+  state = applyOverloadDelta(state, 90);
+  assert.equal(state.overload, 105);
+  assert.equal(state.phase, 'meltdown');
+
+  let floored = makeRun(6, { overloadFloor: 15 });
+  floored = applyOverloadDelta(floored, -50);
+  assert.equal(floored.overload, 15);
 });
