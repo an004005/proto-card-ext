@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    :root {
+      --color-bg: #f3f2f2; --color-text: #201e1d; --color-accent: #ec3013; --color-accent-2: #e15b47;
+      --color-divider: rgba(32,30,29,0.4);
+      --color-neutral-100: #f8f4f4; --color-neutral-200: #eae7e7; --color-neutral-300: #d7d3d3;
+      --color-neutral-400: #bab6b6; --color-neutral-500: #9b9797; --color-neutral-600: #7d7979;
+      --color-neutral-700: #605d5d; --color-neutral-800: #444141; --color-neutral-900: #2d2b2b;
+      --color-accent-2-700: #9e3526; --color-negative: #dd2b0f;
+      --font-heading: "Archivo", system-ui, sans-serif; --font-body: "Archivo", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    a { color: var(--color-accent); } a:hover { color: var(--color-accent-2-700); }
+    #root {
+      width: 760px; height: 620px; background: var(--color-bg); color: var(--color-text);
+      font-family: var(--font-body); font-size: 12px; padding: 20px 24px; overflow: hidden;
+      display: flex; flex-direction: column; gap: 10px; position: relative;
+    }
+    .kicker { font-family: var(--font-heading); font-weight: 800; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent-2-700); }
+    h2 { font-family: var(--font-heading); font-weight: 800; margin: 0 0 2px; font-size: 20px; }
+    .row { display: flex; align-items: center; flex-wrap: wrap; }
+    .divider { border-bottom: 2px solid var(--color-divider); padding-bottom: 8px; }
+    .statrow { justify-content: space-between; }
+    .statrow span { margin-right: 18px; }
+    .logbox { border: 2px solid var(--color-divider); padding: 6px 10px; width: 330px; font-size: 10px; color: var(--color-neutral-700); }
+    .logbox .tag { display: inline-block; font-size: 10px; border: 1px solid var(--color-accent); color: var(--color-accent); padding: 1px 6px; margin-bottom: 4px; }
+    .logline { font-family: monospace; line-height: 1.6; }
+    .gauge { width: 260px; height: 10px; background: var(--color-neutral-200); position: relative; }
+    .gauge i { position: absolute; left: 0; top: 0; bottom: 0; width: 53%; background: var(--color-accent-2-700); }
+    .pillrow { gap: 6px; }
+    .pill { font-size: 10px; border: 1px solid var(--color-accent); color: var(--color-accent); padding: 2px 8px; margin-right: 4px; }
+    .btnrow { gap: 6px; }
+    .fauxbtn { font-family: var(--font-heading); font-weight: 800; font-size: 10px; border: 1px solid var(--color-divider); padding: 4px 9px; color: var(--color-text); margin-right: 5px; margin-bottom: 5px; white-space: nowrap; }
+    .fauxbtn.primary { background: var(--color-accent); color: var(--color-bg); border-color: var(--color-accent); }
+    .lower { display: flex; gap: 14px; flex: 1; min-height: 0; }
+    .mapbox { border: 1px solid var(--color-divider); background: var(--color-bg); width: 430px; height: 300px; position: relative; overflow: hidden; }
+    .legend { font-size: 10px; width: 220px; line-height: 1.9; color: var(--color-neutral-800); }
+    .legend .sw { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: middle; }
+    .badge { position: absolute; top: 10px; right: 10px; background: var(--color-neutral-900); color: var(--color-bg); font-family: var(--font-heading); font-weight: 800; font-size: 11px; padding: 6px 10px; letter-spacing: .04em; }
+  </style>
+</helmet>
+<div id="root">
+  <div class="badge">AS-IS &mdash; 현재 화면 재현</div>
+  <div class="kicker">시설맵</div>
+  <div class="row statrow divider">
+    <div><span>HP <b>18</b>/25</span><span>시간 <b>2140</b>/14000</span><span>인벤토리 <b>7</b>/9 (짐 2)</span></div>
+    <div class="fauxbtn" style="margin:0">인벤토리 / 장비교체</div>
+  </div>
+
+  <div class="logbox">
+    <span class="tag">DEBUG 행동 로그</span>
+    <div class="logline">→ MOVE_TO_NODE labs_04</div>
+    <div class="logline">→ BASIC_RECON (시간 +80)</div>
+    <div class="logline">→ USE_OPPORTUNITY #1 (2회 남음)</div>
+  </div>
+
+  <div class="gauge"><i></i></div>
+
+  <div class="row pillrow">
+    <span class="pill">P +1</span><span class="pill">S +2</span><span class="pill">H +0</span>
+    <span class="pill">M +1</span><span class="pill">F -1</span><span class="pill">D +0</span>
+  </div>
+
+  <div class="row" style="font-size:11px; gap:16px;">
+    <span>현재 구역 <b>실험동</b> 경계 <b>2</b></span>
+    <span>A <b>닫힘</b></span><span>B <b>요청 중</b></span><span>열쇠 탈출구 <b>-</b></span>
+  </div>
+
+  <div class="row btnrow">
+    <div class="fauxbtn">기본 정찰</div>
+    <div class="fauxbtn">현장 파밍 #1 (2회 남음)</div>
+    <div class="fauxbtn">특수 엣지 개방 (electronic)</div>
+    <div class="fauxbtn">집중 투시 사용&hellip;</div>
+    <div class="fauxbtn">원격 침투 사용&hellip;</div>
+    <div class="fauxbtn primary">탈출구 B 개방 요청 (Hacking 0)</div>
+  </div>
+
+  <div class="lower">
+    <div class="mapbox" id="mini"></div>
+    <div class="legend">
+      <div><span class="sw" style="background:#9e3526"></span>현재 위치</div>
+      <div><span class="sw" style="background:#f3f2f2;border:1.5px solid rgba(32,30,29,.4)"></span>시야 안 · 안전</div>
+      <div><span class="sw" style="background:#dd2b0f"></span>시야 안 · 위협</div>
+      <div><span class="sw" style="background:#f3f2f2;border:1.5px solid rgba(32,30,29,.4);opacity:.55"></span>시야 밖 · 마지막 확인 안전</div>
+      <div><span class="sw" style="background:#dd2b0f;opacity:.55"></span>시야 밖 · 마지막 확인 위협</div>
+      <div><span class="sw" style="background:#d7d3d3"></span>한 번도 확인 안 함</div>
+      <div><span class="sw" style="background:#ec3013"></span>탈출구(A/B/K)</div>
+      <div>▲N 포착된 위협 그룹 수</div>
+      <div>┄┄ 미개방 특수 엣지</div>
+      <div>┈┈ 임시 장벽 활성</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script>
+class Component extends DCLogic {
+  componentDidMount() {
+    const host = document.getElementById('mini');
+    if (!host) return;
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('width', '100%'); svg.setAttribute('height', '100%');
+    svg.setAttribute('viewBox', '0 0 430 300');
+    host.appendChild(svg);
+    let seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed % 1000) / 1000; };
+    const pts = [];
+    for (let i = 0; i < 95; i++) {
+      const cx = 40 + (i % 10) * 38 + rnd() * 14;
+      const cy = 30 + Math.floor(i / 10) * 30 + rnd() * 14;
+      pts.push([cx, cy]);
+    }
+    for (let i = 0; i < pts.length; i++) {
+      if (i % 3 === 0 && pts[i + 1]) {
+        const l = document.createElementNS(ns, 'line');
+        l.setAttribute('x1', pts[i][0]); l.setAttribute('y1', pts[i][1]);
+        l.setAttribute('x2', pts[i + 1][0]); l.setAttribute('y2', pts[i + 1][1]);
+        l.setAttribute('stroke', 'rgba(32,30,29,.25)'); l.setAttribute('stroke-width', '1');
+        svg.appendChild(l);
+      }
+    }
+    pts.forEach(([x, y], i) => {
+      const c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', '4');
+      const r = rnd();
+      c.setAttribute('fill', r < 0.06 ? '#dd2b0f' : r < 0.5 ? '#f3f2f2' : '#d7d3d3');
+      c.setAttribute('stroke', 'rgba(32,30,29,.4)'); c.setAttribute('stroke-width', '1');
+      if (i === 12) c.setAttribute('fill', '#9e3526');
+      svg.appendChild(c);
+    });
+  }
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
