@@ -4,8 +4,11 @@ import { snapshotSignal } from '../state/runState.js';
 import { computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus } from '../engine/equipmentEngine.js';
 import { BASE_INVENTORY_CAPACITY, BASE_MAX_HP } from '../engine/gameReducer.js';
 import { getUsableAmmo } from '../engine/inventoryEngine.js';
+import { computeCapabilities, effectiveForRequirement } from '../engine/capabilityEngine.js';
+import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE } from '../data/capabilityDisplay.js';
 import { OverloadGauge } from './OverloadGauge.js';
 import { DeckInventoryView } from './DeckInventoryView.js';
+import { Tooltip } from './Tooltip.js';
 
 function StatBox({ label, value }) {
   return html`
@@ -27,6 +30,7 @@ export function LoadoutScreen() {
   const maxHp = BASE_MAX_HP + computeMaxHpBonus(loadout);
   const capacity = BASE_INVENTORY_CAPACITY + computeInventoryCapacityBonus(loadout);
   const startingAmmo = getUsableAmmo(ps.inventory);
+  const capabilities = computeCapabilities(loadout);
 
   return html`
     <div style=${{ padding: 'var(--space-6) var(--space-8)', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -49,6 +53,21 @@ export function LoadoutScreen() {
           <${StatBox} label="시작 탄환" value=${startingAmmo} />
           <${StatBox} label="최대 체력" value=${maxHp} />
           <${StatBox} label="인벤토리" value=${`${capacity}칸`} />
+
+          <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', background: 'var(--color-surface)' }}>
+            <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.06em', marginBottom: '6px' }}>시설맵 Capability</div>
+            <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              ${CAPABILITY_ORDER.map((key) => {
+                const raw = capabilities[key];
+                const eff = effectiveForRequirement(raw);
+                return html`
+                  <${Tooltip} key=${key} width=${220} content=${`${CAPABILITY_LABELS[key]} — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(요구치 판정 시 유효치 ${eff}). 시설맵 화면에서 사용됩니다.`}>
+                    <span class="tag tag-outline">${CAPABILITY_SHORT[key]} ${raw >= 0 ? '+' : ''}${raw}</span>
+                  <//>
+                `;
+              })}
+            </div>
+          </div>
         </div>
       </div>
 

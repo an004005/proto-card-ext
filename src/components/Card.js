@@ -16,8 +16,10 @@ export const TYPE_INFO = {
   status: { color: 'var(--color-neutral-600)', label: 'STATUS · 상태이상', cls: 'tag-neutral' },
 };
 
-const STAGE_LABELS = ['0단계 (노멀)', '1단계 (최적)', '2단계 (과열)', '3단계 (멜트다운)'];
-const STAGE_ZONE_LABELS = ['노멀', '최적', '과열', '멜트다운'];
+// getStage()는 0~2만 반환한다(§과부화 3단계 개편 — 100 초과는 별도 단계가 아니라
+// combatEngine.js의 저주 카드 삽입으로 처리됨). 예전 4단계(멜트다운 포함) 표기는 제거했다.
+const STAGE_LABELS = ['0단계 (노멀)', '1단계 (최적)', '2단계 (과열)'];
+const STAGE_ZONE_LABELS = ['노멀', '최적', '과열'];
 
 // What each "variable" module power actually boosts, for the per-stage bonus shown in the
 // card detail overlay (§9 — MODULE_POWER_STAGE_TABLES holds the live per-stage numbers).
@@ -117,7 +119,7 @@ export function CardDetailTooltip({ def, cost, type, overload, item }) {
 
       <div style=${{ marginTop: '8px' }}>
         <div style=${{ fontSize: '10px', opacity: 0.75, marginBottom: '4px' }}>
-          현재 과부화 — 이 카드는 <strong>${STAGE_ZONE_LABELS[Math.min(stage, 3)]}</strong> 단계로 발동
+          현재 과부화 — 이 카드는 <strong>${STAGE_ZONE_LABELS[Math.min(stage, 2)]}</strong> 단계로 발동
         </div>
         <${OverloadGauge} overload=${overload ?? 0} floor=${0} compact=${true} />
       </div>

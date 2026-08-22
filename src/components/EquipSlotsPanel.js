@@ -1,6 +1,7 @@
 import { html } from '../lib.js';
 import { Tooltip } from './Tooltip.js';
 import { EquipmentTooltipContent } from './EquipmentTooltipContent.js';
+import { describeCapabilityModifiers } from '../data/capabilityDisplay.js';
 
 // manage=true(맵 중 인벤토리 팝업)일 때만 드래그앤드롭 활성화: 장착된 슬롯을 드래그해서 시작할
 // 수 있고(짐으로 되돌리는 건 DeckInventoryView의 인벤토리 영역이 드롭 대상), 인벤토리 아이템
@@ -35,8 +36,11 @@ export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped 
               ` : html`<span style=${{ fontSize: '16px', opacity: 0.35 }}>+</span>`}
             </div>
           `;
-          if (sl.cardList) return html`<${Tooltip} key=${sl.key} width=${260} content=${html`<${EquipmentTooltipContent} name=${sl.name} cardList=${sl.cardList} />`}>${cell}<//>`;
-          if (sl.description) return html`<${Tooltip} key=${sl.key} width=${220} content=${sl.description}>${cell}<//>`;
+          const capLine = describeCapabilityModifiers(sl.equipmentId);
+          const capNote = capLine ? html`<div style=${{ fontSize: '10px', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--color-neutral-700)', opacity: 0.9 }}>${capLine}</div>` : null;
+          if (sl.cardList) return html`<${Tooltip} key=${sl.key} width=${260} content=${html`<div><${EquipmentTooltipContent} name=${sl.name} cardList=${sl.cardList} />${capNote}</div>`}>${cell}<//>`;
+          if (sl.description) return html`<${Tooltip} key=${sl.key} width=${220} content=${html`<div>${sl.description}${capNote}</div>`}>${cell}<//>`;
+          if (capNote) return html`<${Tooltip} key=${sl.key} width=${220} content=${capNote}>${cell}<//>`;
           return html`<div key=${sl.key}>${cell}</div>`;
         })}
       </div>
