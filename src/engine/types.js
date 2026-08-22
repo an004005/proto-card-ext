@@ -55,40 +55,20 @@
  * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
  */
 
-// ---- map ----
-
-/**
- * @typedef {Object} MapNode
- * @property {string} id
- * @property {number} floor
- * @property {'combat'|'elite'|'rest'|'unknown'|'boss'} type
- * @property {?{monsterIds: string[], tier: 'normal'|'elite'|'boss'}} encounter
- */
-
-/**
- * @typedef {Object} MapData
- * @property {MapNode[]} nodes
- * @property {{from: string, to: string}[]} edges
- */
-
-/**
- * @typedef {Object} MapState
- * @property {MapData} mapData
- * @property {?string} currentNodeId
- * @property {string[]} visitedNodeIds
- */
-
 // ---- facility graph (48-node extraction map, docs/extraction-map-implementation-spec.md §3-4) ----
 // These types describe the generated graph shape only (facilityGraph.js). The broader RunState
 // from the spec (time, threats' live mode/alert, exits' request lifecycle, etc.) is added in a
 // later phase once the time/threat engine lands.
 
-/** @typedef {'entrance'|'labs'|'security'|'power'} FacilitySectorId */
+/** @typedef {'entrance'|'labs'|'hangar'|'security'|'power'|'waste'|'comms'|'residential'} FacilitySectorId */
 
 /**
  * @typedef {Object} FacilityNode
  * @property {string} id
  * @property {FacilitySectorId} sectorId
+ * @property {number} x 전역 기하학적 배치 좌표 (facilityLayout.js SECTOR_RING_RADIUS 기준) — 엣지
+ *   시간 비용과 지도 렌더링 위치 계산에 쓰인다.
+ * @property {number} y
  */
 
 /** @typedef {'oneWay'|'blocked'|'electronic'} SpecialEdgeFeature */
@@ -124,7 +104,8 @@
  * @property {string} id
  * @property {string} nodeId
  * @property {boolean} keyEligible 맵 생성 시 고정된 1% 판정 결과 (§5.1.1).
- * @property {boolean} consumed
+ * @property {number} usesRemaining 맵 생성 시 고정된 1~3회(OPPORTUNITY_USES_WEIGHTS) — 0이 되면
+ *   더 이상 파밍할 수 없다. 더 이상 "1회용"이 기본이 아니다.
  */
 
 /**
@@ -248,7 +229,9 @@
  * @property {number} overload 0..100+ (100 이상 도달 시 phase가 즉시 'meltdown'이 된다).
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
- * @property {Record<string, {observedAt: number, hasThreat: boolean}>} observations 기본 정찰 결과(§6.2).
+ * @property {Record<string, {observedAt: number, hasThreat: boolean, exitStatus?: string}>} observations 기본 정찰(§6.2) 및
+ *   현재/인접 노드 자동 갱신(§10.2 — gameReducer.js가 매 행동 끝에 기록) 결과. 시야 밖으로 벗어나도
+ *   지워지지 않고 "마지막으로 확인한 정보"로 남는다.
  * @property {Record<string, number>} fieldCooldowns instanceId -> readyAt (능동 현장 효과, §11.1).
  * @property {{edgeId: string, expiresAt: number}[]} activeBarriers 역장 강화 임시 장벽 — 적 이동만 막는다(§map-equipment-capability-mapping.md).
  * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
@@ -258,6 +241,7 @@
  * @property {Evidence[]} evidence
  * @property {Record<FacilitySectorId, SectorAlertState>} sectorAlerts
  * @property {{threatId: string, nodeId: string}|null} combatTrigger 위협이 playerNodeId에 도착하면 채워진다.
+ * @property {boolean} keyDiscovered 열쇠 대상 현장 기회를 파밍해 열쇠 탈출구 위치를 알아냈는지(§5.1.1). 한번 참이 되면 되돌아가지 않는다.
  */
 
 // ---- cards ----
@@ -425,6 +409,7 @@
  * @property {number} overload
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
+ * @property {number} overloadCurseCount 과부화 100 초과분으로 이번 전투에 삽입된 저주 카드 수(§과부화 3단계 개편).
  * @property {PlayerCombatState} player
  * @property {EnemyState[]} enemies
  * @property {Piles} piles
@@ -480,22 +465,37 @@
 // ---- top-level run state ----
 
 /**
+ * @typedef {Object} DisengageContext
+ * @property {boolean} escapeIntent
+ * @property {number} disengageProgress
+ */
+
+/**
+ * @typedef {Object} ReinforcementQueueEntry
+ * @property {string} threatId
+ * @property {number} eligibleAt
+ * @property {number} addedCount
+ * @property {number|null} nextAt
+ */
+
+/**
  * @typedef {Object} CombatContext
- * @property {'map_node'|'ambush'} kind
- * @property {string} [nodeId]
- * @property {'normal'|'elite'|'boss'} [tier]
+ * @property {string} nodeId 이 전투가 벌어지는 시설맵 노드.
+ * @property {string} [threatId] 전투를 유발한 위협 그룹 id (§9).
  * @property {number} ammoAtStart
+ * @property {number[]} roundNoiseValues 이번 라운드에 사용된 카드/적 행동 소음값 — END_TURN마다 소진.
+ * @property {ReinforcementQueueEntry[]} reinforcementQueue
+ * @property {DisengageContext} disengage
  */
 
 /**
  * @typedef {Object} GameSnapshot
  * @property {string} currentScreen
  * @property {PlayerState} playerState
- * @property {?MapState} mapState
+ * @property {?FacilityRunState} facilityRunState
  * @property {?CombatState} activeCombatState
  * @property {?CombatContext} combatContext
  * @property {?PendingReward} pendingReward
- * @property {?string} pendingUnknownNodeId
  * @property {?CombatSummary} combatSummary post-combat durability report, shown once on the
  *   reward screen then cleared by CONFIRM_REWARDS
  * @property {RngState} rngState

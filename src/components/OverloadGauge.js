@@ -3,22 +3,22 @@ import { getStage } from '../engine/overloadEngine.js';
 
 const STAGE_INFO = [
   { label: '노멀', color: 'var(--color-neutral-500)' },
-  { label: '최적', color: 'var(--color-accent-2-600)' },
-  { label: '과열', color: 'var(--color-accent-600)' },
-  { label: '멜트다운', color: 'var(--color-accent-800)' },
+  { label: '강화(예열)', color: 'var(--color-accent-2-600)' },
+  { label: '강화+페널티(과열)', color: 'var(--color-accent-800)' },
 ];
 
 export function OverloadGauge({ overload, floor, compact = false }) {
   const clamped = Math.min(100, overload);
   const stage = getStage(overload);
-  const info = STAGE_INFO[Math.min(stage, 3)];
+  const info = STAGE_INFO[stage];
   const height = compact ? '10px' : '16px';
 
   return html`
     <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       ${!compact ? html`
         <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7 }}>
-          <span>과부화</span><span>${info.label} (${stage}단계)</span>
+          <span>과부화</span>
+          <span>${info.label} (${stage}단계)${overload > 100 ? ` — 100 초과, 저주 카드 ${Math.ceil((overload - 100) / 10)}장(이번 전투만)` : ''}</span>
         </div>
       ` : null}
       <div style=${{ height, background: 'var(--color-neutral-300)', border: '1px solid var(--color-divider)', position: 'relative', overflow: 'hidden' }}>

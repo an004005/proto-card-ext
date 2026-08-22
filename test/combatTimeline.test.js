@@ -4,6 +4,8 @@ import { createCombatState, beginPlayerFirst, advanceTurn, advanceTurnWithSteps 
 import { gameReducer } from '../src/engine/gameReducer.js';
 import { buildCombatTimeline } from '../src/state/combatTimeline.js';
 import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
+import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { createRunState } from '../src/engine/runEngine.js';
 
 function combat(monsterIds = ['nibbit', 'nibbit']) {
   return beginPlayerFirst(createCombatState({
@@ -34,7 +36,12 @@ test('advanceTurnWithSteps matches the synchronous resolver for every monster ro
 });
 
 test('combat timeline keeps intermediate combat snapshots and ends at the reducer snapshot', () => {
-  const snapshot = { currentScreen: 'combat', activeCombatState: combat(), playerState: { loadout: { consumableSlots: [] } } };
+  const { graph } = generateFacilityGraph(1);
+  const facilityRunState = createRunState(graph, 1);
+  const snapshot = {
+    currentScreen: 'combat', activeCombatState: combat(), playerState: { loadout: { consumableSlots: [] }, overload: 0 },
+    facilityRunState, combatContext: { nodeId: facilityRunState.playerNodeId, ammoAtStart: 8, roundNoiseValues: [], reinforcementQueue: [], disengage: { escapeIntent: false, disengageProgress: 0 } },
+  };
   const command = { type: 'END_TURN' };
   const timeline = buildCombatTimeline(snapshot, command);
   assert.ok(timeline.length >= 4);

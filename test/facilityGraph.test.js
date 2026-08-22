@@ -5,7 +5,14 @@ import { countEdgeDisjointPaths, reachableSet } from '../src/engine/graphUtils.j
 import {
   SECTOR_IDS, NODES_PER_SECTOR, TOTAL_NODES, THREAT_COUNT_BY_SECTOR, EXIT_DISTANCE_RANGES,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
+  CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
+  LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SECTOR_ADJACENCY,
 } from '../src/data/facilityLayout.js';
+
+const ADJACENT_SECTOR_KEYS = new Set(SECTOR_ADJACENCY.map(([a, b]) => [a, b].sort().join('|')));
+
+/** @param {string} nodeId */
+function sectorOf(nodeId) { return nodeId.split('_')[0]; }
 
 // #1 동일 seed는 그래프/위협/기회/열쇠 드롭을 동일하게 생성한다.
 test('generateFacilityGraph is fully deterministic for the same seed', () => {
@@ -41,17 +48,30 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
     }
 
     const specialEdges = graph.edges.filter((e) => e.features.length > 0);
-    assert.ok(specialEdges.length >= 12 && specialEdges.length <= 16, `seed ${seed}: special edge total ${specialEdges.length}`);
-    const specialBySector = {};
-    for (const edge of specialEdges) {
-      const sectorId = edge.from.split('_')[0];
-      specialBySector[sectorId] = (specialBySector[sectorId] || 0) + 1;
+    const withinSector = specialEdges.filter((e) => sectorOf(e.from) === sectorOf(e.to));
+    const crossSector = specialEdges.filter((e) => sectorOf(e.from) !== sectorOf(e.to));
+    const adjacentCross = crossSector.filter((e) => ADJACENT_SECTOR_KEYS.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
+    const longRange = crossSector.filter((e) => !ADJACENT_SECTOR_KEYS.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
+    const withinTotalMin = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MIN;
+    const withinTotalMax = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MAX;
+    const crossTotalMin = SECTOR_IDS.length * CROSS_SECTOR_SPECIAL_EDGES_MIN;
+    const crossTotalMax = SECTOR_IDS.length * CROSS_SECTOR_SPECIAL_EDGES_MAX;
+    assert.ok(withinSector.length >= withinTotalMin && withinSector.length <= withinTotalMax, `seed ${seed}: within-sector special edge total ${withinSector.length}`);
+    assert.ok(adjacentCross.length >= crossTotalMin && adjacentCross.length <= crossTotalMax, `seed ${seed}: adjacent cross-sector special edge total ${adjacentCross.length}`);
+    // 원거리 지름길은 "매우 소수"가 요구사항이라, 인접 쌍처럼 상한을 넉넉히 잡지 않고 정확히
+    // LONG_RANGE_SPECIAL_EDGES_MIN~MAX 범위(구역 쌍당이 아니라 그래프 전체 기준)인지 확인한다.
+    assert.ok(longRange.length >= LONG_RANGE_SPECIAL_EDGES_MIN && longRange.length <= LONG_RANGE_SPECIAL_EDGES_MAX, `seed ${seed}: long-range special edge total ${longRange.length}`);
+
+    const withinBySector = {};
+    for (const edge of withinSector) {
+      const sectorId = sectorOf(edge.from);
+      withinBySector[sectorId] = (withinBySector[sectorId] || 0) + 1;
     }
     for (const sectorId of SECTOR_IDS) {
-      const count = specialBySector[sectorId] || 0;
+      const count = withinBySector[sectorId] || 0;
       assert.ok(
         count >= SPECIAL_EDGES_PER_SECTOR_MIN && count <= SPECIAL_EDGES_PER_SECTOR_MAX,
-        `seed ${seed}: ${sectorId} special edge count ${count}`,
+        `seed ${seed}: ${sectorId} within-sector special edge count ${count}`,
       );
     }
   }
@@ -129,12 +149,12 @@ test('removing every blocked special edge still leaves 2 edge-disjoint paths to 
   }
 });
 
-test('opportunities carry a keyEligible roll fixed at generation time', () => {
+test('opportunities carry a keyEligible roll and a 1-3 usesRemaining fixed at generation time', () => {
   const { graph } = generateFacilityGraph(42);
   assert.ok(graph.opportunities.length > 0);
   for (const opportunity of graph.opportunities) {
     assert.equal(typeof opportunity.keyEligible, 'boolean');
-    assert.equal(opportunity.consumed, false);
+    assert.ok(opportunity.usesRemaining >= 1 && opportunity.usesRemaining <= 3);
   }
 });
 

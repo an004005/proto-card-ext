@@ -5,6 +5,8 @@ import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileC
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { isCardPlayable, getCardTargetKind } from '../engine/combatEngine.js';
+import { canDisengage, DISENGAGE_REQUIRED_PROGRESS } from '../engine/combatMapIntegration.js';
+import { Tooltip } from './Tooltip.js';
 import { PlayerStatusBar } from './PlayerStatusBar.js';
 import { EnemyRow } from './EnemyRow.js';
 import { Hand } from './Hand.js';
@@ -31,6 +33,8 @@ export function CombatScreen() {
   const pileCounts = pileCountsSignal.value;
   const stage = overloadStageSignal.value;
   const consumableSlots = snapshotSignal.value.playerState.loadout.consumableSlots;
+  const combatContext = snapshotSignal.value.combatContext;
+  const disengage = combatContext?.disengage;
 
   const playableMap = {};
   for (const card of hand) playableMap[card.instanceId] = isCardPlayable(combat, card.instanceId);
@@ -104,7 +108,7 @@ export function CombatScreen() {
         </div>
       </div>
 
-      <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+      <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
         ${consumableSlots.filter(Boolean).map((item) => {
           const def = CONSUMABLE_DEFINITIONS[item.defId];
           return html`
@@ -114,6 +118,25 @@ export function CombatScreen() {
             >${def.name}</button>
           `;
         })}
+        ${disengage ? html`
+          <div style=${{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginLeft: 'auto', fontSize: '11px' }}>
+            ${disengage.escapeIntent
+              ? html`
+                <${Tooltip} width=${200} content="이탈 태그가 붙은 카드를 플레이하면 진행도가 오릅니다. 필요한 진행도에 도달하면 '이탈 확정'으로 보상 없이 즉시 맵으로 돌아갈 수 있습니다.">
+                  <span>이탈 진행도 ${disengage.disengageProgress}/${DISENGAGE_REQUIRED_PROGRESS}</span>
+                <//>
+                <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} onClick=${() => dispatch({ type: 'CANCEL_DISENGAGE' })}>이탈 취소</button>
+                <${Tooltip} width=${200} content="진행도를 채우면 전투를 즉시 종료하고 맵으로 돌아갑니다 — 승리 보상은 없지만 HP/과부화는 지금 상태 그대로 유지됩니다.">
+                  <button class="btn btn-primary" style=${{ padding: '4px 10px' }} disabled=${!canDisengage(disengage)} onClick=${() => dispatch({ type: 'RESOLVE_DISENGAGE' })}>이탈 확정</button>
+                <//>
+              `
+              : html`
+                <${Tooltip} width=${200} content="이탈 시도를 켭니다. Mobility 2 이상이면 시도 즉시 진행도 +1을 받습니다. 이후 이탈 태그 카드를 플레이해 진행도를 채우세요.">
+                  <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} onClick=${() => dispatch({ type: 'BEGIN_DISENGAGE' })}>이탈 시도</button>
+                <//>
+              `}
+          </div>
+        ` : null}
       </div>
 
       <div class="hr" style=${{ margin: 0 }}></div>

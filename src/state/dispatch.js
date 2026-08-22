@@ -55,8 +55,15 @@ function summarize(command, before) {
     case 'SET_LOADOUT_SLOT': return `SET_LOADOUT_SLOT ${command.slotType}:${command.id}`;
     case 'CONFIRM_LOADOUT': return 'CONFIRM_LOADOUT';
     case 'AUTO_EQUIP_LOADOUT': return 'AUTO_EQUIP_LOADOUT';
-    case 'ENTER_MAP_NODE': return `ENTER_MAP_NODE ${command.nodeId}`;
-    case 'RESOLVE_UNKNOWN_ROOM_CHOICE': return `RESOLVE_UNKNOWN_ROOM_CHOICE ${command.choice}`;
+    case 'MOVE_TO_NODE': return `MOVE_TO_NODE ${command.nodeId}`;
+    case 'REQUEST_EXTRACTION': return `REQUEST_EXTRACTION ${command.exitId}`;
+    case 'BASIC_RECON': return 'BASIC_RECON';
+    case 'OPEN_SPECIAL_EDGE': return `OPEN_SPECIAL_EDGE ${command.edgeId}`;
+    case 'USE_OPPORTUNITY': return `USE_OPPORTUNITY ${command.opportunityId}`;
+    case 'USE_FIELD_EQUIPMENT': return `USE_FIELD_EQUIPMENT ${command.instanceId}`;
+    case 'BEGIN_DISENGAGE': return 'BEGIN_DISENGAGE';
+    case 'CANCEL_DISENGAGE': return 'CANCEL_DISENGAGE';
+    case 'RESOLVE_DISENGAGE': return 'RESOLVE_DISENGAGE';
     case 'PLAY_CARD': {
       const card = before.activeCombatState?.piles.hand.find((c) => c.instanceId === command.instanceId);
       return `PLAY_CARD ${card ? card.defId : command.instanceId}`;

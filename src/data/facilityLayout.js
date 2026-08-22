@@ -1,52 +1,90 @@
-// 48-node extraction facility layout config (docs/extraction-map-implementation-spec.md §4).
-// Data only — no generation logic here (that's src/engine/facilityGraph.js). This module does
-// NOT replace mapLayout.js/mapEngine.js yet; the 8-floor map keeps running until a later phase
-// wires the new facility graph into gameReducer/MapScreen.
+// 160-node extraction facility layout config (docs/extraction-map-implementation-spec.md §4).
+// Data only — no generation logic here (that's src/engine/facilityGraph.js).
 
+// 구역을 하나의 큰 링(원환) 위에 순서대로 배치한다 — entrance가 시작점, 링에서 정반대(4칸
+// 떨어진) 위치에 power를 둬서 "가장 깊고 위험한 구역"이 항상 시작점에서 (양쪽 어느 방향으로
+// 가든) 가장 멀도록 만든다. 인접한 구역끼리만 노드가 기하학적으로 가깝게 배치되므로(아래
+// buildBaseGraph 참고), 이 순서가 곧 실제 이동 난이도 순서가 된다.
 /** @type {import('../engine/types.js').FacilitySectorId[]} */
-export const SECTOR_IDS = ['entrance', 'labs', 'security', 'power'];
+export const SECTOR_IDS = ['entrance', 'labs', 'hangar', 'security', 'power', 'waste', 'comms', 'residential'];
 
 export const SECTOR_NAMES = {
   entrance: '입구·관리동',
   labs: '실험동',
+  hangar: '격납고·물류창고',
   security: '보안·격리동',
   power: '동력·정비동',
+  waste: '폐기물 처리장',
+  comms: '통신·관제탑',
+  residential: '거주동',
 };
 
-export const NODES_PER_SECTOR = 12;
+export const NODES_PER_SECTOR = 20;
 export const TOTAL_NODES = SECTOR_IDS.length * NODES_PER_SECTOR;
 
-// Mobility 0 기준 일반 복도 시간 비용 (구현 명세 §6.2).
+// Mobility 0 기준 "평균적인" 일반 복도 시간 비용 (구현 명세 §6.2) — 실제 엣지 시간은 이제
+// 두 노드의 기하학적 거리에 비례해 가감된다(EDGE_TIME_PER_LENGTH_UNIT 이하 참고). 이 값은
+// 그 스케일을 맞추는 기준점일 뿐, 더 이상 모든 엣지에 균일하게 적용되지 않는다.
 export const STANDARD_EDGE_TIME_COST = 100;
 
-// 구역 사슬 순서 — 48노드를 이 순서로 이어붙인 하나의 긴 사슬(체인) 위에 배치한다. power가
-// security를 거쳐야만 닿는 "먼" 구역이 되게 하는 순서다. 인접 구역 쌍(체인에서 경계를 맞댄
-// 쌍)은 [entrance,labs], [labs,security], [security,power] 세 쌍이다.
-// 사슬 하나로 만드는 이유: 4구역을 서로 촘촘히 잇는 그래프는 지름이 12홉을 넘지 못해(실측
-// 확인됨) 탈출구 B의 목표(가중 이동비용 1800~2200, 약 18~22홉)를 만들 수 없었다. 체인 + 2칸
-// 건너뛰기 지름길(skip edge)을 쓰면 지름이 커지면서도 각 지점이 항상 두 방향 이상으로
-// 연결되어(양 옆 spine + 양옆 skip) 2-edge-disjoint 경로 요구도 함께 만족한다.
+// ---- 기하학적 배치 (구역 링 + 구역 내부 산포) ----
+// 구역 하나당 노드 20개를 원판 안에 무작위로 흩뿌리고("씨 뿌리듯"), 일반(비-특수) 엣지는
+// 전역에서 가장 가까운 노드 쌍부터 순서대로 연결한다 — 그래서 자연스럽게 "어느 정도 가까운
+// 노드끼리만" 이어지고, 구역 경계를 넘는 일반 엣지는 (같은 구역 안의 더 가까운 짝이 거의 항상
+// 먼저 소진되므로) 사실상 발생하지 않는다. 구역을 넘나드는 이동은 아래 특수 엣지(§4.2,
+// 구역 내부용/구역 간 전용 두 종류)로만 이루어진다.
+export const SECTOR_RING_RADIUS = 900; // 전역 중심에서 각 구역 중심까지 거리.
+export const SECTOR_NODE_RADIUS = 280; // 구역 중심에서 그 구역 노드가 흩뿌려지는 반경.
+
+// 같은 구역 안에서 노드끼리 최소 이만큼은 떨어지도록 거부 샘플링(rejection sampling)한다 —
+// 순수 무작위 산포는 노드가 겹치거나 거의 붙어버리는 경우가 생겨서, 후보를 여러 번 뽑아 이
+// 최소 거리를 만족하는 것만 채택한다(그래도 못 찾으면 지금까지 후보 중 가장 널찍한 것으로
+// 타협 — 무한 루프 방지). 반경280·20노드 기준 평균 간격(~111)의 약 절반 수준으로 잡은 값.
+export const NODE_MIN_SEPARATION = 55;
+export const NODE_PLACEMENT_MAX_ATTEMPTS = 40;
+
+// 엣지 시간 비용 = clamp(round(기하 거리 * EDGE_TIME_PER_LENGTH_UNIT), MIN, MAX). 구역 내부
+// 최근접 노드 간 평균 거리(~50 단위)가 STANDARD_EDGE_TIME_COST(100)에 가깝게 나오도록 잡은 값.
+export const EDGE_TIME_PER_LENGTH_UNIT = 2;
+export const EDGE_TIME_MIN = 40;
+export const EDGE_TIME_MAX = 260;
+
+// 일반 엣지 배치: 1차 패스는 노드당 차수 2까지만 채워(가까운 순서대로) 촘촘한 그물을 만들고,
+// 2차 패스는 여전히 분리된 컴포넌트가 있으면 차수 4 한도 안에서 가장 가까운 쌍부터 이어 붙여
+// 반드시 하나로 연결한다(사실상 Kruskal). 3차 패스는 남은 브릿지(끊기면 그래프가 갈라지는
+// 엣지)를 Tarjan 알고리즘으로 찾아 같은 차수 4 한도 안에서 양쪽을 잇는 보강 엣지를 추가해
+// 실질적인 2-edge-connectivity를 만든다 — 순수 원형 위상(이전 48노드 설계)이 주던 "구조적으로
+// 증명된" 보장은 아니지만, 탈출구 배치가 요구하는 2-edge-disjoint 경로를 사실상 항상
+// 만족시키기에 충분하다(node --test로 실측 확인).
+export const BASE_EDGE_DEGREE_SOFT_CAP = 2;
+export const BASE_EDGE_DEGREE_HARD_CAP = 4;
+
+// 링에서 인접한 구역 쌍(마지막-첫 구역도 순환으로 연결) — 구역 내부 특수 엣지와는 별도로,
+// 이 쌍들 사이에만 "구역을 넘는" 특수 엣지를 놓는다(§4.2 확장).
 /** @type {[string, string][]} */
-export const SECTOR_ADJACENCY = [
-  ['entrance', 'labs'],
-  ['labs', 'security'],
-  ['security', 'power'],
-];
+export const SECTOR_ADJACENCY = SECTOR_IDS.map((s, i) => [s, SECTOR_IDS[(i + 1) % SECTOR_IDS.length]]);
 
-// 체인 위에서 두 칸 건너뛰는 지름길 엣지의 간격. 이 값이 그래프 전체의 최단 경로를
-// ceil(포지션 거리 / GLOBAL_SKIP_STEP)홉으로 만들고, 동시에 모든 내부 노드의 차수를 4로,
-// 체인 양끝만 2로 만들어 §4.1의 "차수 2~4 목표"를 자동으로 만족시킨다.
-export const GLOBAL_SKIP_STEP = 2;
-
-// 탈출구별 Mobility 0 가중 이동비용 범위 (구현 명세 §2.2).
+// 탈출구별 Mobility 0 가중 이동비용 범위 (구현 명세 §2.2). 160노드 스케일에 맞춰 재조정됨 —
+// scratchpad 스크립트로 실측한 뒤 확정한 값(아래 facilityGraph.js 상단 주석 참고).
 export const EXIT_DISTANCE_RANGES = {
-  A: { min: 1000, max: 1500 },
-  key: { min: 1400, max: 2000 },
-  B: { min: 1800, max: 2200 },
+  A: { min: 3200, max: 5000 },
+  key: { min: 4600, max: 6700 },
+  B: { min: 6000, max: 7600 },
 };
 
-export const SPECIAL_EDGES_PER_SECTOR_MIN = 3;
-export const SPECIAL_EDGES_PER_SECTOR_MAX = 4;
+// 구역 "내부" 특수 엣지 (기존과 동일한 배치 방식 — 같은 구역 노드 풀에서만 고름).
+export const SPECIAL_EDGES_PER_SECTOR_MIN = 4;
+export const SPECIAL_EDGES_PER_SECTOR_MAX = 6;
+
+// 구역 "사이" 특수 엣지 — SECTOR_ADJACENCY의 각 쌍마다, 두 구역 풀에서 각각 하나씩 뽑아 잇는다.
+export const CROSS_SECTOR_SPECIAL_EDGES_MIN = 2;
+export const CROSS_SECTOR_SPECIAL_EDGES_MAX = 3;
+
+// 원거리 지름길 — 링에서 서로 인접하지 않은(=SECTOR_ADJACENCY에 없는) 구역 쌍을 잇는 특수
+// 엣지. 아주 소수만 둔다(전체 그래프에 걸쳐 이 개수만큼, 구역 쌍마다가 아니다) — 없어도 되는
+// 도박성 지름길이라, 많으면 "인접 구역만 연결된다"는 설계 의도 자체가 흐려진다.
+export const LONG_RANGE_SPECIAL_EDGES_MIN = 2;
+export const LONG_RANGE_SPECIAL_EDGES_MAX = 3;
 
 /** @type {{value: 'oneWay'|'blocked'|'electronic', weight: number}[]} */
 export const SPECIAL_EDGE_CATEGORY_WEIGHTS = [
@@ -60,8 +98,12 @@ export const SPECIAL_EDGE_SECOND_TAG_CHANCE = 0.3;
 export const LANDMARKS_BY_SECTOR = {
   entrance: { id: 'security_records_room', name: '보안 기록실', approaches: ['perception', 'hacking', 'force'] },
   labs: { id: 'quarantine_vault', name: '격리 표본고', approaches: ['stealth', 'force', 'hacking'] },
+  hangar: { id: 'cargo_bay', name: '화물 격납고', approaches: ['force', 'mobility', 'hacking'] },
   security: { id: 'central_control', name: '중앙 관제실', approaches: ['hacking', 'deception', 'force'] },
   power: { id: 'main_generator', name: '주 발전기', approaches: ['force', 'hacking', 'mobility'] },
+  waste: { id: 'incinerator_core', name: '소각로 중심부', approaches: ['force', 'stealth', 'hacking'] },
+  comms: { id: 'control_tower', name: '중앙 관제탑', approaches: ['hacking', 'perception', 'deception'] },
+  residential: { id: 'staff_quarters_vault', name: '직원 숙소 금고', approaches: ['stealth', 'deception', 'hacking'] },
 };
 
 // 노드당 현장 기회 개수 분포. 기대값 1.0 = 0*0.25 + 1*0.5 + 2*0.25.
@@ -71,10 +113,20 @@ export const OPPORTUNITY_COUNT_WEIGHTS = [
   { value: 1, weight: 50 },
   { value: 2, weight: 25 },
 ];
+// 현장 기회 하나가 몇 번 파밍 가능한지 — 더 이상 "1회용"이 기본이 아니다. 기대값 ~1.65회.
+/** @type {{value: 1|2|3, weight: number}[]} */
+export const OPPORTUNITY_USES_WEIGHTS = [
+  { value: 1, weight: 45 },
+  { value: 2, weight: 35 },
+  { value: 3, weight: 20 },
+];
 export const KEY_DROP_CHANCE = 0.01;
 
-// 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 2 / 실험 3 / 보안 4 / 동력 3.
-export const THREAT_COUNT_BY_SECTOR = { entrance: 2, labs: 3, security: 4, power: 3 };
+// 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 3 / 실험 5 / 격납고 5 / 보안 6 /
+// 동력 7 / 폐기물 6 / 통신 4 / 거주 4 (총 40, 48노드 시절 밀도 0.25/노드를 160노드로 유지).
+export const THREAT_COUNT_BY_SECTOR = {
+  entrance: 3, labs: 5, hangar: 5, security: 6, power: 7, waste: 6, comms: 4, residential: 4,
+};
 export const THREAT_MIN_HOPS_FROM_START = 3; // "시작점 2홉 안에 배치하지 않는다" -> 최소 3홉.
 export const THREAT_MIN_HOPS_BETWEEN_MARKERS = 2;
 export const THREAT_PATROL_ROUTE_MIN = 2;
@@ -93,11 +145,12 @@ export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
 
 // ---- 시간·틱·탈출 (구현 명세 §2, §5, §7) ----
 
-export const RUN_COLLAPSE_TIME = 4000; // §2.3 t===4000 붕괴, 다른 모든 사건보다 우선.
+// 160노드 스케일(구 EXIT_DISTANCE_RANGES.B 대비 ~3.45배)에 맞춰 재조정됨.
+export const RUN_COLLAPSE_TIME = 14000; // §2.3 t===RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
 export const WORLD_TICK_INTERVAL = 10; // §5.1 "전역 시간이 10 시간 포인트 진행될 때마다 1회".
 
-export const EXIT_A_DISABLED_AT = 2500;
-export const EXIT_B_DISABLED_AT = 3900;
+export const EXIT_A_DISABLED_AT = 8600;
+export const EXIT_B_DISABLED_AT = 13400;
 export const EXIT_REQUEST_TIME = 50;
 export const EXIT_OPEN_WINDOW = 100;
 

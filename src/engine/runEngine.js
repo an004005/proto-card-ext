@@ -18,15 +18,20 @@ import {
   RUN_COLLAPSE_TIME, WORLD_TICK_INTERVAL, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
-  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS, STANDARD_EDGE_TIME_COST,
+  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS,
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME, FARM_TIME,
   FARM_NOISE, FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN,
 } from '../data/facilityLayout.js';
 
-let seq = 0;
-/** @param {string} prefix */
-function freshId(prefix) { return `${prefix}${seq++}`; }
+// 모듈 레벨 카운터는 같은 프로세스에서 같은 seed로 여러 번 플레이하면(예: 헤드리스 테스트가
+// playSeed(seed)를 두 번 호출) 잔여 카운터 상태 때문에 재현성이 깨진다 — 항상 state에서
+// 결정론적으로 파생시킨다.
+/** @param {string} prefix @param {number} time @param {number} count */
+function freshId(prefix, time, count) { return `${prefix}_${time}_${count}`; }
+
+/** id for a new entry appended to a state-derived list — dedup key is that list's own length, so it stays deterministic without a separate counter. @param {import('./types.js').FacilityRunState} state @param {unknown[]} list @param {string} prefix */
+function idForNewEntry(state, list, prefix) { return freshId(prefix, state.time, list.length); }
 
 /**
  * @param {number} effectiveHacking -2..4
@@ -110,6 +115,7 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     evidence: [],
     sectorAlerts,
     combatTrigger: null,
+    keyDiscovered: false,
   };
 }
 
@@ -130,6 +136,51 @@ export function applyOverloadDelta(state, amount) {
 }
 
 /**
+ * §10.2 설계: 안개는 노드/엣지의 "존재"를 가리지 않는다(항상 전체 지도가 보인다) — 대신
+ * 현재 노드+인접 노드의 위협 존재 여부만 매 행동 끝에 observations로 스냅샷해 둔다. 시야
+ * 밖으로 벗어나도 그 스냅샷은 지워지지 않고 "마지막으로 확인한 정보"로 남는다(MapScreen.js가
+ * observations 유무로 fresh/stale/unknown을 구분한다). gameReducer.js의 loadout/facility/combat
+ * 커맨드 모듈이 모두 공통으로 호출하므로(맵 진입 시·시설 액션 후·전투 라운드 종료 후) 순수
+ * FacilityRunState 함수로서 이 engine 레벨에 둔다 — 어느 커맨드 모듈에도 종속시키지 않기 위해서.
+ * @param {import('./types.js').FacilityRunState} run
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function refreshLocalObservations(run) {
+  if (!run.playerNodeId) return run;
+  const nearNodeIds = new Set([run.playerNodeId]);
+  for (const e of run.graph.edges) {
+    if (e.from === run.playerNodeId) nearNodeIds.add(e.to);
+    else if (e.to === run.playerNodeId) nearNodeIds.add(e.from);
+  }
+  const threatNodeIds = new Set(Object.values(run.threats).map((t) => t.nodeId));
+  /** @type {Record<string, import('./types.js').ExitRuntimeState>} */
+  const exitByNodeId = {};
+  for (const exit of Object.values(run.exits)) exitByNodeId[exit.nodeId] = exit;
+  const observations = { ...run.observations };
+  for (const nodeId of nearNodeIds) {
+    const exit = exitByNodeId[nodeId];
+    observations[nodeId] = { observedAt: run.time, hasThreat: threatNodeIds.has(nodeId), exitStatus: exit?.kind === 'standard' ? exit.status : undefined };
+  }
+  return { ...run, observations };
+}
+
+/**
+ * §4.2/§5.1.2: 열쇠 탈출구는 요청 절차가 없다 — 열쇠를 보유한 채 그 노드에 있으면 즉시 추출된다.
+ * 표준 탈출구(A/B)는 개방(open) 창 동안 그 노드에 있으면 추출된다. 붕괴/멜트다운으로 이미 끝난
+ * 런은 호출자(gameReducer.js)가 먼저 걸러낸다 — 여기서는 순수하게 위치/상태만 판정한다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {boolean}
+ */
+export function isAtOpenExit(state) {
+  if (!state.playerNodeId) return false;
+  if (state.keyDiscovered && state.exits.key.nodeId === state.playerNodeId) return true;
+  return /** @type {const} */ (['A', 'B']).some((exitId) => {
+    const exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (state.exits[exitId]);
+    return exit.status === 'open' && exit.nodeId === state.playerNodeId;
+  });
+}
+
+/**
  * §CONTEXT.md 탈출구 요청. Throws on an invalid request (spec has no "soft fail" for this — the
  * UI only offers the button when eligible, so an ineligible call here is a caller bug).
  * @param {import('./types.js').FacilityRunState} state
@@ -145,8 +196,8 @@ export function requestExtraction(state, exitId, effectiveHacking) {
 
   const interactionEndsAt = state.time + EXIT_REQUEST_TIME;
   const opensAt = interactionEndsAt + exitOpenWaitFor(effectiveHacking);
-  const requestId = freshId('req');
-  return {
+  const requestId = freshId(`req_${exitId}`, state.time, 0);
+  let next = {
     ...state,
     exits: {
       ...state.exits,
@@ -155,6 +206,12 @@ export function requestExtraction(state, exitId, effectiveHacking) {
       },
     },
   };
+  // §6.2 일반 탈출구 요청: 시간 50 소요(붕괴/타 사건과의 순서 판정을 위해 그만큼 시간을 흘려보낸다).
+  // 명세가 말하는 "소음 4"는 NoiseEvent.intensity(1~3 상한)로 표현되지 않는다 — 탈출 신호는 이미
+  // ThreatTarget의 'exitSignal' 우선순위(§7.1, 소음과 별도 채널)로 처리되고 있어, "소음 4"가
+  // 정확히 어떤 값에 대응하는지 명세만으로는 확정할 수 없다. 잘못 추측해 끼워 넣기보다 시간
+  // 비용만 우선 반영하고 이 갭은 별도로 확인이 필요하다.
+  return advanceTime(next, interactionEndsAt);
 }
 
 /**
@@ -166,7 +223,7 @@ export function requestExtraction(state, exitId, effectiveHacking) {
  * @param {number} [createdAt]
  */
 export function reportNoise(state, sourceNodeId, intensity, createdAt = state.time) {
-  const event = { id: freshId('noise'), sourceNodeId, intensity, createdAt, expiresAt: createdAt + NOISE_DURATION };
+  const event = { id: idForNewEntry(state, state.noiseEvents, 'noise'), sourceNodeId, intensity, createdAt, expiresAt: createdAt + NOISE_DURATION };
   return { ...state, noiseEvents: [...state.noiseEvents, event] };
 }
 
@@ -182,7 +239,7 @@ export function reportNoise(state, sourceNodeId, intensity, createdAt = state.ti
  * @param {number} [createdAt]
  */
 export function reportFalseTarget(state, sourceNodeId, intensity, duration, createdAt = state.time) {
-  const event = { id: freshId('falseTarget'), sourceNodeId, intensity, createdAt, expiresAt: createdAt + duration };
+  const event = { id: idForNewEntry(state, state.falseTargets, 'falseTarget'), sourceNodeId, intensity, createdAt, expiresAt: createdAt + duration };
   return { ...state, falseTargets: [...state.falseTargets, event] };
 }
 
@@ -521,8 +578,9 @@ function isEdgeTraversable(state, edge, fromId) {
 
 /**
  * Minimal player movement for the §10 map UI, ahead of the real Capability-costed action system
- * (phase 4). Uses the flat Mobility-0 corridor cost (§6.2, STANDARD_EDGE_TIME_COST) regardless of
- * loadout — every baseline's effective Mobility changes only the *cost*, never whether movement
+ * (phase 4). Uses the traversed edge's own Mobility-0 corridor cost (§6.2, geometry-derived —
+ * see facilityGraph.js) regardless of loadout — every baseline's effective Mobility changes only
+ * the *cost*, never whether movement
  * is possible, so this stays a faithful (if unoptimized) preview of the real thing. Movement is
  * treated as atomic rather than a `MovementAction` with mid-edge occupancy (§5.1.1) — that
  * distinction only matters for interrupting a move partway through, which doesn't exist yet
@@ -536,17 +594,19 @@ function isEdgeTraversable(state, edge, fromId) {
 export function moveToAdjacentNode(state, destinationNodeId) {
   if (state.phase !== 'active') throw new Error('run already ended');
   if (!state.playerNodeId) throw new Error('player is not at a node');
-  const usable = state.graph.edges.some((e) => {
+  const traversedEdge = state.graph.edges.find((e) => {
     const connects = (e.from === state.playerNodeId && e.to === destinationNodeId) || (e.to === state.playerNodeId && e.from === destinationNodeId);
     return connects && isEdgeTraversable(state, e, /** @type {string} */ (state.playerNodeId));
   });
-  if (!usable) throw new Error(`${destinationNodeId} is not currently reachable from ${state.playerNodeId}`);
+  if (!traversedEdge) throw new Error(`${destinationNodeId} is not currently reachable from ${state.playerNodeId}`);
 
   const visitedNodeIds = state.visitedNodeIds.includes(destinationNodeId)
     ? state.visitedNodeIds
     : [...state.visitedNodeIds, destinationNodeId];
   const moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null };
-  return advanceTime(moved, moved.time + STANDARD_EDGE_TIME_COST);
+  // 엣지마다 기하학적 길이에 따라 다른 시간 비용을 갖는다(facilityGraph.js 참고) — 더 이상
+  // 모든 이동이 균일한 STANDARD_EDGE_TIME_COST가 아니다.
+  return advanceTime(moved, moved.time + traversedEdge.timeCost);
 }
 
 /**
@@ -577,6 +637,7 @@ export function openSpecialEdge(state, edgeId, capabilityKind, effectiveCapabili
   const playerNodeId = state.playerNodeId;
   const edge = state.graph.edges.find((e) => e.id === edgeId);
   if (!edge) throw new Error(`unknown edge ${edgeId}`);
+  if (edge.from !== playerNodeId && edge.to !== playerNodeId) throw new Error(`edge ${edgeId} is not adjacent to the current node`);
   if (state.openedEdgeIds.includes(edgeId)) return state;
   const requiredFeature = capabilityKind === 'force' ? 'blocked' : 'electronic';
   if (!edge.features.includes(requiredFeature)) throw new Error(`edge ${edgeId} has no '${requiredFeature}' approach`);
@@ -594,7 +655,7 @@ export function openSpecialEdge(state, edgeId, capabilityKind, effectiveCapabili
     // §6.3 "Force... 기본 소음 2와 흔적을 남기며" — safe Force downgrades strong evidence to
     // normal but never removes it entirely (§6.1); MVP always leaves a normal trace unless safe.
     const tier = /** @type {1|2} */ (mode === 'rush' ? 2 : 1);
-    next = { ...next, evidence: [...next.evidence, { id: freshId('evidence'), nodeId: playerNodeId, tier, createdBySectorId: edge.from.split('_')[0] }] };
+    next = { ...next, evidence: [...next.evidence, { id: idForNewEntry(state, next.evidence, 'evidence'), nodeId: playerNodeId, tier, createdBySectorId: edge.from.split('_')[0] }] };
   }
   if (noise > 0) next = reportNoise(next, playerNodeId, /** @type {1|2|3} */ (noise), state.time);
 
@@ -622,9 +683,11 @@ export function basicRecon(state) {
 }
 
 /**
- * §6.2 파밍: 현재 노드의 소진되지 않은 현장 기회 하나를 소진한다. 열쇠 대상 여부는 맵 생성 때
- * 이미 고정돼 있으므로(§5.1.1) 여기서는 그 값을 그대로 반영만 한다 — 실제 보상 지급/인벤토리
- * 반영은 아직 없다(현장 기회 보상 콘텐츠는 이후 단계 과제).
+ * §6.2 파밍: 현재 노드의 소진되지 않은(usesRemaining > 0) 현장 기회 하나를 1회 소모한다 —
+ * usesRemaining은 맵 생성 때 1~3회로 고정되어(OPPORTUNITY_USES_WEIGHTS) 더 이상 "1회용"이
+ * 기본이 아니다. 열쇠 대상 여부도 맵 생성 때 이미 고정돼 있으므로(§5.1.1) 여기서는 그 값을
+ * 그대로 반영만 한다 — 실제 보상 지급/인벤토리 반영은 아직 없다(현장 기회 보상 콘텐츠는
+ * 이후 단계 과제).
  * @param {import('./types.js').FacilityRunState} state
  * @param {string} opportunityId
  * @param {'safe'|'normal'|'rush'} mode
@@ -635,11 +698,11 @@ export function useOpportunity(state, opportunityId, mode) {
   const opportunity = state.graph.opportunities.find((o) => o.id === opportunityId);
   if (!opportunity) throw new Error(`unknown opportunity ${opportunityId}`);
   if (opportunity.nodeId !== state.playerNodeId) throw new Error(`opportunity ${opportunityId} is not at the current node`);
-  if (opportunity.consumed) throw new Error(`opportunity ${opportunityId} already consumed`);
+  if (opportunity.usesRemaining <= 0) throw new Error(`opportunity ${opportunityId} already consumed`);
 
   const { time, noise } = applyApproachMode(FARM_TIME, FARM_NOISE, mode);
-  const graph = { ...state.graph, opportunities: state.graph.opportunities.map((o) => (o.id === opportunityId ? { ...o, consumed: true } : o)) };
-  let next = { ...state, graph };
+  const graph = { ...state.graph, opportunities: state.graph.opportunities.map((o) => (o.id === opportunityId ? { ...o, usesRemaining: o.usesRemaining - 1 } : o)) };
+  let next = { ...state, graph, keyDiscovered: state.keyDiscovered || opportunity.keyEligible };
   if (noise > 0 && state.playerNodeId) next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (noise), state.time);
   next = advanceTime(next, state.time + time);
   return { state: next, keyGranted: opportunity.keyEligible };
@@ -676,10 +739,20 @@ export function useFieldEquipment(state, instanceId, contract, targetId) {
     next = { ...next, observations };
   } else if (contract.kind === 'remote_intrusion') {
     if (!targetId) throw new Error('remote_intrusion requires a target node');
+    if (!state.graph.nodes.some((n) => n.id === targetId)) throw new Error(`unknown node ${targetId}`);
+    const hops = bfsHopDistances(state.graph.edges, state.playerNodeId);
+    const hop = hops.get(targetId);
+    if (hop === undefined || hop === 0 || hop > contract.range) throw new Error(`node ${targetId} is out of range for remote_intrusion`);
     next = reportFalseTarget(next, targetId, 2, contract.duration ?? 200, completesAt);
   } else if (contract.kind === 'temporary_barrier') {
     if (!targetId) throw new Error('temporary_barrier requires a target edge');
-    if (!state.graph.edges.some((e) => e.id === targetId)) throw new Error(`unknown edge ${targetId}`);
+    const targetEdge = state.graph.edges.find((e) => e.id === targetId);
+    if (!targetEdge) throw new Error(`unknown edge ${targetId}`);
+    const hops = bfsHopDistances(state.graph.edges, state.playerNodeId);
+    const hopFrom = hops.get(targetEdge.from);
+    const hopTo = hops.get(targetEdge.to);
+    const inRange = (hopFrom !== undefined && hopFrom <= contract.range) || (hopTo !== undefined && hopTo <= contract.range);
+    if (!inRange) throw new Error(`edge ${targetId} is out of range for temporary_barrier`);
     next = { ...next, activeBarriers: [...next.activeBarriers, { edgeId: targetId, expiresAt: completesAt + (contract.duration ?? 0) }] };
   }
 

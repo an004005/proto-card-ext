@@ -36,7 +36,7 @@ test('베기 deals 6 base damage at stage 0 and costs 1 energy', () => {
 });
 
 test('stage 1 scales 베기 damage to 8 (6 * 1.25, rounded) via §4.2', () => {
-  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], overload: 25 });
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], overload: 30 });
   const before = state.enemies[0].hp;
   const card = findCard(state, 'katana_slash');
   state = playCard(state, card.instanceId, state.enemies[0].id);
@@ -106,7 +106,7 @@ test('playing a card tagged with equipmentInstanceId can accumulate a 1% durabil
 });
 
 test('역장 방어 locks its armor gain at the stage it was cast, and grants that much armor immediately — no lingering "power" state', () => {
-  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 25 });
+  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 30 });
   const card = findCard(state, 'module_forcefield_defense');
   state = playCard(state, card.instanceId, null);
   assert.equal(state.player.statuses.armor, 6); // stage1 row, granted once, immediately, on cast
@@ -116,7 +116,7 @@ test('역장 방어 locks its armor gain at the stage it was cast, and grants th
 });
 
 test('역장 방어 only grants armor once — later turn ends just decay the leftover stack, no re-grant', () => {
-  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 25 });
+  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 30 });
   const card = findCard(state, 'module_forcefield_defense');
   state = playCard(state, card.instanceId, null);
   state = advanceTurn(state); // turn 1 end converts the 6 armor to block (decrementing it to 5); enemy attacks; turn 2 starts
@@ -134,12 +134,44 @@ test('신경 강화 adds a live block bonus that tracks the CURRENT stage, not t
   assert.equal(state.player.block - before, 9);
 });
 
-test('overload reaching 100 is an instant death, independent of hp', () => {
-  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 90, ammo: 99, playerHp: 70 });
-  const card = findCard(state, 'rifle_suppress'); // overloadGain 10 -> 100
+test('overload exceeding 100 inserts curse cards instead of causing defeat (§과부화 3단계 개편)', () => {
+  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 95, ammo: 99, playerHp: 70 });
+  const card = findCard(state, 'rifle_suppress'); // overloadGain 10 -> 105, 5 excess -> ceil(5/10) = 1 curse
   state = playCard(state, card.instanceId, null);
-  assert.equal(state.phase, 'defeat');
-  assert.ok(state.player.hp > 0); // died from overload, not hp
+  assert.equal(state.overload, 105);
+  assert.notEqual(state.phase, 'defeat');
+  assert.equal(state.player.hp, 70); // no HP loss from overload alone
+  assert.equal(state.overloadCurseCount, 1);
+  assert.equal(state.piles.discardPile.filter((c) => c.defId === 'overload_curse').length, 1);
+});
+
+test('overload curse count only grows within a combat — playing more cards adds more curses as the excess grows further', () => {
+  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 95, ammo: 99, playerHp: 70 });
+  const first = findCard(state, 'rifle_suppress');
+  state = playCard(state, first.instanceId, null); // 95 -> 105, 1 curse
+  assert.equal(state.overloadCurseCount, 1);
+  state = { ...state, player: { ...state.player, energy: 99 } }; // stage-2's +1 cost would otherwise starve the second play
+  const second = findCard(state, 'rifle_suppress');
+  state = playCard(state, second.instanceId, null); // 105 -> 115, excess 15 -> ceil(15/10) = 2 curses
+  assert.equal(state.overload, 115);
+  assert.equal(state.overloadCurseCount, 2);
+  assert.equal(state.piles.discardPile.filter((c) => c.defId === 'overload_curse').length, 2);
+});
+
+test('starting a combat with overload already over 100 pre-inserts the matching curse count', () => {
+  const state = makeCombat({ deck: Array(5).fill('katana_slash'), monsterIds: ['nibbit'], overload: 123 });
+  assert.equal(state.overloadCurseCount, 3); // ceil(23/10)
+  const total = state.piles.drawPile.length + state.piles.discardPile.length + state.piles.hand.length;
+  assert.equal(state.piles.discardPile.filter((c) => c.defId === 'overload_curse').length, 3);
+  assert.ok(total >= 5 + 3);
+});
+
+test('stage 2 (70%+ overload) adds +1 to every card cost on top of the existing +25% boost', () => {
+  const state = makeCombat({ deck: Array(5).fill('katana_slash'), monsterIds: ['nibbit'], overload: 70, playerHp: 70 });
+  const card = findCard(state, 'katana_slash');
+  const before = state.player.energy;
+  const after = playCard(state, card.instanceId, state.enemies[0].id);
+  assert.equal(before - after.player.energy, 2); // base cost 1 + stage-2 penalty 1
 });
 
 test('무게 저주 has no effect and exhausts, but never blocks the turn from continuing', () => {

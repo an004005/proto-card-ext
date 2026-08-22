@@ -1,18 +1,10 @@
 import { html } from '../lib.js';
-import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-
-function computeScore(inventory) {
-  return inventory.items.reduce((sum, i) => sum + (i.value || 0), 0);
-}
-
-function startNewRun() {
-  dispatch({ type: 'NEW_RUN', seed: Math.floor(Math.random() * 0xffffffff) });
-}
+import { computeInventoryScore, startNewRun } from './runEndHelpers.js';
 
 export function ExtractionCompleteScreen() {
   const ps = snapshotSignal.value.playerState;
-  const score = computeScore(ps.inventory);
+  const score = computeInventoryScore(ps.inventory);
 
   return html`
     <div style=${{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 'var(--space-4)', background: 'var(--color-accent)', color: 'var(--color-bg)' }}>

@@ -314,6 +314,15 @@ export const CARD_DEFINITIONS = {
     description: '아무 효과 없음. 1코로 사용해 소멸. 장비 내구도 저하로 이번 전투에만 발생.',
     mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
+  // 과부화가 100을 넘으면 초과분(10당 1장, 올림)만큼 삽입됨(§과부화 3단계 개편) — equipment_damaged_curse와
+  // 동일 패턴의 범용 카드, 이번 전투에만 존재하고 다음 전투로 넘어가지 않는다.
+  overload_curse: {
+    id: 'overload_curse', name: '과부화 잔여', type: 'curse', attackKind: null,
+    unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
+    effects: [],
+    description: '아무 효과 없음. 1코로 사용해 소멸. 과부화가 100을 넘어 이번 전투에만 발생.',
+    mapTags: { noise: 0, traits: [], disengageProgress: 0 },
+  },
   infected_curse: {
     id: 'infected_curse', name: '감염', type: 'curse', attackKind: null,
     unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,

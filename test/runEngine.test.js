@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
-  openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment,
+  openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment, isAtOpenExit,
 } from '../src/engine/runEngine.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
-  EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL, STANDARD_EDGE_TIME_COST,
+  EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
   OVERLOAD_MELTDOWN, BASIC_RECON_TIME, FARM_TIME,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
@@ -61,12 +61,12 @@ test('a threat left alone eventually walks its patrol route and wraps around', (
 test('exit request lifecycle: requesting -> opening -> open -> closed, and reopens', () => {
   let state = makeRun(5);
   const hacking = 2; // -2..4 index 4 -> EXIT_OPEN_WAIT_BY_HACKING[4] = 200
+  // §6.2: 요청 자체가 시간 50을 소비하는 행동이라, 호출이 끝난 시점엔 이미 requesting 판정 경계
+  // (interactionEndsAt)까지 시간이 흘러 'opening'으로 넘어가 있다.
   state = requestExtraction(state, 'A', hacking);
-  assert.equal(state.exits.A.status, 'requesting');
-  assert.equal(state.exits.A.signalStartedAt, 0);
-
-  state = advanceTime(state, EXIT_REQUEST_TIME);
   assert.equal(state.exits.A.status, 'opening');
+  assert.equal(state.exits.A.signalStartedAt, 0);
+  assert.equal(state.time, EXIT_REQUEST_TIME);
 
   const wait = EXIT_OPEN_WAIT_BY_HACKING[hacking + 2];
   const opensAt = EXIT_REQUEST_TIME + wait;
@@ -79,8 +79,32 @@ test('exit request lifecycle: requesting -> opening -> open -> closed, and reope
   assert.equal(state.exits.A.signalStartedAt, null);
 
   // still before disabledAt -> can request again
+  const before = state.time;
   state = requestExtraction(state, 'A', hacking);
-  assert.equal(state.exits.A.status, 'requesting');
+  assert.equal(state.exits.A.status, 'opening');
+  assert.equal(state.time, before + EXIT_REQUEST_TIME);
+});
+
+test('isAtOpenExit: true only while standing on an open standard exit, or the key exit while holding the key', () => {
+  let state = makeRun(5);
+  assert.equal(isAtOpenExit(state), false);
+
+  // standing at A's node before it opens -> not yet
+  state = { ...state, playerNodeId: state.exits.A.nodeId };
+  assert.equal(isAtOpenExit(state), false);
+  state = requestExtraction(state, 'A', 2);
+  const wait = EXIT_OPEN_WAIT_BY_HACKING[2 + 2];
+  state = advanceTime(state, EXIT_REQUEST_TIME + wait);
+  assert.equal(state.exits.A.status, 'open');
+  assert.equal(isAtOpenExit(state), true);
+  // being open elsewhere doesn't count
+  assert.equal(isAtOpenExit({ ...state, playerNodeId: state.exits.B.nodeId }), false);
+
+  // key exit: discovered but not standing there -> false; standing there but not discovered -> false
+  const keyState = { ...makeRun(5), playerNodeId: makeRun(5).exits.key.nodeId };
+  assert.equal(isAtOpenExit(keyState), false);
+  assert.equal(isAtOpenExit({ ...keyState, keyDiscovered: true }), true);
+  assert.equal(isAtOpenExit({ ...keyState, keyDiscovered: false }), false);
 });
 
 test('exit A cannot be requested once disabled, and B collapse grace ends the run at 4000', () => {
@@ -135,14 +159,15 @@ test('noise events expire after their duration and only reach threats within hop
   assert.equal(expired.noiseEvents.length, 0, 'noise event should have expired by t=101');
 });
 
-test('moveToAdjacentNode requires an edge, costs STANDARD_EDGE_TIME_COST, and tracks visited nodes', () => {
+test('moveToAdjacentNode requires an edge, costs the traversed edge\'s own (geometry-derived) timeCost, and tracks visited nodes', () => {
   let state = makeRun(21);
   const adjacency = buildAdjacency(state.graph.edges);
   const neighbor = [...adjacency.get(state.playerNodeId)][0];
+  const traversedEdge = state.graph.edges.find((e) => (e.from === state.playerNodeId && e.to === neighbor) || (e.to === state.playerNodeId && e.from === neighbor));
   const before = state.time;
   state = moveToAdjacentNode(state, neighbor);
   assert.equal(state.playerNodeId, neighbor);
-  assert.equal(state.time, before + STANDARD_EDGE_TIME_COST);
+  assert.equal(state.time, before + traversedEdge.timeCost);
   assert.ok(state.visitedNodeIds.includes(neighbor));
 
   const nonNeighbor = state.graph.nodes.map((n) => n.id).find((id) => id !== state.playerNodeId && !adjacency.get(state.playerNodeId).has(id));
@@ -223,17 +248,21 @@ test('basicRecon always succeeds, costs 80/0-noise, and records threat presence 
   }
 });
 
-test('useOpportunity consumes the opportunity, costs FARM_TIME, and reports the pre-rolled keyEligible flag', () => {
+test('useOpportunity decrements usesRemaining by one per farm, costs FARM_TIME, reports the pre-rolled keyEligible flag, and can be farmed multiple times until exhausted', () => {
   let state = makeRun(1);
-  const opportunity = state.graph.opportunities.find((o) => !o.consumed);
+  const opportunity = state.graph.opportunities.find((o) => o.usesRemaining > 0);
   assert.ok(opportunity, 'fixture seed should have at least one opportunity');
   state = { ...state, playerNodeId: opportunity.nodeId };
   const before = state.time;
   const result = useOpportunity(state, opportunity.id, 'normal');
   assert.equal(result.keyGranted, opportunity.keyEligible);
   assert.equal(result.state.time, before + FARM_TIME);
-  assert.ok(result.state.graph.opportunities.find((o) => o.id === opportunity.id).consumed);
-  assert.throws(() => useOpportunity(result.state, opportunity.id, 'normal'));
+  assert.equal(result.state.graph.opportunities.find((o) => o.id === opportunity.id).usesRemaining, opportunity.usesRemaining - 1);
+
+  let s = result.state;
+  for (let i = 1; i < opportunity.usesRemaining; i++) s = useOpportunity(s, opportunity.id, 'normal').state;
+  assert.equal(s.graph.opportunities.find((o) => o.id === opportunity.id).usesRemaining, 0);
+  assert.throws(() => useOpportunity(s, opportunity.id, 'normal'));
 });
 
 test('module_spatial snapshot_scan reveals threat presence within its range and respects cooldown', () => {
@@ -272,6 +301,29 @@ test('module_forcefield temporary_barrier blocks threat pathing through the edge
   // it expires after its duration.
   const expired = advanceTime(state, state.time + contract.duration);
   assert.equal(expired.activeBarriers.length, 0);
+});
+
+test('useFieldEquipment rejects out-of-range targets for remote_intrusion and temporary_barrier', () => {
+  const state = makeRun(1);
+  const spatialContract = MAP_EQUIPMENT_CAPABILITIES.module_spatial.fieldAction; // snapshot_scan, no target
+  const empContract = MAP_EQUIPMENT_CAPABILITIES.module_emp.fieldAction; // remote_intrusion
+  const forcefieldContract = MAP_EQUIPMENT_CAPABILITIES.module_forcefield.fieldAction; // temporary_barrier
+
+  const dist = bfsHopDistances(state.graph.edges, state.playerNodeId);
+  const farNode = state.graph.nodes.find((n) => (dist.get(n.id) ?? 0) > empContract.range);
+  assert.ok(farNode, 'fixture seed should have a node beyond remote_intrusion range');
+  assert.throws(() => useFieldEquipment(state, 'inst', empContract, farNode.id), /out of range/);
+
+  const farEdge = state.graph.edges.find((e) => {
+    const hf = dist.get(e.from); const ht = dist.get(e.to);
+    return (hf === undefined || hf > forcefieldContract.range) && (ht === undefined || ht > forcefieldContract.range);
+  });
+  assert.ok(farEdge, 'fixture seed should have an edge beyond temporary_barrier range');
+  assert.throws(() => useFieldEquipment(state, 'inst', forcefieldContract, farEdge.id), /out of range/);
+
+  // unaffected: a target-less snapshot_scan still works regardless of range.
+  const scanned = useFieldEquipment(state, 'inst', spatialContract);
+  assert.ok(Object.keys(scanned.observations).length > 0);
 });
 
 // #9 Overload 100은 HP와 무관한 즉시 패배이며, 장착 임플란트 바닥 아래로는 감소하지 않는다.

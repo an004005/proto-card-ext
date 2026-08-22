@@ -2,7 +2,7 @@
 // (state, ...args) => newState — no DOM/Preact, runnable headlessly under `node --test`.
 import * as cardEngine from './cardEngine.js';
 import { computeDamage, computeBlock, applyDamage, decayStatusesAtTurnEnd, applyStatus, applyArmorAtTurnStart, applyPoisonAtTurnStart } from './statusEngine.js';
-import { getStage, gainOverload, isLethalOverload } from './overloadEngine.js';
+import { getStage, gainOverload } from './overloadEngine.js';
 import { currentMove, advanceAiState, createInitialAiState } from './monsterAI.js';
 import { isItemBurdenGivenOrder } from './inventoryEngine.js';
 import { nextInt, nextFloat } from './rng.js';
@@ -24,6 +24,37 @@ const HAND_SIZE = 5;
 const DURABILITY_DECAY_CHANCE = 0.01;
 
 // ---- card resolution helpers ----
+
+/**
+ * §과부화 3단계 개편: 과부화가 100을 넘으면 초과분 10당(올림) 저주 카드 1장을 이번 전투에만
+ * 덱에 삽입한다 — 더 이상 즉사 조건이 아니다.
+ * @param {number} overload
+ * @returns {number}
+ */
+function computeOverloadCurseCount(overload) {
+  return Math.ceil(Math.max(0, overload - 100) / 10);
+}
+
+/**
+ * @param {import('./types.js').Piles} piles
+ * @param {number} previousCount
+ * @param {number} overload
+ * @returns {import('./types.js').Piles}
+ */
+function insertOverloadCurses(piles, previousCount, overload) {
+  const desired = computeOverloadCurseCount(overload);
+  let p = piles;
+  for (let i = previousCount; i < desired; i++) p = cardEngine.insertCardToDiscard(p, 'overload_curse');
+  return p;
+}
+
+/**
+ * @param {number} stage
+ * @returns {number} stage 2(강화+페널티·과열)에서 모든 카드 코스트에 +1.
+ */
+function getStagePenaltyCostModifier(stage) {
+  return stage === 2 ? 1 : 0;
+}
 
 /**
  * @param {CardDef} def
@@ -74,7 +105,7 @@ function getCostModifierFromStatuses(def, statuses) {
  */
 export function getEffectiveCost(def, stage, powers, statuses = {}) {
   const resolved = resolveCard(def, stage);
-  return Math.max(0, resolved.cost + getCostModifierFromPowers(def, stage, powers) + getCostModifierFromStatuses(def, statuses));
+  return Math.max(0, resolved.cost + getCostModifierFromPowers(def, stage, powers) + getCostModifierFromStatuses(def, statuses) + getStagePenaltyCostModifier(stage));
 }
 
 /**
@@ -129,8 +160,7 @@ export function isCardPlayable(state, instanceId) {
     if (!isItemBurdenGivenOrder(state.player.inventoryItemIdsInOrder, state.player.removedItemIds, state.player.inventoryCapacity, card.itemId)) return false;
   }
   const stage = getStage(state.overload);
-  const resolved = resolveCard(def, stage);
-  const cost = resolved.cost + getCostModifierFromStatuses(def, state.player.statuses);
+  const cost = getEffectiveCost(def, stage, state.player.powers, state.player.statuses);
   if (state.player.energy < cost) return false;
   if (def.ammoCost && state.player.loaded < def.ammoCost) return false;
   return true;
@@ -150,7 +180,7 @@ export function isCardPlayable(state, instanceId) {
  * @param {RngState} rngState
  * @returns {{enemy: EnemyState, rngState: RngState}}
  */
-function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier, doubleActionActive, rngState) {
+export function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier, doubleActionActive, rngState) {
   const def = MONSTER_DEFINITIONS[defId];
   if (!def) throw new Error(`Unknown monster defId "${defId}"`);
   const hp = Math.round(def.hp * (hpMultiplier || 1));
@@ -228,7 +258,8 @@ export function createCombatState({
       durabilityDecayInstanceIds: [],
     },
     enemies,
-    piles: shuffled.piles,
+    piles: insertOverloadCurses(shuffled.piles, 0, overload),
+    overloadCurseCount: computeOverloadCurseCount(overload),
     rngState: rng,
   };
 }
@@ -584,10 +615,14 @@ function applyEffects(state, effects, context) {
 
 // ---- win/loss ----
 
-/** @param {CombatState} state @returns {CombatState} */
+/**
+ * §과부화 3단계 개편: 100 초과는 더 이상 즉사 조건이 아니다(저주 카드 삽입으로 대체) —
+ * HP 0 이하만 패배로 판정한다.
+ * @param {CombatState} state @returns {CombatState}
+ */
 export function checkWinLoss(state) {
   if (state.phase === 'victory' || state.phase === 'defeat') return state;
-  if (state.player.hp <= 0 || isLethalOverload(state.overload)) return { ...state, phase: 'defeat' };
+  if (state.player.hp <= 0) return { ...state, phase: 'defeat' };
   if (!state.enemies.some((e) => e.hp > 0)) return { ...state, phase: 'victory' };
   return state;
 }
@@ -611,13 +646,15 @@ export function playCard(state, instanceId, targetId) {
   const stage = getStage(state.overload);
   const resolved = resolveCard(def, stage);
 
+  const newOverload = gainOverload(state.overload, def.overloadGain || 0, state.overloadGainMultiplier);
   let s = {
     ...state,
-    piles: pilesAfterRemoval,
-    overload: gainOverload(state.overload, def.overloadGain || 0, state.overloadGainMultiplier),
+    piles: insertOverloadCurses(pilesAfterRemoval, state.overloadCurseCount, newOverload),
+    overload: newOverload,
+    overloadCurseCount: computeOverloadCurseCount(newOverload),
     player: {
       ...state.player,
-      energy: state.player.energy - resolved.cost - getCostModifierFromPowers(def, stage, state.player.powers) - getCostModifierFromStatuses(def, state.player.statuses),
+      energy: state.player.energy - getEffectiveCost(def, stage, state.player.powers, state.player.statuses),
       loaded: def.ammoCost ? state.player.loaded - def.ammoCost : state.player.loaded,
     },
   };
@@ -737,7 +774,7 @@ export function resolveEnemyTurn(state) {
   const actingOrder = state.enemies.map((e) => e.id);
 
   for (const enemyId of actingOrder) {
-    if (s.player.hp <= 0 || isLethalOverload(s.overload)) break;
+    if (s.player.hp <= 0) break;
     let enemy = s.enemies.find((e) => e.id === enemyId);
     if (!enemy || enemy.hp <= 0) continue;
 
@@ -803,7 +840,7 @@ export function advanceTurnWithSteps(state) {
 
   const actingOrder = s.enemies.map((e) => e.id);
   for (const enemyId of actingOrder) {
-    if (s.player.hp <= 0 || isLethalOverload(s.overload)) break;
+    if (s.player.hp <= 0) break;
     let enemy = s.enemies.find((e) => e.id === enemyId);
     if (!enemy || enemy.hp <= 0) continue;
 

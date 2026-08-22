@@ -41,6 +41,44 @@ export function bfsHopDistances(edges, fromId) {
 }
 
 /**
+ * Dijkstra weighted-shortest-path distances from `fromId`, summing each edge's `timeCost` — used
+ * instead of bfsHopDistances once edges no longer have a uniform cost (see facilityGraph.js's
+ * geometry-based edge time costs). O(V^2), fine at this graph's scale (no priority queue needed).
+ * @param {{from: string, to: string, timeCost: number}[]} edges
+ * @param {string} fromId
+ * @returns {Map<string, number>} nodeId -> total weighted distance (fromId itself is 0)
+ */
+export function dijkstraDistances(edges, fromId) {
+  const adjacency = new Map();
+  /** @param {string} u @param {string} v @param {number} cost */
+  const link = (u, v, cost) => {
+    if (!adjacency.has(u)) adjacency.set(u, []);
+    adjacency.get(u).push({ to: v, cost });
+  };
+  for (const edge of edges) {
+    link(edge.from, edge.to, edge.timeCost);
+    link(edge.to, edge.from, edge.timeCost);
+  }
+
+  const distances = new Map([[fromId, 0]]);
+  const visited = new Set();
+  for (;;) {
+    let current = null;
+    let currentDist = Infinity;
+    for (const [nodeId, dist] of distances) {
+      if (!visited.has(nodeId) && dist < currentDist) { current = nodeId; currentDist = dist; }
+    }
+    if (current === null) break;
+    visited.add(current);
+    for (const { to, cost } of adjacency.get(current) || []) {
+      const candidate = currentDist + cost;
+      if (candidate < (distances.get(to) ?? Infinity)) distances.set(to, candidate);
+    }
+  }
+  return distances;
+}
+
+/**
  * Counts edge-disjoint paths between two nodes over undirected unit-capacity edges, up to
  * `maxPaths`, via repeated BFS augmenting paths (Edmonds-Karp, capped). By Menger's theorem this
  * equals min(edge connectivity, maxPaths).
