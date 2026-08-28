@@ -62,6 +62,35 @@ test('ammo-gated cards are unplayable without enough ammo, but stay in hand', ()
   assert.equal(after, state); // no-op
 });
 
+test('revolver 마지막 한 발 is unavailable above one loaded round and pierces block when enabled', () => {
+  let state = makeCombat({ deck: Array(10).fill('revolver_last_round'), monsterIds: ['nibbit'], ammo: 2, maxLoad: 6 });
+  const card = findCard(state, 'revolver_last_round');
+  assert.equal(isCardPlayable(state, card.instanceId), false);
+
+  state = makeCombat({ deck: Array(10).fill('revolver_last_round'), monsterIds: ['nibbit'], ammo: 1, maxLoad: 6 });
+  const lastRound = findCard(state, 'revolver_last_round');
+  state = { ...state, enemies: state.enemies.map((enemy) => ({ ...enemy, block: 99 })) };
+  const before = state.enemies[0].hp;
+  state = playCard(state, lastRound.instanceId, state.enemies[0].id);
+  assert.equal(state.enemies[0].hp, before - 20);
+});
+
+test('퀵드로우 refills one round after firing, and mantis blades create a vanishing free slash each later turn', () => {
+  let state = makeCombat({ deck: Array(10).fill('revolver_quickdraw'), monsterIds: ['nibbit'], ammo: 7, maxLoad: 5 });
+  const quickdraw = findCard(state, 'revolver_quickdraw');
+  state = playCard(state, quickdraw.instanceId, state.enemies[0].id);
+  assert.equal(state.player.loaded, 5, 'fires one then reloads exactly one');
+
+  state = makeCombat({ deck: Array(10).fill('mantis_blades_deploy'), monsterIds: ['nibbit'] });
+  const deploy = findCard(state, 'mantis_blades_deploy');
+  state = playCard(state, deploy.instanceId, null);
+  state = advanceTurn(state);
+  assert.ok(state.piles.hand.some((card) => card.defId === 'mantis_blade_slash'));
+  const slash = findCard(state, 'mantis_blade_slash');
+  state = playCard(state, slash.instanceId, state.enemies[0].id);
+  assert.ok(state.piles.exhaustPile.some((card) => card.defId === 'mantis_blade_slash'));
+});
+
 test('playing an ammo card consumes ammo 1:1 with its ammoCost', () => {
   let state = makeCombat({ deck: Array(10).fill('rifle_suppress'), monsterIds: ['nibbit'], ammo: 5 });
   const card = findCard(state, 'rifle_suppress');

@@ -4,7 +4,8 @@
 import { weightedPick } from './rng.js';
 import {
   moveToAdjacentNode, requestExtraction, basicRecon, openSpecialEdge, useOpportunity,
-  useFieldEquipment, isAtOpenExit, refreshLocalObservations,
+  useFieldEquipment, isAtOpenExit, refreshLocalObservations, hackCamera, hackAccessInterface, destroyCamera,
+  disableGenerator,
 } from './runEngine.js';
 import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
 import { scheduleReinforcement } from './combatMapIntegration.js';
@@ -78,7 +79,8 @@ function withFacilityRunState(snapshot, fn) {
  * @returns {GameSnapshot}
  */
 export function moveToNode(snapshot, nodeId) {
-  return withFacilityRunState(snapshot, (run) => moveToAdjacentNode(run, nodeId));
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => moveToAdjacentNode(run, nodeId, capabilities.mobility, capabilities.stealth));
 }
 
 /**
@@ -94,6 +96,30 @@ export function requestExtractionCommand(snapshot, exitId) {
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function basicReconCommand(snapshot) {
   return withFacilityRunState(snapshot, (run) => basicRecon(run));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} cameraId @returns {GameSnapshot} */
+export function hackCameraCommand(snapshot, cameraId) {
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => hackCamera(run, cameraId, capabilities.hacking));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} interfaceId @returns {GameSnapshot} */
+export function hackAccessInterfaceCommand(snapshot, interfaceId) {
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => hackAccessInterface(run, interfaceId, capabilities.hacking));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} cameraId @returns {GameSnapshot} */
+export function destroyCameraCommand(snapshot, cameraId) {
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => destroyCamera(run, cameraId, capabilities.force));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} generatorId @param {'hacking'|'force'} capabilityKind */
+export function disableGeneratorCommand(snapshot, generatorId, capabilityKind) {
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => disableGenerator(run, generatorId, capabilityKind, capabilities[capabilityKind]));
 }
 
 /**
@@ -134,7 +160,10 @@ export function useOpportunityCommand(snapshot, opportunityId, mode) {
     else if (opt.kind === 'ammo') inventory = addAmmo(inventory, opt.amount);
     else if (opt.kind === 'consumable') inventory = addItem(inventory, createItem('consumable', { defId: opt.defId }));
   }
-  return { ...s, rngState, playerState: { ...s.playerState, inventory } };
+  const facilityRunState = s.facilityRunState && s.facilityRunState.lastActionResult
+    ? { ...s.facilityRunState, lastActionResult: { ...s.facilityRunState.lastActionResult, loot: opt || null } }
+    : s.facilityRunState;
+  return { ...s, rngState, facilityRunState, playerState: { ...s.playerState, inventory } };
 }
 
 /**

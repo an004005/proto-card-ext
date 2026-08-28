@@ -36,7 +36,7 @@ export const CARD_DEFINITIONS = {
 
   // ---- 라이플 ----
   rifle_aim: {
-    id: 'rifle_aim', name: '조준사격', type: 'attack', attackKind: 'ranged',
+    id: 'rifle_aim', name: '사격', type: 'attack', attackKind: 'ranged',
     cost: 0, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 5,
     effects: [{ kind: 'damage', value: 8, attackKind: 'ranged' }],
     description: '피해 8. 총알 1 소모.',
@@ -45,19 +45,27 @@ export const CARD_DEFINITIONS = {
   rifle_suppress: {
     id: 'rifle_suppress', name: '제압사격', type: 'attack', attackKind: 'ranged',
     cost: 1, ammoCost: 3, exhausts: false, scalesWithStage: true, overloadGain: 10,
-    effects: [{ kind: 'damage', value: 10, attackKind: 'ranged', target: 'all_enemies' }],
-    description: '광역 피해 10. 총알 3 소모.',
+    effects: [{ kind: 'damage', value: 3, hits: 3, attackKind: 'ranged', target: 'all_enemies' }],
+    description: '모든 적에게 피해 3을 3회. 총알 3 소모.',
     mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
   },
   rifle_buttstock: {
     id: 'rifle_buttstock', name: '개머리판 타격', type: 'attack', attackKind: 'melee',
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
-    effects: [{ kind: 'damage', value: 5, attackKind: 'melee' }],
-    description: '피해 5 (총알 무소모 예비 수단).',
+    effects: [{ kind: 'damage', value: 5, attackKind: 'melee' }, { kind: 'reload', count: 1 }],
+    description: '피해 5. 1발 장전.',
     mapTags: { noise: 1, traits: ['melee'], disengageProgress: 0 },
   },
 
   // ---- 단검 ----
+  rifle_tactical_reload: {
+    id: 'rifle_tactical_reload', name: '전술 재장전', type: 'skill', attackKind: null,
+    cost: 1, exhausts: false, scalesWithStage: false, overloadGain: 0,
+    effects: [{ kind: 'reload' }, { kind: 'draw', count: 1 }],
+    description: '최대 장전량까지 재장전하고 카드 1장 드로우.',
+    mapTags: { noise: 1, traits: ['firearm'], disengageProgress: 0 },
+  },
+
   dagger_weak_slash: {
     id: 'dagger_weak_slash', name: '약한 베기', type: 'attack', attackKind: 'melee',
     cost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
@@ -86,6 +94,100 @@ export const CARD_DEFINITIONS = {
   },
 
   // ---- 공용 (총기 전용, §신규 재장전) ----
+  // ---- 자동권총 ----
+  auto_pistol_shot: {
+    id: 'auto_pistol_shot', name: '사격', type: 'attack', attackKind: 'ranged',
+    cost: 0, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
+    effects: [{ kind: 'damage', value: 5, attackKind: 'ranged' }],
+    description: '피해 5. 총알 1 소모.', mapTags: { noise: 1, traits: ['firearm'], disengageProgress: 0 },
+  },
+  auto_pistol_mozambique: {
+    id: 'auto_pistol_mozambique', name: '모잠비크 드릴', type: 'attack', attackKind: 'ranged',
+    cost: 1, ammoCost: 3, exhausts: false, scalesWithStage: true, overloadGain: 5,
+    effects: [{ kind: 'damage', value: 4, hits: 3, attackKind: 'ranged' }],
+    description: '피해 4를 3회. 총알 3 소모.', mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
+  },
+
+  // ---- 리볼버 ----
+  revolver_headshot: {
+    id: 'revolver_headshot', name: '헤드샷', type: 'attack', attackKind: 'ranged',
+    cost: 1, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 5,
+    effects: [{ kind: 'damage', value: 12, attackKind: 'ranged', ignoresBlock: true }],
+    description: '방어도를 무시하고 피해 12. 총알 1 소모.', mapTags: { noise: 1, traits: ['firearm'], disengageProgress: 0 },
+  },
+  revolver_last_round: {
+    id: 'revolver_last_round', name: '마지막 한 발', type: 'attack', attackKind: 'ranged',
+    cost: 1, ammoCost: 1, requiresLoadedAtMost: 1, exhausts: false, scalesWithStage: true, overloadGain: 10,
+    effects: [{ kind: 'damage', value: 20, attackKind: 'ranged', ignoresBlock: true }],
+    description: '장전된 총알이 정확히 1발 이하일 때만 사용. 방어도를 무시하고 피해 20.', mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
+  },
+  revolver_quickdraw: {
+    id: 'revolver_quickdraw', name: '퀵드로우', type: 'attack', attackKind: 'ranged',
+    cost: 0, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
+    effects: [{ kind: 'damage', value: 6, attackKind: 'ranged' }, { kind: 'reload', count: 1 }, { kind: 'draw', count: 1 }],
+    description: '피해 6. 총알 1 소모 후 1발 장전하고 카드 1장 드로우.', mapTags: { noise: 1, traits: ['firearm'], disengageProgress: 0 },
+  },
+
+  // ---- 샷건 ----
+  shotgun_birdshot: {
+    id: 'shotgun_birdshot', name: '버드샷', type: 'attack', attackKind: 'ranged',
+    cost: 0, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 0,
+    effects: [{ kind: 'damage', value: 3, hits: 4, attackKind: 'ranged' }],
+    description: '피해 3을 4회. 총알 1 소모.', mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
+  },
+  shotgun_buckshot: {
+    id: 'shotgun_buckshot', name: '벅샷', type: 'attack', attackKind: 'ranged',
+    cost: 1, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 5,
+    effects: [{ kind: 'damage', value: 7, hits: 2, attackKind: 'ranged' }],
+    description: '피해 7을 2회. 총알 1 소모.', mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
+  },
+  shotgun_slugshot: {
+    id: 'shotgun_slugshot', name: '슬러그샷', type: 'attack', attackKind: 'ranged',
+    cost: 1, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 5,
+    effects: [{ kind: 'damage', value: 16, attackKind: 'ranged' }],
+    description: '피해 16. 총알 1 소모.', mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
+  },
+
+  // ---- 로켓런처 / 저격총 ----
+  rocket_launch: {
+    id: 'rocket_launch', name: '로켓 발사', type: 'attack', attackKind: 'ranged',
+    cost: 2, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 15,
+    effects: [{ kind: 'damage', value: 30, target: 'all_enemies', attackKind: 'ranged', scalesBy: 'loadedAmmo', scalesByAmount: -2 }],
+    description: '모든 적에게 피해 30. 발사 뒤 남은 장전 탄약 1발당 피해가 2 감소. 총알 1 소모.', mapTags: { noise: 3, traits: ['firearm', 'explosive'], disengageProgress: 0 },
+  },
+  sniper_aim: {
+    id: 'sniper_aim', name: '조준', type: 'skill', attackKind: null,
+    cost: 0, exhausts: false, scalesWithStage: false, overloadGain: 0,
+    effects: [{ kind: 'grantNextRangedBonus', amount: 8, ignoresBlock: true }],
+    description: '다음 원거리 공격의 피해 +8, 방어도 무시.', mapTags: { noise: 0, traits: ['firearm'], disengageProgress: 0 },
+  },
+  sniper_shot: {
+    id: 'sniper_shot', name: '정밀 사격', type: 'attack', attackKind: 'ranged',
+    cost: 1, ammoCost: 1, exhausts: false, scalesWithStage: true, overloadGain: 5,
+    effects: [{ kind: 'damage', value: 16, attackKind: 'ranged' }],
+    description: '피해 16. 총알 1 소모.', mapTags: { noise: 2, traits: ['firearm'], disengageProgress: 0 },
+  },
+
+  // ---- 사이버웨어 ----
+  sandevistan_overclock: {
+    id: 'sandevistan_overclock', name: '산데비스탄 가속', type: 'power', attackKind: null,
+    cost: 1, exhausts: false, scalesWithStage: false, overloadGain: 10,
+    effects: [{ kind: 'activatePower', power: 'sandevistan' }],
+    description: '전투 중 지속. 매 턴 에너지 +1.', mapTags: { noise: 0, traits: [], disengageProgress: 0 },
+  },
+  mantis_blades_deploy: {
+    id: 'mantis_blades_deploy', name: '맨티스 블레이드 전개', type: 'power', attackKind: null,
+    cost: 1, exhausts: false, scalesWithStage: false, overloadGain: 5,
+    effects: [{ kind: 'activatePower', power: 'mantisBlades' }],
+    description: '전투 중 지속. 매 턴 시작 시 0코스트 맨티스 블레이드 베기를 패에 추가.', mapTags: { noise: 0, traits: ['melee'], disengageProgress: 0 },
+  },
+  mantis_blade_slash: {
+    id: 'mantis_blade_slash', name: '맨티스 블레이드 베기', type: 'attack', attackKind: 'melee',
+    cost: 0, exhausts: true, scalesWithStage: true, overloadGain: 0,
+    effects: [{ kind: 'damage', value: 9, attackKind: 'melee' }],
+    description: '피해 9. 사용 후 소멸.', mapTags: { noise: 1, traits: ['melee'], disengageProgress: 0 },
+  },
+
   reload: {
     id: 'reload', name: '재장전', type: 'skill', attackKind: null,
     cost: 1, exhausts: false, scalesWithStage: false, overloadGain: 0,

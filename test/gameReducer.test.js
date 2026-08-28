@@ -157,16 +157,16 @@ test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seed
   assert.equal(s.playerState.hp, 77);
   assert.equal(s.playerState.overload, 30);
   assert.equal(s.playerState.inventory.capacity, 15);
-  // 인벤토리는 완전히 빈 채로 시작 — 장착 안 한 farming-only 장비 10종, 시작 소모품 3개,
+  // 인벤토리는 완전히 빈 채로 시작 — 장착 안 한 farming-only 장비 17종, 시작 소모품 3개,
   // 시작 탄약(8발, 1스택)까지 전부 창고(무제한, 과적 규칙 미적용)에 남아있다가 플레이어가
   // 직접 인벤토리로 옮겨야 실제 런에 반영된다(옮기지 않으면 탄약 0으로 출격).
   const items = s.playerState.inventory.items;
   assert.equal(items.length, 0);
   const warehouseItems = s.playerState.warehouse.items;
-  assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 10);
+  assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 17);
   assert.equal(warehouseItems.filter((i) => i.kind === 'consumable').length, 3);
   assert.deepEqual(warehouseItems.filter((i) => i.kind === 'ammo').map((i) => i.amount), [8]);
-  assert.equal(warehouseItems.length, 14);
+  assert.equal(warehouseItems.length, 21);
   assert.equal(s.facilityRunState.graph.nodes.length, 160);
   assert.equal(s.facilityRunState.playerNodeId, s.facilityRunState.graph.startNodeId);
 });

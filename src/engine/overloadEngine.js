@@ -3,9 +3,10 @@
 // and never below the equipped "floor" (바닥 = sum of implant costs, fixed for the run since
 // the warehouse is inaccessible mid-run). In combat, exceeding 100 is no longer instant death —
 // combatEngine.js inserts curse cards proportional to the excess instead (this combat only).
-// isLethalOverload/OVERLOAD_MAX still gate the facility map (runEngine.js): map actions that
-// would push overload over 100 are meant to be pre-emptively disabled in the UI, and this stays
-// as a defensive backstop for the map's meltdown-ending-the-run path.
+// On the facility map there is no meltdown/run-ending state at all anymore: MapScreen.js
+// pre-emptively disables any action that would push overload over 100, so it never actually gets
+// there. isLethalOverload/OVERLOAD_MAX below are unused dead code left over from when the map
+// did end the run at 100 — kept only because nothing currently forces their removal.
 export const OVERLOAD_MAX = 100;
 
 /**

@@ -18,6 +18,7 @@ import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { BURDEN_CARD_DEF_BY_KIND, CARD_DEFINITIONS } from '../data/cards.js';
 import { pickReinforcementMonster } from '../data/dropTables.js';
 import { startReward } from './rewardReducer.js';
+import { GENERATOR_COMBAT_START_ARMOR } from '../data/facilityLayout.js';
 
 /** @typedef {import('./types.js').GameSnapshot} GameSnapshot */
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -74,6 +75,18 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
       enemies: combat.enemies.map((e) => ({
         ...e,
         statuses: applyStatus(applyStatus(e.statuses, 'vulnerable', debuff.vulnerable), 'weak', debuff.weak),
+      })),
+    };
+  }
+
+  const sectorId = snapshot.facilityRunState?.graph.nodes.find((node) => node.id === context.nodeId)?.sectorId;
+  const sectorGenerator = snapshot.facilityRunState?.graph.generators?.find((generator) => generator.sectorId === sectorId);
+  if (sectorGenerator && !snapshot.facilityRunState.disabledGeneratorIds.includes(sectorGenerator.id)) {
+    combat = {
+      ...combat,
+      enemies: combat.enemies.map((enemy) => ({
+        ...enemy,
+        statuses: applyStatus(enemy.statuses, 'armor', GENERATOR_COMBAT_START_ARMOR),
       })),
     };
   }

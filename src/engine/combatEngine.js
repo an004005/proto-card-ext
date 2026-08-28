@@ -163,6 +163,7 @@ export function isCardPlayable(state, instanceId) {
   const cost = getEffectiveCost(def, stage, state.player.powers, state.player.statuses);
   if (state.player.energy < cost) return false;
   if (def.ammoCost && state.player.loaded < def.ammoCost) return false;
+  if (def.requiresLoadedAtMost !== undefined && state.player.loaded > def.requiresLoadedAtMost) return false;
   return true;
 }
 
@@ -280,7 +281,7 @@ export function beginEnemyFirst(state) {
 
 /** @param {CombatState} state @returns {CombatState} */
 export function startPlayerTurn(state) {
-  let player = { ...state.player, block: 0, energy: state.player.maxEnergy };
+  let player = { ...state.player, block: 0, energy: state.player.maxEnergy + (state.player.powers.sandevistan?.active ? 1 : 0) };
   player = applyPoisonAtTurnStart(player);
   const opening = checkWinLoss({ ...state, player });
   if (opening.phase === 'defeat') return opening;
@@ -288,7 +289,11 @@ export function startPlayerTurn(state) {
   const drawCount = HAND_SIZE + (player.extraDrawPerTurn || 0);
   const drawn = cardEngine.drawCards(state.piles, drawCount, state.rngState);
 
-  let s = { ...state, player, piles: drawn.piles, rngState: drawn.rngState, phase: 'player_turn' };
+  let piles = drawn.piles;
+  if (player.powers.mantisBlades?.active) {
+    piles = { ...piles, hand: [...piles.hand, cardEngine.createCardInstance('mantis_blade_slash')] };
+  }
+  let s = { ...state, player, piles, rngState: drawn.rngState, phase: 'player_turn' };
 
   // 임플란트⑥ 매턴 시작 광역 3 피해 (§10) — flat, unaffected by weak/vulnerable (implant, not a card).
   if (s.player.turnStartAoeDamage) {
@@ -439,6 +444,7 @@ function computeScalesByBonus(effect, state, context) {
       count = (enemy && enemy.statuses.poison) || 0;
       break;
     }
+    case 'loadedAmmo': count = state.player.loaded; break;
     default: count = 0;
   }
   return count * per;
@@ -473,7 +479,7 @@ function applyOneEffect(state, effect, context) {
           stage, scalesWithStage: context.scalesWithStage, flatBonus, weak,
           vulnerable: false, // vulnerable is resolved per-target below (depends on defender)
         });
-        const ignoresBlock = context.ignoresBlock && effect.attackKind === 'ranged';
+        const ignoresBlock = (context.ignoresBlock || effect.ignoresBlock) && effect.attackKind === 'ranged';
 
         if (target.scope === 'all_enemies') {
           for (const enemy of livingEnemies(s)) {
@@ -567,7 +573,7 @@ function applyOneEffect(state, effect, context) {
       return { ...state, player: { ...state.player, removedItemIds: [...state.player.removedItemIds, context.itemId] } };
     }
     case 'reload': {
-      const gained = Math.min(state.player.maxLoad - state.player.loaded, state.player.reserve);
+      const gained = Math.min(state.player.maxLoad - state.player.loaded, state.player.reserve, effect.count ?? Infinity);
       if (gained <= 0) return state;
       return { ...state, player: { ...state.player, loaded: state.player.loaded + gained, reserve: state.player.reserve - gained } };
     }

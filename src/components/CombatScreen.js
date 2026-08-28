@@ -42,6 +42,7 @@ export function CombatScreen() {
   const draggingDef = draggingCard ? CARD_DEFINITIONS[draggingCard.defId] : null;
   const targetKind = draggingDef ? getCardTargetKind(draggingDef) : 'none';
   const needsEnemyTarget = targetKind === 'enemy' || targetKind === 'machine_enemy';
+  const escapeCards = hand.filter((card) => CARD_DEFINITIONS[card.defId]?.mapTags?.disengageProgress);
 
   function handleDropAnywhere(e) {
     if (!draggingCard) return;
@@ -125,6 +126,7 @@ export function CombatScreen() {
                 <${Tooltip} width=${200} content="이탈 태그가 붙은 카드를 플레이하면 진행도가 오릅니다. 필요한 진행도에 도달하면 '이탈 확정'으로 보상 없이 즉시 맵으로 돌아갈 수 있습니다.">
                   <span>이탈 진행도 ${disengage.disengageProgress}/${DISENGAGE_REQUIRED_PROGRESS}</span>
                 <//>
+                ${escapeCards.length > 0 ? html`<span style=${{ color: '#0e7490', fontWeight: 800 }}>손패 이탈 카드 ${escapeCards.length}장 강조됨</span>` : html`<span style=${{ color: 'var(--color-negative, #dc2626)' }}>손패에 이탈 카드 없음 — 다음 드로우까지 버티세요</span>`}
                 <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} onClick=${() => dispatch({ type: 'CANCEL_DISENGAGE' })}>이탈 취소</button>
                 <${Tooltip} width=${200} content="진행도를 채우면 전투를 즉시 종료하고 맵으로 돌아갑니다 — 승리 보상은 없지만 HP/과부화는 지금 상태 그대로 유지됩니다.">
                   <button class="btn btn-primary" style=${{ padding: '4px 10px' }} disabled=${!canDisengage(disengage)} onClick=${() => dispatch({ type: 'RESOLVE_DISENGAGE' })}>이탈 확정</button>

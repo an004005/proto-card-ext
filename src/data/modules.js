@@ -25,6 +25,14 @@ export const MODULE_DEFINITIONS = {
     id: 'module_emp', name: '전자기 간섭', slot: 'module',
     cardList: [{ defId: 'module_hack', count: 1 }],
   },
+  module_sandevistan: {
+    id: 'module_sandevistan', name: '산데비스탄', slot: 'module',
+    cardList: [{ defId: 'sandevistan_overclock', count: 1 }],
+  },
+  module_mantis_blades: {
+    id: 'module_mantis_blades', name: '맨티스 블레이드', slot: 'module',
+    cardList: [{ defId: 'mantis_blades_deploy', count: 1 }],
+  },
 };
 
 /**

@@ -143,6 +143,7 @@ export function Card({
   const isDraggable = draggable && playable;
   const cost = getEffectiveCost(def, stage, powers);
   const item = card.itemId && inventory ? inventory.items.find((i) => i.id === card.itemId) : null;
+  const escapeProgress = def.mapTags?.disengageProgress || 0;
 
   return html`
     <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${overload} item=${item} />`}>
@@ -171,6 +172,11 @@ export function Card({
         ${def.ammoCost ? html`
           <span style=${{ position: 'absolute', top: '-2px', right: '-2px', fontSize: '10px', background: 'var(--color-neutral-800)', color: 'var(--color-bg)', padding: '2px 5px', fontWeight: 700 }}>
             탄 ${def.ammoCost}
+          </span>
+        ` : null}
+        ${escapeProgress ? html`
+          <span style=${{ position: 'absolute', top: '28px', right: '-2px', fontSize: '10px', background: '#0e7490', color: '#fff', padding: '2px 5px', fontWeight: 800 }}>
+            이탈 +${escapeProgress}
           </span>
         ` : null}
         <div style=${{ marginTop: '20px', fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '13px' }}>${def.name}</div>

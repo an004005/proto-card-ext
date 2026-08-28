@@ -4,6 +4,7 @@ import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
   openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment, isAtOpenExit,
+  hackCamera, hackAccessInterface, destroyCamera, cameraHackRange, disableGenerator,
 } from '../src/engine/runEngine.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import {
@@ -174,6 +175,95 @@ test('moveToAdjacentNode requires an edge, costs the traversed edge\'s own (geom
   assert.throws(() => moveToAdjacentNode(state, nonNeighbor));
 });
 
+test('high-ground edges require Mobility 3 and Mobility scales movement time', () => {
+  let state = makeRun(21);
+  const edge = state.graph.edges.find((entry) => entry.from === state.playerNodeId || entry.to === state.playerNodeId);
+  const destination = edge.from === state.playerNodeId ? edge.to : edge.from;
+  state = { ...state, graph: { ...state.graph, edges: state.graph.edges.map((entry) => entry.id === edge.id ? { ...entry, features: ['highGround'] } : entry) } };
+  assert.throws(() => moveToAdjacentNode(state, destination, 2, 3), /reachable/);
+  const fast = moveToAdjacentNode(state, destination, 3, 3);
+  assert.equal(fast.time, Math.round(edge.timeCost * 0.7));
+});
+
+test('an unhacked camera detects Stealth below 3 and directs nearby threats to the player', () => {
+  let state = makeRun(21);
+  const edge = state.graph.edges.find((entry) => entry.from === state.playerNodeId || entry.to === state.playerNodeId);
+  const destination = edge.from === state.playerNodeId ? edge.to : edge.from;
+  const threatId = Object.keys(state.threats)[0];
+  state = {
+    ...state,
+    graph: { ...state.graph, cameras: [{ id: 'camera_test', nodeId: destination }] },
+    threats: { ...state.threats, [threatId]: { ...state.threats[threatId], nodeId: state.playerNodeId, nextMoveAt: 99999 } },
+  };
+  const detected = moveToAdjacentNode(state, destination, 0, 2);
+  assert.deepEqual(detected.lastCameraDetection, { cameraId: 'camera_test', nodeId: destination, detectedAt: 0 });
+  assert.equal(detected.threats[threatId].mode, 'pursuit');
+  assert.equal(detected.threats[threatId].lastKnownPlayerNodeId, destination);
+
+  const hidden = moveToAdjacentNode({ ...state, lastCameraDetection: null }, destination, 0, 3);
+  assert.equal(hidden.lastCameraDetection, null);
+});
+
+test('direct hacking reaches exactly Hacking-level hops, and a hacked interface unlocks its whole sector', () => {
+  let state = makeRun(21);
+  const hops = bfsHopDistances(state.graph.edges, state.playerNodeId);
+  const twoHopNodeId = [...hops.entries()].find(([, hop]) => hop === 2)?.[0];
+  assert.ok(twoHopNodeId, 'fixture needs a node exactly 2 hops from the start for this test');
+  const playerSectorId = state.graph.nodes.find((n) => n.id === state.playerNodeId).sectorId;
+  state = {
+    ...state,
+    graph: {
+      ...state.graph,
+      // §10.2: Hacking 1/2/3/4 각각 1/2/3/4홉. 2홉 거리 카메라로 Hacking 1이 닿지 않음을 검증한다.
+      cameras: [{ id: 'camera_test', nodeId: twoHopNodeId }],
+      accessInterfaces: [{ id: 'interface_test', nodeId: state.playerNodeId }],
+      // 접속 인터페이스의 "구역 전체" 사거리 우회를 같은 조건으로 검증하려면 카메라가 플레이어와
+      // 같은 구역에 있어야 한다 — 시드가 어떻든 결정적으로 만들기 위해 구역을 맞춰 둔다.
+      nodes: state.graph.nodes.map((n) => (n.id === twoHopNodeId ? { ...n, sectorId: playerSectorId } : n)),
+    },
+  };
+  assert.deepEqual([1, 2, 3, 4].map(cameraHackRange), [1, 2, 3, 4]);
+  assert.throws(() => hackCamera(state, 'camera_test', 0), /Hacking 1/);
+  assert.throws(() => hackCamera(state, 'camera_test', 1), /out of range/); // Hacking 1은 1홉까지만, 카메라는 2홉
+  const hacked = hackCamera(state, 'camera_test', 2);
+  assert.equal(hacked.activeRecon.source, 'camera');
+  assert.ok(hacked.activeRecon.targetNodeIds.includes(twoHopNodeId));
+  assert.ok(hacked.hackedCameras.some((entry) => entry.cameraId === 'camera_test'));
+  assert.ok(hacked.observations[twoHopNodeId]);
+
+  const connected = hackAccessInterface(state, 'interface_test', 1);
+  assert.ok(connected.hackedInterfaceIds.includes('interface_test'));
+  const throughInterface = hackCamera(connected, 'camera_test', 1); // 인터페이스 해킹 후엔 홉 사거리 무관하게 같은 구역 전체에 닿는다
+  assert.ok(throughInterface.hackedCameras.some((entry) => entry.cameraId === 'camera_test'));
+});
+
+test('camera destruction is a local, loud Force action and permanently stops camera detection', () => {
+  let state = makeRun(21);
+  state = {
+    ...state,
+    graph: { ...state.graph, cameras: [{ id: 'camera_test', nodeId: state.playerNodeId }] },
+  };
+  assert.throws(() => destroyCamera(state, 'camera_test', 0), /Force 1/);
+  const destroyed = destroyCamera(state, 'camera_test', 1);
+  assert.ok(destroyed.disabledCameraIds.includes('camera_test'));
+  assert.equal(destroyed.time, state.time + 100);
+});
+
+test('basic recon stays live across ticks and stops on movement', () => {
+  let state = basicRecon(makeRun(21));
+  assert.equal(state.activeRecon.source, 'basic');
+  const watchedNodeId = state.activeRecon.targetNodeIds.find((nodeId) => nodeId !== state.playerNodeId);
+  const threatId = Object.keys(state.threats)[0];
+  state = {
+    ...state,
+    threats: { ...state.threats, [threatId]: { ...state.threats[threatId], nodeId: watchedNodeId, nextMoveAt: 99999 } },
+  };
+  state = advanceTime(state, state.time + 10);
+  assert.equal(state.observations[watchedNodeId].hasThreat, true);
+  state = moveToAdjacentNode(state, watchedNodeId, 4, 3);
+  assert.equal(state.activeRecon, null);
+});
+
 test('a direct sighting immediately puts a threat into pursuit, overriding noise/patrol', () => {
   let state = makeRun(17);
   const threatId = Object.keys(state.threats)[0];
@@ -327,13 +417,32 @@ test('useFieldEquipment rejects out-of-range targets for remote_intrusion and te
 });
 
 // #9 Overload 100은 HP와 무관한 즉시 패배이며, 장착 임플란트 바닥 아래로는 감소하지 않는다.
-test('Overload >=100 ends the run in meltdown, and reduction never drops below the floor', () => {
+test('Overload >=100 keeps the run active, and reduction never drops below the floor', () => {
   let state = makeRun(5, { overloadFloor: 15 });
   state = applyOverloadDelta(state, 90);
   assert.equal(state.overload, 105);
-  assert.equal(state.phase, 'meltdown');
+  assert.equal(state.phase, 'active');
 
   let floored = makeRun(6, { overloadFloor: 15 });
   floored = applyOverloadDelta(floored, -50);
   assert.equal(floored.overload, 15);
+});
+
+test('battery generators can be hacked directly or through a hacked same-sector interface, and Force is local', () => {
+  let state = makeRun(21);
+  const generator = state.graph.generators.find((entry) => entry.sectorId === 'labs');
+  const remoteLabsNode = state.graph.nodes.find((node) => node.sectorId === 'labs' && node.id !== generator.nodeId);
+  const localInterface = { id: 'test_labs_interface', nodeId: remoteLabsNode.id };
+  state = { ...state, graph: { ...state.graph, accessInterfaces: [localInterface, ...state.graph.accessInterfaces] } };
+  state = { ...state, playerNodeId: localInterface.nodeId };
+  state = hackAccessInterface(state, localInterface.id, 1);
+  const disabled = disableGenerator(state, generator.id, 'hacking', 1);
+  assert.ok(disabled.disabledGeneratorIds.includes(generator.id));
+
+  const wrongInterface = state.graph.accessInterfaces.find((entry) => state.graph.nodes.find((node) => node.id === entry.nodeId)?.sectorId !== 'labs');
+  assert.throws(() => disableGenerator({ ...state, playerNodeId: wrongInterface.nodeId, hackedInterfaceIds: [], disabledGeneratorIds: [] }, generator.id, 'hacking', 1));
+  assert.throws(() => disableGenerator({ ...state, playerNodeId: localInterface.nodeId, disabledGeneratorIds: [] }, generator.id, 'force', 2));
+  const forced = disableGenerator({ ...state, playerNodeId: generator.nodeId, disabledGeneratorIds: [] }, generator.id, 'force', 2);
+  assert.ok(forced.disabledGeneratorIds.includes(generator.id));
+  assert.equal(forced.time, state.time + 100);
 });

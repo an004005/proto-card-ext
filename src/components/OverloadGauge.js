@@ -15,6 +15,9 @@ export function OverloadGauge({ overload, floor, compact = false }) {
 
   return html`
     <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: compact ? '9px' : '10px', letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.85 }}>
+        <span>과부화</span><span>${overload}/100</span>
+      </div>
       ${!compact ? html`
         <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7 }}>
           <span>과부화</span>

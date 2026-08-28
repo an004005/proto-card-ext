@@ -16,8 +16,8 @@ export const WEAPON_DEFINITIONS = {
     cardList: [{ defId: 'katana_slash', count: 2 }, { defId: 'katana_parry', count: 1 }],
   },
   rifle: {
-    id: 'rifle', name: '라이플', slot: 'weapon', maxLoadBonus: 5,
-    cardList: [{ defId: 'rifle_aim', count: 1 }, { defId: 'rifle_suppress', count: 1 }, { defId: 'rifle_buttstock', count: 1 }, { defId: 'reload', count: 1 }],
+    id: 'rifle', name: '자동 소총', slot: 'weapon', maxLoadBonus: 5,
+    cardList: [{ defId: 'rifle_aim', count: 1 }, { defId: 'rifle_suppress', count: 1 }, { defId: 'rifle_buttstock', count: 1 }, { defId: 'rifle_tactical_reload', count: 1 }],
   },
   dagger: {
     id: 'dagger', name: '단검', slot: 'weapon',
@@ -26,6 +26,26 @@ export const WEAPON_DEFINITIONS = {
   pistol: {
     id: 'pistol', name: '권총', slot: 'weapon', maxLoadBonus: 3,
     cardList: [{ defId: 'pistol_shot', count: 2 }, { defId: 'reload', count: 1 }],
+  },
+  auto_pistol: {
+    id: 'auto_pistol', name: '자동권총', slot: 'weapon', maxLoadBonus: 4,
+    cardList: [{ defId: 'auto_pistol_shot', count: 2 }, { defId: 'auto_pistol_mozambique', count: 1 }, { defId: 'reload', count: 1 }],
+  },
+  revolver: {
+    id: 'revolver', name: '리볼버', slot: 'weapon', maxLoadBonus: 6,
+    cardList: [{ defId: 'revolver_headshot', count: 1 }, { defId: 'revolver_last_round', count: 1 }, { defId: 'revolver_quickdraw', count: 1 }, { defId: 'reload', count: 1 }],
+  },
+  shotgun: {
+    id: 'shotgun', name: '샷건', slot: 'weapon', maxLoadBonus: 5,
+    cardList: [{ defId: 'shotgun_birdshot', count: 1 }, { defId: 'shotgun_buckshot', count: 1 }, { defId: 'shotgun_slugshot', count: 1 }, { defId: 'reload', count: 1 }],
+  },
+  rocket_launcher: {
+    id: 'rocket_launcher', name: '로켓런처', slot: 'weapon', maxLoadBonus: 5,
+    cardList: [{ defId: 'rocket_launch', count: 5 }, { defId: 'reload', count: 1 }],
+  },
+  sniper_rifle: {
+    id: 'sniper_rifle', name: '저격총', slot: 'weapon', maxLoadBonus: 4,
+    cardList: [{ defId: 'sniper_aim', count: 1 }, { defId: 'sniper_shot', count: 2 }, { defId: 'reload', count: 1 }],
   },
 };
 

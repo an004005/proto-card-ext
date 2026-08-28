@@ -5,12 +5,12 @@
 //
 // UI 레이아웃(HUD/구역 라벨/미니맵/선택 노드 패널/범례·로그 접기)은 게임 UI 목업 디자인/
 // map-redesign의 개선안을 반영해 재구성했다 — 명령·판정 로직은 이전과 동일, 표현 계층만 변경.
-import { html, useState, useRef } from '../lib.js';
+import { html, useState, useEffect, useRef } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
 import { computeCapabilities, listFieldActiveEquipment, effectiveForRequirement } from '../engine/capabilityEngine.js';
 import { bfsHopDistances } from '../engine/graphUtils.js';
-import { openSpecialEdge, applyOverloadDelta } from '../engine/runEngine.js';
+import { openSpecialEdge, applyOverloadDelta, canTraverseEdge, cameraHackRange, isCameraHackActive } from '../engine/runEngine.js';
 import { computeFloorOverload, computeOverloadGainMultiplier } from '../engine/equipmentEngine.js';
 import { SECTOR_IDS, SECTOR_NAMES, RUN_COLLAPSE_TIME } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
@@ -20,6 +20,7 @@ import { InventoryPopup } from './InventoryPopup.js';
 import { Tooltip } from './Tooltip.js';
 import { PlayLog } from './PlayLog.js';
 import { HistoryControls } from './HistoryControls.js';
+import { describeItem } from '../data/itemDisplay.js';
 
 const FIELD_ACTION_LABELS = { snapshot_scan: '집중 투시', temporary_barrier: '임시 장벽', remote_intrusion: '원격 침투' };
 const FIELD_TARGET_LABELS = { edge: '엣지(통로) 지정', node_contents: '주변 노드 파악', electronic_device: '전자 장치 지정' };
@@ -35,7 +36,12 @@ function capabilityActionSummary(key, raw) {
     return eff >= 1 ? '봉쇄(blocked) 특수 엣지를 개방할 수 있습니다.' : '1 이상이어야 봉쇄 특수 엣지를 개방할 수 있습니다(현재 미달).';
   }
   if (key === 'mobility') {
-    return raw >= 2 ? '2 이상이라 전투 중 이탈 시도(BEGIN_DISENGAGE) 시 진행도 +1 보너스를 즉시 받습니다.' : '2 이상이면 전투 중 이탈 시도 시 진행도 +1 보너스를 받습니다(현재 미달).';
+    const highGround = raw >= 3 ? '높은 지형 특수 엣지를 통과할 수 있습니다.' : 'Mobility 3부터 높은 지형 특수 엣지를 통과할 수 있습니다.';
+    const disengage = raw >= 2 ? '전투 이탈 시작 시 진행도 +1을 받습니다.' : 'Mobility 2부터 전투 이탈 보너스를 받습니다.';
+    return `${highGround} ${disengage}`;
+  }
+  if (key === 'stealth') {
+    return raw >= 3 ? '카메라에 발각되지 않고 이동 흔적도 남기지 않습니다.' : '카메라 노드 진입 시 발각됩니다. Stealth 3부터 카메라를 피할 수 있습니다.';
   }
   return '현재 엔진에 이 값을 요구하거나 참조하는 행동이 아직 없습니다(장비 수치만 집계되고 있음).';
 }
@@ -104,6 +110,7 @@ function findTraversableEdge(run, nodeId) {
  */
 function nodeKnowledge(run, nodeId) {
   if (run.playerNodeId === nodeId) return 'current';
+  if (run.activeRecon?.targetNodeIds.includes(nodeId)) return 'fresh';
   if (isTrueAdjacent(run, nodeId)) return 'fresh';
   if (run.observations[nodeId]) return 'stale';
   return 'unknown';
@@ -148,25 +155,41 @@ function exitStatusLabel(exit) {
  * 미달 등 다른 이유로 실패) 과부화 판단과 무관하므로 막지 않는다 — 실제 클릭 시 에러로 뜬다.
  */
 function wouldExceedOverload(run, ps, actionFn) {
-  const synced = {
-    ...run, overload: ps.overload,
-    overloadFloor: computeFloorOverload(ps.loadout), overloadGainMultiplier: computeOverloadGainMultiplier(ps.loadout),
-  };
-  try {
-    return actionFn(synced).overload > 100;
-  } catch {
-    return false;
-  }
+  // Overload 100 is no longer a map-side game-over condition. Combat converts excess into curses.
+  return false;
+}
+
+function movementRiskForecast(run, edge, destinationNodeId, mobility) {
+  if (!edge) return { label: '경로 없음', color: 'var(--color-negative, #dc2626)' };
+  const multiplier = [1.4, 1.2, 1, 0.9, 0.8, 0.7, 0.6][Math.max(-2, Math.min(4, mobility)) + 2];
+  const arrivalAt = run.time + Math.max(10, Math.round(edge.timeCost * multiplier));
+  const direct = Object.values(run.threats).filter((threat) => threat.nodeId === destinationNodeId).length;
+  if (direct > 0) return { label: `도착 예상: 적 ${direct}그룹`, color: 'var(--color-negative, #dc2626)' };
+  const hops = bfsHopDistances(run.graph.edges, destinationNodeId);
+  const inbound = Object.values(run.threats).filter((threat) => {
+    const hop = hops.get(threat.nodeId);
+    return hop === 1 && threat.nextMoveAt <= arrivalAt;
+  }).length;
+  if (inbound > 0) return { label: `도착 중 적 유입 가능 · ${inbound}그룹`, color: '#b45309' };
+  return { label: '도착 예상: 위협 없음', color: '#15803d' };
 }
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
+// 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(시간 단위) — CAMERA_HACK_DURATION(300)보다
+// 조금 길게 잡아, 그 이후는 조용한 이력 표기로 낮춘다(계속 안 사라지면 지금도 쫓기는 중처럼 읽힘).
+const CAMERA_DETECTION_BANNER_WINDOW = 400;
 
 function IconHeart() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17s-6.2-3.9-6.2-8.5A3.8 3.8 0 0 1 10 6.1a3.8 3.8 0 0 1 6.2 2.4C16.2 13.1 10 17 10 17z"/></svg>`; }
 function IconClock() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg>`; }
 function IconBox() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5 10 3l7 3.5-7 3.5-7-3.5Z"/><path d="M3 6.5V14l7 3.5 7-3.5V6.5"/><path d="M10 10v7.5"/></svg>`; }
 function IconTarget() { return html`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.4"/><path d="M10 2v3M10 15v3M2 10h3M15 10h3"/></svg>`; }
 function IconList() { return html`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h8"/></svg>`; }
+
+/** @param {{kind: string, equipmentId?: string, defId?: string, value?: number, amount?: number}} loot */
+function farmLootDisplay(loot) {
+  return describeItem({ ...loot, durability: loot.kind === 'equipment' ? 10 : undefined });
+}
 
 /**
  * 노드 하나를 사람이 읽는 문장으로 요약 — 지도 위 호버 툴팁과 "선택 노드" 패널이 같은 문구를 쓴다.
@@ -181,12 +204,20 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false) {
   const threatCount = live ? (threatsByNode[n.id] || []).length : (run.observations[n.id]?.hasThreat ? null : 0);
   const knowledgeLabel = { current: '현재 위치', fresh: '시야 안(실시간)', stale: '마지막 확인 정보(고정)', unknown: '미확인' }[knowledge];
   const opp = run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0);
+  const devicesDiscovered = debugReveal || run.visitedNodeIds.includes(n.id);
+  const camera = devicesDiscovered ? run.graph.cameras.find((device) => device.nodeId === n.id) : null;
+  const accessInterface = devicesDiscovered ? run.graph.accessInterfaces.find((device) => device.nodeId === n.id) : null;
+  const generator = devicesDiscovered ? (run.graph.generators || []).find((device) => device.nodeId === n.id) : null;
   const debugThreats = debugReveal ? (threatsByNode[n.id] || []) : [];
   const title = [
     `${SECTOR_NAMES[n.sectorId]} · ${knowledgeLabel}${debugReveal ? ' · DEBUG' : ''}`,
     exit ? (exit.kind === 'key' ? '숨겨진 열쇠 탈출구' : `표준 탈출구 ${exit.exitId} (${exitStatusLabel(exit)})`) : null,
     (knowledge === 'unknown' && !debugReveal) ? null : (hasThreat ? `위협 포착${threatCount ? ` (${threatCount}개 그룹)` : ''}` : '위협 없음(확인 시점 기준)'),
     debugReveal && opp ? `현장 기회 ${opp.usesRemaining}회 남음` : null,
+    camera ? `카메라 ${run.disabledCameraIds?.includes(camera.id) ? '파괴됨' : (isCameraHackActive(run, camera.id) ? '해킹됨' : '작동 중')}` : null,
+    accessInterface ? `접속 인터페이스 ${run.hackedInterfaceIds?.includes(accessInterface.id) ? '해킹됨' : '미해킹'}` : null,
+    generator ? `배터리 발전기 ${run.disabledGeneratorIds.includes(generator.id) ? '무력화됨' : '작동 중'}` : null,
+    run.activeRecon?.targetNodeIds.includes(n.id) ? '실시간 정찰 중' : null,
     debugThreats.length ? debugThreats.map((t) => `[${t.id}] 규모 ${t.size} · ${t.mode} · 경계 ${t.alert}`).join(' / ') : null,
   ].filter(Boolean).join(' — ');
   return { knowledge, exit, hasThreat, threatCount, title };
@@ -203,11 +234,24 @@ export function MapScreen() {
   const [legendOpen, setLegendOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const [debugReveal, setDebugReveal] = useState(false); // 디버그: 안개/미발견 상태 무시하고 전부 표시(순수 뷰 전환 — 실제 run 상태는 안 건드림)
+  const [farmPlan, setFarmPlan] = useState(null);
+  const [farmToast, setFarmToast] = useState(null);
   const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0, moved: false });
   const snapshot = snapshotSignal.value;
   const ps = snapshot.playerState;
   const run = snapshot.facilityRunState;
   if (!run) return null;
+
+  const farmResult = run.lastActionResult?.kind === 'farm' && run.lastActionResult.loot
+    ? run.lastActionResult
+    : null;
+  const farmToastKey = farmResult ? `${farmResult.opportunityId}:${farmResult.completedAt}` : null;
+  useEffect(() => {
+    if (!farmResult || !farmToastKey) return undefined;
+    setFarmToast({ key: farmToastKey, loot: farmResult.loot });
+    const timer = setTimeout(() => setFarmToast((current) => (current?.key === farmToastKey ? null : current)), 3500);
+    return () => clearTimeout(timer);
+  }, [farmToastKey]);
 
   const capabilities = computeCapabilities(ps.loadout);
   const fieldEquipment = listFieldActiveEquipment(ps.loadout);
@@ -227,6 +271,28 @@ export function MapScreen() {
   const currentSectorAlert = currentSectorId ? run.sectorAlerts[currentSectorId] : null;
   const currentExit = exitByNode[run.playerNodeId];
   const currentOpportunities = run.graph.opportunities.filter((o) => o.nodeId === run.playerNodeId && o.usesRemaining > 0);
+  const visitedNodeIds = new Set(run.visitedNodeIds);
+  const isDeviceVisible = (nodeId) => debugReveal || visitedNodeIds.has(nodeId);
+  const cameraByNode = Object.fromEntries(run.graph.cameras.filter((camera) => isDeviceVisible(camera.nodeId)).map((camera) => [camera.nodeId, camera]));
+  const interfaceNodeIds = new Set(run.graph.accessInterfaces.filter((entry) => isDeviceVisible(entry.nodeId)).map((entry) => entry.nodeId));
+  const currentInterface = run.graph.accessInterfaces.find((entry) => entry.nodeId === run.playerNodeId);
+  const currentInterfaceHacked = !!currentInterface && (run.hackedInterfaceIds || []).includes(currentInterface.id);
+  const cameraRange = cameraHackRange(capabilities.hacking);
+  const cameraHops = bfsHopDistances(run.graph.edges, run.playerNodeId);
+  const canHackDevice = (nodeId) => {
+    if (capabilities.hacking < 1) return false;
+    const targetSectorId = run.graph.nodes.find((node) => node.id === nodeId)?.sectorId;
+    if (currentInterfaceHacked && targetSectorId === currentSectorId) return true;
+    return (cameraHops.get(nodeId) ?? Infinity) <= cameraRange;
+  };
+  const hackableCameras = run.graph.cameras.filter((camera) => isDeviceVisible(camera.nodeId)
+    && canHackDevice(camera.nodeId) && !(run.disabledCameraIds || []).includes(camera.id));
+  const generatorByNode = Object.fromEntries((run.graph.generators || []).filter((generator) => isDeviceVisible(generator.nodeId)).map((generator) => [generator.nodeId, generator]));
+  const currentGenerator = (run.graph.generators || []).find((generator) => generator.nodeId === run.playerNodeId);
+  const currentCamera = run.graph.cameras.find((camera) => camera.nodeId === run.playerNodeId);
+  const hackableGenerators = (run.graph.generators || []).filter((generator) => isDeviceVisible(generator.nodeId)
+    && canHackDevice(generator.nodeId) && !run.disabledGeneratorIds.includes(generator.id));
+  const activeReconNodeIds = new Set(run.activeRecon?.targetNodeIds || []);
   const openableEdgeIds = new Set(
     run.graph.edges
       .filter((e) => (e.from === run.playerNodeId || e.to === run.playerNodeId)
@@ -319,6 +385,12 @@ export function MapScreen() {
   const inspectedNode = run.graph.nodes.find((n) => n.id === inspectedId);
   const inspected = inspectedNode ? describeNode(run, inspectedNode, threatsByNode, exitByNode) : null;
   const inspectedObservedAt = selectedNodeId && run.observations[selectedNodeId] ? run.observations[selectedNodeId].observedAt : null;
+  const selectedEdge = selectedNodeId ? findTraversableEdge(run, selectedNodeId) : null;
+  const selectedEdgeTraversable = selectedEdge ? canTraverseEdge(run, selectedEdge, capabilities.mobility) : false;
+  const selectedCamera = selectedNodeId ? cameraByNode[selectedNodeId] : null;
+  const selectedCameraActive = selectedCamera
+    && !(run.disabledCameraIds || []).includes(selectedCamera.id)
+    && !isCameraHackActive(run, selectedCamera.id);
 
   return html`
     <div style=${{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -330,12 +402,12 @@ export function MapScreen() {
               <${IconHeart} /><span>HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
             </div>
           <//>
-          <${Tooltip} content="시설이 붕괴되기까지 남은 시간입니다. 4000에 도달하면 즉시 런이 종료됩니다(탈출 실패).">
+          <${Tooltip} content=${`시설이 붕괴되기까지 남은 시간입니다. ${RUN_COLLAPSE_TIME}에 도달하면 즉시 런이 종료됩니다(탈출 실패).`}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
               <${IconClock} /><span>시간 <strong>${run.time}</strong>/${RUN_COLLAPSE_TIME}</span>
             </div>
           <//>
-          <${Tooltip} content="현재 장착 장비가 만드는 과부화 바닥선 위로는 전투/현장 행동으로 계속 쌓입니다. 100에 도달하면 즉시 멜트다운으로 런이 종료됩니다.">
+          <${Tooltip} content="현재 장착 장비가 만드는 과부화 바닥선 위로는 전투/현장 행동으로 계속 쌓입니다. 100을 넘겨도 런은 종료되지 않지만, 초과분은 전투 중 저주 카드로 전환됩니다.">
             <div style=${{ display: 'flex', alignItems: 'center', width: '130px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
               <${OverloadGauge} overload=${ps.overload} floor=${run.overloadFloor} compact=${true} />
             </div>
@@ -374,6 +446,27 @@ export function MapScreen() {
       ` : null}
 
       ${error ? html`<div style=${{ fontSize: '12px', color: 'var(--color-negative, #dd2b0f)', padding: '0 var(--space-6)', flexShrink: 0 }}>${error}</div>` : null}
+      ${run.lastCameraDetection ? (() => {
+        const elapsed = run.time - run.lastCameraDetection.detectedAt;
+        const recent = elapsed <= CAMERA_DETECTION_BANNER_WINDOW; // 최근 한동안만 "긴급"으로 강조 — 계속 안 사라지면 지금도 쫓기는 중처럼 읽혀서 오해를 줌.
+        return html`
+          <div style=${{
+            fontSize: '12px', fontWeight: 800, padding: '7px var(--space-6)', flexShrink: 0,
+            color: recent ? 'var(--color-bg)' : 'var(--color-text)',
+            background: recent ? 'var(--color-negative, #dd2b0f)' : 'var(--color-neutral-200)',
+          }}>
+            카메라 발각 — ${run.lastCameraDetection.nodeId}에서 ${elapsed}포인트 전 위치가 노출됐습니다.${recent ? ' 반경 3홉 내 적이 이 위치로 이동했습니다.' : ''}
+          </div>
+        `;
+      })() : null}
+
+      ${farmToast ? (() => {
+        const loot = farmLootDisplay(farmToast.loot);
+        return html`<div style=${{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, minWidth: '240px', padding: '10px 14px', border: '1px solid #15803d', borderLeft: '4px solid #15803d', background: '#f0fdf4', boxShadow: 'var(--shadow-lg)', color: '#14532d', fontSize: '12px' }}>
+          <div style=${{ fontWeight: 800, marginBottom: '2px' }}>파밍 획득</div>
+          <div><strong style=${{ color: loot.color }}>${loot.name}</strong>${loot.sub ? ` · ${loot.sub}` : ''}</div>
+        </div>`;
+      })() : null}
 
       <div style=${{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div style=${{ position: 'relative', flex: 1, background: 'var(--color-bg)' }}
@@ -449,10 +542,11 @@ export function MapScreen() {
                   const openable = openableEdgeIds.has(e.id);
                   const pickable = pickableEdgeIds?.has(e.id);
                   const barrier = activeBarriers[e.id];
+                  const highGround = e.features.includes('highGround');
                   const highlighted = !!highlightedEdgeIds?.has(e.id);
                   const dashed = special && !opened;
                   const clickable = openable || !!pickable;
-                  const stroke = barrier ? 'var(--color-neutral-900)' : pickable ? 'var(--color-accent)' : openable ? 'var(--color-accent-2-700)' : 'var(--color-divider)';
+                  const stroke = barrier ? 'var(--color-neutral-900)' : pickable ? 'var(--color-accent)' : openable ? 'var(--color-accent-2-700)' : highGround ? '#7c3aed' : 'var(--color-divider)';
                   const barrierLabel = barrier ? ` — 임시 장벽 활성(적 이동 차단, 만료 ${barrier.expiresAt})` : '';
                   const oneWay = e.bidirectional === false && revealed;
                   const edgeLabel = `${e.from} ${oneWay ? '→' : '↔'} ${e.to} — 이동 시간 ${e.timeCost}${oneWay ? ' — 일방통행(역방향 이동 불가)' : ''}${special ? ` — 특수 엣지(${e.features.join('/')})${opened ? ' · 개방됨' : ' · 미개방'}` : ''}${barrierLabel}`;
@@ -489,13 +583,21 @@ export function MapScreen() {
                 const opportunity = debugReveal ? run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0) : null;
                 const nodeTitle = describeNode(run, n, threatsByNode, exitByNode, debugReveal).title;
                 const isSelected = n.id === selectedNodeId || (!selectedNodeId && n.id === run.playerNodeId);
+                const activelyObserved = activeReconNodeIds.has(n.id);
+                const camera = cameraByNode[n.id];
+                const hasInterface = interfaceNodeIds.has(n.id);
+                const generator = generatorByNode[n.id];
                 return html`
                   <g key=${n.id}>
+                    ${activelyObserved ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="rgba(14, 165, 233, 0.16)" stroke="#0ea5e9" stroke-width="3" pointer-events="none"></circle>` : null}
                     ${isSelected ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 6} fill="none" stroke="var(--color-accent)" stroke-width="2" pointer-events="none"></circle>` : null}
                     <circle cx=${pos.x} cy=${pos.y} r=${exit ? NODE_RADIUS + 4 : NODE_RADIUS} fill=${nodeFill(displayKnowledge, hasThreat, !!exit)} stroke="var(--color-divider)" stroke-width="1.5" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none"></circle>
                     ${exit ? html`<text x=${pos.x} y=${pos.y + 5} text-anchor="middle" font-size="12" font-weight="800" fill="var(--color-bg)" pointer-events="none">${exit.kind === 'key' ? 'K' : exit.exitId}</text>` : null}
                     ${hasThreat ? html`<text x=${pos.x} y=${pos.y - NODE_RADIUS - 8} text-anchor="middle" font-size="13" fill="var(--color-accent-2-700, #dd2b0f)" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">▲${threatCount ?? ''}</text>` : null}
                     ${opportunity ? html`<circle cx=${pos.x + 9} cy=${pos.y - 9} r="3.5" fill="var(--color-accent-2-700)" stroke="var(--color-bg)" stroke-width="1" pointer-events="none"></circle>` : null}
+                    ${camera ? html`<text x=${pos.x - 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledCameraIds?.includes(camera.id) ? '#64748b' : (isCameraHackActive(run, camera.id) ? '#0ea5e9' : '#dc2626')} pointer-events="none">C</text>` : null}
+                    ${hasInterface ? html`<text x=${pos.x + 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill="#7c3aed" pointer-events="none">I</text>` : null}
+                    ${generator ? html`<text x=${pos.x} y=${pos.y + 22} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledGeneratorIds.includes(generator.id) ? '#64748b' : '#ca8a04'} pointer-events="none">G</text>` : null}
                     <circle
                       cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="transparent"
                       style=${{ cursor: 'pointer' }}
@@ -588,8 +690,14 @@ export function MapScreen() {
               ${inspected.knowledge === 'stale' && inspectedObservedAt != null ? html`<div style=${{ fontSize: '10.5px', fontStyle: 'italic', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>마지막 관측: 시간 ${inspectedObservedAt} 시점 — 그 사이 상황이 바뀌었을 수 있습니다.</div>` : null}
 
               ${selectedNodeId && selectedNodeId !== run.playerNodeId && inspected.knowledge === 'fresh' ? html`
-                <button class="btn btn-primary" style=${{ fontSize: '12px', width: '100%', marginBottom: '2px' }} onClick=${() => handleMove(selectedNodeId)}>이 노드로 이동</button>
-                <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>시간 +${findTraversableEdge(run, selectedNodeId)?.timeCost ?? '?'} 소요</div>
+                <button class="btn btn-primary" disabled=${!selectedEdgeTraversable} style=${{ fontSize: '12px', width: '100%', marginBottom: '2px' }} onClick=${() => handleMove(selectedNodeId)}>이 노드로 이동</button>
+                <div style=${{ fontSize: '10.5px', color: selectedEdgeTraversable ? 'var(--color-neutral-600)' : 'var(--color-negative, #dd2b0f)', marginBottom: '10px' }}>
+                  ${selectedEdge?.features.includes('highGround') && capabilities.mobility < 3
+                    ? `높은 지형 — Mobility 3 필요 (현재 ${capabilities.mobility})`
+                    : `기본 시간 ${selectedEdge?.timeCost ?? '?'} · Mobility 보정 적용`}
+                </div>
+                ${selectedEdgeTraversable ? html`<div style=${{ fontSize: '10.5px', color: movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).color, marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).label}</div>` : null}
+                ${selectedCameraActive && capabilities.stealth < 3 ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>카메라 감시: Stealth 3 미만으로 진입하면 발각되어 주변 적이 추적합니다.</div>` : null}
               ` : null}
 
               ${(!selectedNodeId || selectedNodeId === run.playerNodeId) ? html`
@@ -599,16 +707,107 @@ export function MapScreen() {
                     <${Tooltip} align="left" content="현재 노드와 인접 노드에 위협이 있는지 없는지만 확인합니다(정확한 수·경계 상태는 알 수 없음). 시간 80 소요, 소음 없음, 항상 성공합니다.">
                       <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%' }} onClick=${() => runCommand({ type: 'BASIC_RECON' })}>기본 정찰</button>
                     <//>
+                    ${run.activeRecon ? html`
+                      <div style=${{ marginTop: '5px', padding: '5px 7px', borderLeft: '3px solid #0ea5e9', background: 'rgba(14, 165, 233, 0.10)', fontSize: '10.5px' }}>
+                        실시간 정찰 중 · ${run.activeRecon.source === 'camera' ? `카메라 ${run.activeRecon.sourceNodeId}` : '현재 위치'}
+                        ${run.activeRecon.expiresAt == null ? ' · 이동/다른 정찰 전까지 유지' : ` · ${run.activeRecon.expiresAt}까지`}
+                      </div>
+                    ` : null}
                   </div>
+
+                  ${currentInterface ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>카메라 접속 인터페이스</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
+                        ${currentInterfaceHacked
+    ? '접속 완료 · 이 구역의 발견한 모든 해킹 지점에 원격 접속할 수 있습니다.'
+    : `미해킹 · 이 노드에서 먼저 접속 인터페이스를 해킹해야 구역 원격 접속이 열립니다. Hacking ${capabilities.hacking}의 직접 사거리는 ${cameraRange}홉입니다.`}
+                      </div>
+                      ${!currentInterfaceHacked ? html`
+                        <button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'HACK_ACCESS_INTERFACE', interfaceId: currentInterface.id })}>
+                          접속 인터페이스 해킹 (시간 100 · 과부화 +6)
+                        </button>
+                      ` : null}
+                      ${hackableCameras.length > 0 ? hackableCameras.map((camera) => html`
+                        <button key=${camera.id} class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}>
+                          ${camera.nodeId} 카메라 해킹 (${currentInterfaceHacked ? '구역 원격' : `${cameraHops.get(camera.nodeId) ?? '?'}홉 직접`})
+                        </button>
+                      `) : null}
+                      ${hackableGenerators.map((generator) => html`
+                        <button key=${generator.id} class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}>
+                          배터리 발전기 ${currentInterfaceHacked ? '원격' : '직접'} 무력화 (${currentInterfaceHacked ? '구역 원격' : `${cameraHops.get(generator.nodeId) ?? '?'}홉`} · 과부화 +6)
+                        </button>
+                      `)}
+                    </div>
+                  ` : null}
+
+                  ${!currentInterface && (hackableCameras.length > 0 || hackableGenerators.length > 0) ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>직접 해킹</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>Hacking ${capabilities.hacking} · 현재 노드는 Hacking 1부터, 이후 레벨마다 직접 사거리가 1홉씩 늘어납니다.</div>
+                      ${hackableCameras.map((camera) => html`
+                        <button key=${camera.id} class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}>${camera.nodeId} 카메라 해킹 (${cameraHops.get(camera.nodeId)}홉)</button>
+                      `)}
+                      ${hackableGenerators.map((generator) => html`
+                        <button key=${generator.id} class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}>배터리 발전기 해킹 무력화 (${cameraHops.get(generator.nodeId)}홉 · 과부화 +6)</button>
+                      `)}
+                    </div>
+                  ` : null}
+
+                  ${currentCamera ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#dc2626', marginBottom: '4px' }}>현재 노드 카메라</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
+                        ${(run.disabledCameraIds || []).includes(currentCamera.id)
+    ? '파괴됨 · 더 이상 감지하지 않습니다.'
+    : '해킹은 300시간 동안 정찰을 제공하고, 파괴는 영구적으로 감지를 막지만 소음을 발생시킵니다.'}
+                      </div>
+                      ${!(run.disabledCameraIds || []).includes(currentCamera.id) ? html`
+                        <button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'DESTROY_CAMERA', cameraId: currentCamera.id })}>카메라 파괴 (Force 1 · 시간 100 · 소음 2)</button>
+                      ` : null}
+                    </div>
+                  ` : null}
+
+                  ${currentGenerator ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#ca8a04', marginBottom: '4px' }}>배터리 발전기</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>${run.disabledGeneratorIds.includes(currentGenerator.id) ? '무력화됨 — 이 구역 적의 시작 갑옷 보너스가 없습니다.' : '가동 중 — 이 구역 모든 적은 전투 시작 시 갑옷 5를 얻습니다.'}</div>
+                      ${!run.disabledGeneratorIds.includes(currentGenerator.id) ? html`<button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: currentGenerator.id, capabilityKind: 'force' })}>Force로 발전기 무력화 (시간 100 · 소음 2)</button>` : null}
+                    </div>
+                  ` : null}
 
                   ${currentOpportunities.length > 0 ? html`
                     <div>
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>현장 기회</div>
                       ${currentOpportunities.map((opp, idx) => html`
                         <${Tooltip} key=${opp.id} align="left" content=${`이 노드의 현장 기회(자원)를 확보해 소지품으로 가져갑니다. 시간이 걸리고 약간의 소음이 발생하며, 이 기회는 앞으로 ${opp.usesRemaining}번 더 파밍할 수 있습니다.`}>
-                          <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'USE_OPPORTUNITY', opportunityId: opp.id, mode: 'normal' })}>현장 파밍${currentOpportunities.length > 1 ? ` #${idx + 1}` : ''} (${opp.usesRemaining}회 남음)</button>
+                          <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%', marginBottom: '4px' }} onClick=${() => setFarmPlan(opp)}>현장 파밍${currentOpportunities.length > 1 ? ` #${idx + 1}` : ''} (${opp.usesRemaining}회 남음)</button>
                         <//>
                       `)}
+                    </div>
+                  ` : null}
+                  ${farmPlan ? html`
+                    <div style=${{ padding: '8px', border: '1px solid #b45309', background: '#fffbeb', fontSize: '11px' }}>
+                      <strong>파밍 계획</strong> · 실행 전 접근 방식을 고르거나 중단할 수 있습니다. 행동 중 적 유입 시 전투가 발생할 수 있습니다.
+                      <div style=${{ display: 'flex', gap: '5px', marginTop: '6px', flexWrap: 'wrap' }}>
+                        <${Tooltip} content="시간 +40, 소음 -1(최소 0). 적 유입 위험은 낮지만 시설 붕괴 시간은 더 소비합니다.">
+                          <button class="btn btn-secondary" onClick=${() => { runCommand({ type: 'USE_OPPORTUNITY', opportunityId: farmPlan.id, mode: 'safe' }); setFarmPlan(null); }}>안전</button>
+                        <//>
+                        <${Tooltip} content="기본 시간 140, 기본 소음 1로 파밍합니다. 시간과 위험의 표준 선택입니다.">
+                          <button class="btn btn-primary" onClick=${() => { runCommand({ type: 'USE_OPPORTUNITY', opportunityId: farmPlan.id, mode: 'normal' }); setFarmPlan(null); }}>파밍 실행</button>
+                        <//>
+                        <${Tooltip} content="시간 -40(최소 20), 소음 +1(최대 3). 빠르지만 적 유입·추적 위험이 커집니다.">
+                          <button class="btn btn-secondary" onClick=${() => { runCommand({ type: 'USE_OPPORTUNITY', opportunityId: farmPlan.id, mode: 'rush' }); setFarmPlan(null); }}>강행</button>
+                        <//>
+                        <${Tooltip} content="아직 파밍을 시작하지 않고 선택창만 닫습니다. 시간·소음·아이템 변화가 없습니다.">
+                          <button class="btn btn-secondary" onClick=${() => setFarmPlan(null)}>중단</button>
+                        <//>
+                      </div>
+                    </div>
+                  ` : null}
+                  ${run.lastActionResult?.kind === 'farm' ? html`
+                    <div style=${{ padding: '6px 8px', borderLeft: `3px solid ${run.lastActionResult.status === 'ambushed' ? '#dc2626' : '#15803d'}`, background: run.lastActionResult.status === 'ambushed' ? '#fef2f2' : '#f0fdf4', fontSize: '10.5px' }}>
+                      ${run.lastActionResult.status === 'ambushed' ? '파밍 완료 직후 습격 발생 — 보상과 기회 사용은 반영되었습니다.' : '파밍 완료 — 보상과 남은 사용 횟수가 반영되었습니다.'}
                     </div>
                   ` : null}
 

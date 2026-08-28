@@ -52,9 +52,10 @@ import {
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
   LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SPECIAL_EDGE_CATEGORY_WEIGHTS,
   SPECIAL_EDGE_SECOND_TAG_CHANCE, LANDMARKS_BY_SECTOR, OPPORTUNITY_COUNT_WEIGHTS,
-  OPPORTUNITY_USES_WEIGHTS, KEY_DROP_CHANCE, THREAT_COUNT_BY_SECTOR, THREAT_MIN_HOPS_FROM_START,
+  OPPORTUNITY_USES_WEIGHTS, KEY_DROP_CHANCE, CAMERA_NODE_CHANCE, ACCESS_INTERFACE_NODE_CHANCE,
+  THREAT_COUNT_BY_SECTOR, THREAT_MIN_HOPS_FROM_START,
   THREAT_MIN_HOPS_BETWEEN_MARKERS, THREAT_PATROL_ROUTE_MIN, THREAT_PATROL_ROUTE_MAX,
-  THREAT_GROUP_SIZE_WEIGHTS, ENTRANCE_THREAT_MAX_GROUP_SIZE, GENERATION_MAX_ATTEMPTS,
+  THREAT_GROUP_SIZE_WEIGHTS, ENTRANCE_THREAT_MAX_GROUP_SIZE, GENERATION_MAX_ATTEMPTS, GENERATOR_SECTOR_IDS,
   FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT,
 } from '../data/facilityLayout.js';
 
@@ -438,7 +439,7 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPair
     const { value: category, state: sCat } = weightedPick(state, SPECIAL_EDGE_CATEGORY_WEIGHTS);
     state = sCat;
     const features = [category];
-    if (category !== 'oneWay') {
+    if (category !== 'oneWay' && category !== 'highGround') {
       const { value: roll, state: sRoll } = nextFloat(state);
       state = sRoll;
       if (roll < SPECIAL_EDGE_SECOND_TAG_CHANCE) {
@@ -566,6 +567,48 @@ function placeOpportunities(nodes, rngState) {
 }
 
 /**
+ * Roll cameras and access interfaces independently. Deterministic sector fallbacks guarantee at
+ * least one of each device without preventing both devices from sharing a node.
+ * @param {import('./types.js').FacilityNode[]} nodes
+ * @param {import('./rng.js').RngState} rngState
+ */
+function placeSecurityDevices(nodes, rngState) {
+  let state = rngState;
+  const cameras = [];
+  const accessInterfaces = [];
+  for (const node of nodes) {
+    const cameraRoll = nextFloat(state); state = cameraRoll.state;
+    const interfaceRoll = nextFloat(state); state = interfaceRoll.state;
+    if (cameraRoll.value < CAMERA_NODE_CHANCE) cameras.push({ id: `camera_${node.id}`, nodeId: node.id });
+    if (interfaceRoll.value < ACCESS_INTERFACE_NODE_CHANCE) accessInterfaces.push({ id: `interface_${node.id}`, nodeId: node.id });
+  }
+  for (const sectorId of SECTOR_IDS) {
+    const sectorNodes = nodes.filter((node) => node.sectorId === sectorId);
+    if (!cameras.some((device) => device.nodeId.startsWith(`${sectorId}_`))) {
+      const chosen = pick(state, sectorNodes); state = chosen.state;
+      cameras.push({ id: `camera_${chosen.value.id}`, nodeId: chosen.value.id });
+    }
+    if (!accessInterfaces.some((device) => device.nodeId.startsWith(`${sectorId}_`))) {
+      const chosen = pick(state, sectorNodes); state = chosen.state;
+      accessInterfaces.push({ id: `interface_${chosen.value.id}`, nodeId: chosen.value.id });
+    }
+  }
+  return { cameras, accessInterfaces, rngState: state };
+}
+
+/** One battery generator is installed in each powered sector. */
+function placeGenerators(nodeIdsBySector, rngState) {
+  let state = rngState;
+  const generators = [];
+  for (const sectorId of GENERATOR_SECTOR_IDS) {
+    const chosen = pick(state, nodeIdsBySector[sectorId]);
+    state = chosen.state;
+    generators.push({ id: `generator_${sectorId}`, nodeId: chosen.value, sectorId });
+  }
+  return { generators, rngState: state };
+}
+
+/**
  * §4.2: initial threat markers, kept away from the start and each other (THREAT_COUNT_BY_SECTOR).
  * @param {import('./types.js').FacilityEdge[]} allEdges
  * @param {Record<string, string[]>} nodeIdsBySector
@@ -671,6 +714,12 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
   const opportunityResult = placeOpportunities(topology.nodes, state);
   state = opportunityResult.rngState;
 
+  const securityResult = placeSecurityDevices(topology.nodes, state);
+  state = securityResult.rngState;
+
+  const generatorResult = placeGenerators(topology.nodeIdsBySector, state);
+  state = generatorResult.rngState;
+
   const allEdges = [...topology.edges, ...special.specialEdges];
   const threatResult = placeThreats(allEdges, topology.nodeIdsBySector, topology.startNodeId, state);
   state = threatResult.rngState;
@@ -680,6 +729,9 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
       edges: allEdges,
       landmarks: landmarkResult.landmarks,
       opportunities: opportunityResult.opportunities,
+      cameras: securityResult.cameras,
+      accessInterfaces: securityResult.accessInterfaces,
+      generators: generatorResult.generators,
       threats: threatResult.threats,
     },
     rngState: state,
@@ -708,6 +760,9 @@ export function generateFacilityGraph(seed) {
           exits: result.topology.exits,
           landmarks: contentResult.content.landmarks,
           opportunities: contentResult.content.opportunities,
+          cameras: contentResult.content.cameras,
+          accessInterfaces: contentResult.content.accessInterfaces,
+          generators: contentResult.content.generators,
           threats: contentResult.content.threats,
         },
         rngState: contentResult.rngState,
@@ -727,6 +782,9 @@ export function generateFacilityGraph(seed) {
       exits: fallbackTopology.exits,
       landmarks: contentResult.content.landmarks,
       opportunities: contentResult.content.opportunities,
+      cameras: contentResult.content.cameras,
+      accessInterfaces: contentResult.content.accessInterfaces,
+      generators: contentResult.content.generators,
       threats: contentResult.content.threats,
     },
     rngState: contentResult.rngState,

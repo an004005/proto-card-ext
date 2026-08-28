@@ -46,6 +46,11 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
     for (const sectorId of SECTOR_IDS) {
       assert.equal(threatsBySector[sectorId] || 0, THREAT_COUNT_BY_SECTOR[sectorId], `seed ${seed}: ${sectorId} threat count`);
     }
+    assert.equal(graph.generators.length, 2, `seed ${seed}: two battery generators`);
+    assert.deepEqual(new Set(graph.generators.map((generator) => generator.sectorId)), new Set(['power', 'labs']));
+    for (const generator of graph.generators) {
+      assert.equal(graph.nodes.find((node) => node.id === generator.nodeId)?.sectorId, generator.sectorId);
+    }
 
     const specialEdges = graph.edges.filter((e) => e.features.length > 0);
     const withinSector = specialEdges.filter((e) => sectorOf(e.from) === sectorOf(e.to));
@@ -156,6 +161,29 @@ test('opportunities carry a keyEligible roll and a 1-3 usesRemaining fixed at ge
     assert.equal(typeof opportunity.keyEligible, 'boolean');
     assert.ok(opportunity.usesRemaining >= 1 && opportunity.usesRemaining <= 3);
   }
+});
+
+test('cameras and access interfaces are deterministic, independent, and present in every sector', () => {
+  const { graph } = generateFacilityGraph(42);
+  assert.ok(graph.cameras.length > 0);
+  assert.ok(graph.accessInterfaces.length > 0);
+  for (const sectorId of SECTOR_IDS) {
+    assert.ok(graph.cameras.some((device) => device.nodeId.startsWith(`${sectorId}_`)), `${sectorId}: camera`);
+    assert.ok(graph.accessInterfaces.some((device) => device.nodeId.startsWith(`${sectorId}_`)), `${sectorId}: interface`);
+  }
+  assert.ok(graph.nodes.some((node) => {
+    const hasCamera = graph.cameras.some((device) => device.nodeId === node.id);
+    const hasInterface = graph.accessInterfaces.some((device) => device.nodeId === node.id);
+    return hasCamera !== hasInterface;
+  }), 'at least one node should demonstrate that the two device rolls are independent');
+});
+
+test('generated special edges include Mobility-3 high-ground routes', () => {
+  let count = 0;
+  for (let seed = 0; seed < 20; seed++) {
+    count += generateFacilityGraph(seed).graph.edges.filter((edge) => edge.features.includes('highGround')).length;
+  }
+  assert.ok(count > 0);
 });
 
 test('threat patrol routes stay within their own sector and within the configured length', () => {

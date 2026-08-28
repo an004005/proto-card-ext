@@ -10,7 +10,7 @@
 import { newRun, setLoadoutSlot, confirmLoadout, autoEquipLoadout } from './loadoutReducer.js';
 import {
   moveToNode, requestExtractionCommand, basicReconCommand, openSpecialEdgeCommand,
-  useOpportunityCommand, useFieldEquipmentCommand,
+  useOpportunityCommand, useFieldEquipmentCommand, hackCameraCommand, hackAccessInterfaceCommand, destroyCameraCommand, disableGeneratorCommand,
 } from './facilityReducer.js';
 import {
   playCardCommand, endTurnCommand, useConsumable, beginDisengageCommand, cancelDisengageCommand,
@@ -42,6 +42,10 @@ export function gameReducer(snapshot, command) {
     case 'MOVE_TO_NODE': return moveToNode(snapshot, command.nodeId);
     case 'REQUEST_EXTRACTION': return requestExtractionCommand(snapshot, command.exitId);
     case 'BASIC_RECON': return basicReconCommand(snapshot);
+    case 'HACK_CAMERA': return hackCameraCommand(snapshot, command.cameraId);
+    case 'HACK_ACCESS_INTERFACE': return hackAccessInterfaceCommand(snapshot, command.interfaceId);
+    case 'DESTROY_CAMERA': return destroyCameraCommand(snapshot, command.cameraId);
+    case 'DISABLE_GENERATOR': return disableGeneratorCommand(snapshot, command.generatorId, command.capabilityKind);
     case 'OPEN_SPECIAL_EDGE': return openSpecialEdgeCommand(snapshot, command.edgeId, command.capabilityKind, command.mode);
     case 'USE_OPPORTUNITY': return useOpportunityCommand(snapshot, command.opportunityId, command.mode);
     case 'USE_FIELD_EQUIPMENT': return useFieldEquipmentCommand(snapshot, command.instanceId, command.targetId);

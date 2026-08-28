@@ -22,10 +22,10 @@ export const WAREHOUSE_STARTING_POOL = {
 
 /** @type {EquipmentPool} */
 export const FARMING_ONLY_POOL = {
-  weapons: ['rifle', 'pistol'],
+  weapons: ['rifle', 'pistol', 'auto_pistol', 'revolver', 'shotgun', 'rocket_launcher', 'sniper_rifle'],
   tops: ['heavy_top'],
   bottoms: ['heavy_bottom'],
-  modules: ['module_forcefield', 'module_spatial', 'module_emp'],
+  modules: ['module_forcefield', 'module_spatial', 'module_emp', 'module_sandevistan', 'module_mantis_blades'],
   implants: ['implant2', 'implant4', 'implant5'],
   consumables: ['grenade', 'flashbang'],
 };

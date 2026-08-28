@@ -86,11 +86,12 @@ export const CROSS_SECTOR_SPECIAL_EDGES_MAX = 3;
 export const LONG_RANGE_SPECIAL_EDGES_MIN = 2;
 export const LONG_RANGE_SPECIAL_EDGES_MAX = 3;
 
-/** @type {{value: 'oneWay'|'blocked'|'electronic', weight: number}[]} */
+/** @type {{value: 'oneWay'|'blocked'|'electronic'|'highGround', weight: number}[]} */
 export const SPECIAL_EDGE_CATEGORY_WEIGHTS = [
   { value: 'oneWay', weight: 3 },
   { value: 'blocked', weight: 7 },
   { value: 'electronic', weight: 5 },
+  { value: 'highGround', weight: 3 },
 ];
 // 두 번째 태그가 붙을 확률 (예: 전자 보안이 걸린 잠금문). oneWay 엣지는 새 지름길이므로 제외한다.
 export const SPECIAL_EDGE_SECOND_TAG_CHANCE = 0.3;
@@ -121,6 +122,31 @@ export const OPPORTUNITY_USES_WEIGHTS = [
   { value: 3, weight: 20 },
 ];
 export const KEY_DROP_CHANCE = 0.01;
+
+// Cameras and access interfaces are rolled independently, so either device can exist alone or
+// both can share a node. Generation guarantees at least one of each per sector.
+export const CAMERA_NODE_CHANCE = 0.22;
+export const ACCESS_INTERFACE_NODE_CHANCE = 0.16;
+export const CAMERA_STEALTH_THRESHOLD = 3;
+export const CAMERA_ALERT_RANGE = 3;
+export const CAMERA_HACK_TIME = 100;
+export const CAMERA_HACK_OVERLOAD = 6;
+export const CAMERA_HACK_DURATION = 300;
+// Effective Hacking -2/-1/0/1/2/3/4 -> direct graph-hop range (§10.2 문서: "Hacking 1·2·3·4에서
+// 각각 1·2·3·4홉 이내"). Hacking 0 이하는 자격 미달로 아예 시도할 수 없으므로 0. A hacked access
+// interface instead grants the entire sector, regardless of this direct range (§11.2 카메라·
+// 접속 인터페이스 참고).
+export const CAMERA_HACK_RANGE_BY_HACKING = [0, 0, 0, 1, 2, 3, 4];
+export const CAMERA_FORCE_TIME = 100;
+export const CAMERA_FORCE_NOISE = 2;
+export const GENERATOR_SECTOR_IDS = ['power', 'labs'];
+export const GENERATOR_HACK_TIME = 100;
+export const GENERATOR_HACK_OVERLOAD = 6;
+export const GENERATOR_FORCE_TIME = 100;
+export const GENERATOR_FORCE_NOISE = 2;
+export const GENERATOR_COMBAT_START_ARMOR = 5;
+// Effective Mobility -2/-1/0/1/2/3/4 scales each geometry-derived corridor cost.
+export const MOBILITY_MOVE_TIME_MULTIPLIER = [1.4, 1.2, 1, 0.9, 0.8, 0.7, 0.6];
 
 // 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 3 / 실험 5 / 격납고 5 / 보안 6 /
 // 동력 7 / 폐기물 6 / 통신 4 / 거주 4 (총 40, 48노드 시절 밀도 0.25/노드를 160노드로 유지).

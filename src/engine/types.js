@@ -71,7 +71,7 @@
  * @property {number} y
  */
 
-/** @typedef {'oneWay'|'blocked'|'electronic'} SpecialEdgeFeature */
+/** @typedef {'oneWay'|'blocked'|'electronic'|'highGround'} SpecialEdgeFeature */
 
 /**
  * @typedef {Object} FacilityEdge
@@ -124,6 +124,9 @@
  * @property {ExitPlacement[]} exits A/B/key 순서 무관, 3개.
  * @property {SectorLandmark[]} landmarks
  * @property {Opportunity[]} opportunities
+ * @property {{id: string, nodeId: string}[]} cameras
+ * @property {{id: string, nodeId: string}[]} accessInterfaces
+ * @property {{id: string, nodeId: string, sectorId: FacilitySectorId}[]} generators
  * @property {ThreatRoster[]} threats
  */
 
@@ -222,11 +225,11 @@
  * @property {FacilityGraph} graph
  * @property {number} time
  * @property {import('./rng.js').RngState} rngState
- * @property {'active'|'collapsed'|'meltdown'} phase collapsed=4000 붕괴, meltdown=Overload 100.
+ * @property {'active'|'collapsed'} phase
  * @property {string|null} playerNodeId
  * @property {string[]} visitedNodeIds 탐사 안개(§10.2)용 — 시작 노드부터 포함.
  * @property {string[]} openedEdgeIds Capability로 연 'blocked'/'electronic' 특수 엣지.
- * @property {number} overload 0..100+ (100 이상 도달 시 phase가 즉시 'meltdown'이 된다).
+ * @property {number} overload 0..100+ (100 초과는 전투 저주 카드로 처리한다).
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
  * @property {Record<string, {observedAt: number, hasThreat: boolean, exitStatus?: string}>} observations 기본 정찰(§6.2) 및
@@ -234,6 +237,13 @@
  *   지워지지 않고 "마지막으로 확인한 정보"로 남는다.
  * @property {Record<string, number>} fieldCooldowns instanceId -> readyAt (능동 현장 효과, §11.1).
  * @property {{edgeId: string, expiresAt: number}[]} activeBarriers 역장 강화 임시 장벽 — 적 이동만 막는다(§map-equipment-capability-mapping.md).
+ * @property {{cameraId: string, expiresAt: number}[]} hackedCameras
+ * @property {string[]} disabledCameraIds Cameras permanently destroyed with Force.
+ * @property {string[]} hackedInterfaceIds Access interfaces already taken over by the player.
+ * @property {string[]} disabledGeneratorIds
+ * @property {{source: 'basic'|'camera', sourceNodeId: string, targetNodeIds: string[], expiresAt: number|null}|null} activeRecon
+ * @property {{cameraId: string, nodeId: string, detectedAt: number}|null} lastCameraDetection
+ * @property {{kind: 'farm', nodeId: string, opportunityId: string, status: 'completed'|'ambushed', completedAt: number, loot?: {kind: string, equipmentId?: string, defId?: string, value?: number, amount?: number}|null}|null} lastActionResult
  * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
  * @property {Record<string, ThreatRuntimeState>} threats
  * @property {NoiseEvent[]} noiseEvents
@@ -256,7 +266,7 @@
  * @property {'melee'|'ranged'} [attackKind]
  * @property {number} [count]
  * @property {number} [hits] damage 효과 반복 타격 횟수(다단히트, 기본 1) — 매 타격마다 개별로 방어도에 흡수됨
- * @property {'handSize'|'exhaustPileSize'|'discardPileSize'|'strengthStacks'|'playerBlock'|'targetVulnerableStacks'|'targetPoisonStacks'} [scalesBy] damage/block 값에 조건부 고정 보너스를 더함
+ * @property {'handSize'|'exhaustPileSize'|'discardPileSize'|'strengthStacks'|'playerBlock'|'targetVulnerableStacks'|'targetPoisonStacks'|'loadedAmmo'} [scalesBy] damage/block 값에 조건부 고정 보너스를 더함
  * @property {number} [scalesByAmount] scalesBy 카운트 1당 보너스(기본 1)
  * @property {string} [power]
  * @property {boolean} [ignoresBlock]
@@ -277,6 +287,7 @@
  * @property {?('melee'|'ranged')} attackKind
  * @property {number} [cost] absent when `stageTable` is used instead
  * @property {number} [ammoCost]
+ * @property {number} [requiresLoadedAtMost] Only playable while the current magazine has this many rounds or fewer.
  * @property {boolean} exhausts
  * @property {boolean} scalesWithStage
  * @property {number} overloadGain

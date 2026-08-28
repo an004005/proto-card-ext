@@ -12,7 +12,7 @@
 
 import { createRngState, pick } from './rng.js';
 import { bfsHopDistances, buildAdjacency } from './graphUtils.js';
-import { gainOverload, reduceOverload, isLethalOverload } from './overloadEngine.js';
+import { gainOverload, reduceOverload } from './overloadEngine.js';
 import { effectiveForRequirement } from './capabilityEngine.js';
 import {
   RUN_COLLAPSE_TIME, WORLD_TICK_INTERVAL, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
@@ -22,6 +22,10 @@ import {
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME, FARM_TIME,
   FARM_NOISE, FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN,
+  CAMERA_STEALTH_THRESHOLD, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME, CAMERA_HACK_OVERLOAD,
+  CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
+  MOBILITY_MOVE_TIME_MULTIPLIER,
+  GENERATOR_HACK_TIME, GENERATOR_HACK_OVERLOAD, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
 } from '../data/facilityLayout.js';
 
 // 모듈 레벨 카운터는 같은 프로세스에서 같은 seed로 여러 번 플레이하면(예: 헤드리스 테스트가
@@ -108,6 +112,13 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     observations: {},
     fieldCooldowns: {},
     activeBarriers: [],
+    hackedCameras: [],
+    disabledCameraIds: [],
+    hackedInterfaceIds: [],
+    disabledGeneratorIds: [],
+    activeRecon: null,
+    lastCameraDetection: null,
+    lastActionResult: null,
     exits: /** @type {any} */ (exits),
     threats,
     noiseEvents: [],
@@ -122,7 +133,7 @@ export function createRunState(graph, seed, overloadConfig = {}) {
 /**
  * §8: apply an Overload change (positive = gain, respects the multiplier and rounds; negative =
  * reduction, clamped to the equipped floor — see overloadEngine.js, the same rules combat uses).
- * Reaching >=100 ends the run immediately regardless of HP (§8.1).
+ * 100 초과는 런을 끝내지 않는다. 전투에서는 초과분이 저주 카드로 전환된다.
  * @param {import('./types.js').FacilityRunState} state
  * @param {number} amount
  * @returns {import('./types.js').FacilityRunState}
@@ -131,8 +142,7 @@ export function applyOverloadDelta(state, amount) {
   const overload = amount >= 0
     ? gainOverload(state.overload, amount, state.overloadGainMultiplier)
     : reduceOverload(state.overload, -amount, state.overloadFloor);
-  const phase = isLethalOverload(overload) ? 'meltdown' : state.phase;
-  return { ...state, overload, phase };
+  return { ...state, overload };
 }
 
 /**
@@ -160,6 +170,25 @@ export function refreshLocalObservations(run) {
   for (const nodeId of nearNodeIds) {
     const exit = exitByNodeId[nodeId];
     observations[nodeId] = { observedAt: run.time, hasThreat: threatNodeIds.has(nodeId), exitStatus: exit?.kind === 'standard' ? exit.status : undefined };
+  }
+  return { ...run, observations };
+}
+
+/** Refresh the nodes watched by an active manual or hacked-camera recon session. */
+export function refreshActiveRecon(run) {
+  const recon = run.activeRecon;
+  if (!recon) return run;
+  if (recon.expiresAt != null && run.time >= recon.expiresAt) return { ...run, activeRecon: null };
+  const threatNodeIds = new Set(Object.values(run.threats).map((threat) => threat.nodeId));
+  const exitByNodeId = Object.fromEntries(Object.values(run.exits).map((exit) => [exit.nodeId, exit]));
+  const observations = { ...run.observations };
+  for (const nodeId of recon.targetNodeIds) {
+    const exit = exitByNodeId[nodeId];
+    observations[nodeId] = {
+      observedAt: run.time,
+      hasThreat: threatNodeIds.has(nodeId),
+      exitStatus: exit?.kind === 'standard' ? exit.status : undefined,
+    };
   }
   return { ...run, observations };
 }
@@ -495,7 +524,7 @@ function worldTick(state, tickTime) {
     if (collided) combatTrigger = { threatId: collided.id, nodeId: collided.nodeId };
   }
 
-  return { ...workingState, threats: nextThreats, combatTrigger };
+  return refreshActiveRecon({ ...workingState, time: tickTime, threats: nextThreats, combatTrigger });
 }
 
 /**
@@ -533,10 +562,14 @@ function applyTimerBoundary(state, t) {
   const noiseEvents = state.noiseEvents.filter((e) => e.expiresAt !== t);
   const falseTargets = state.falseTargets.filter((e) => e.expiresAt !== t);
   const activeBarriers = state.activeBarriers.filter((b) => b.expiresAt !== t);
+  const hackedCameras = state.hackedCameras.filter((camera) => camera.expiresAt > t);
+  const activeRecon = state.activeRecon?.expiresAt != null && state.activeRecon.expiresAt <= t
+    ? null
+    : state.activeRecon;
 
-  return {
-    ...state, time: t, exits, noiseEvents, falseTargets, activeBarriers,
-  };
+  return refreshActiveRecon({
+    ...state, time: t, exits, noiseEvents, falseTargets, activeBarriers, hackedCameras, activeRecon,
+  });
 }
 
 /**
@@ -570,10 +603,50 @@ export function advanceTime(state, targetTime) {
  * @param {import('./types.js').FacilityEdge} edge
  * @param {string} fromId
  */
-function isEdgeTraversable(state, edge, fromId) {
+function isEdgeTraversable(state, edge, fromId, effectiveMobility = 0) {
   if (edge.features.includes('oneWay') && edge.from !== fromId) return false;
   if (edge.features.includes('blocked') && !state.openedEdgeIds.includes(edge.id)) return false;
+  if (edge.features.includes('highGround') && effectiveForRequirement(effectiveMobility) < 3) return false;
   return true;
+}
+
+/** Public UI/test predicate for an edge from the player's current node. */
+export function canTraverseEdge(state, edge, effectiveMobility = 0) {
+  return !!state.playerNodeId
+    && (edge.from === state.playerNodeId || edge.to === state.playerNodeId)
+    && isEdgeTraversable(state, edge, state.playerNodeId, effectiveMobility);
+}
+
+/** Public UI predicate: is this camera currently under an active (unexpired) hack? Destroyed
+ * cameras are a separate state (disabledCameraIds) — callers that need "won't detect me right
+ * now" should check both, as cameraIsHacked below does. */
+export function isCameraHackActive(state, cameraId) {
+  return state.hackedCameras.some((entry) => entry.cameraId === cameraId && entry.expiresAt > state.time);
+}
+
+function cameraIsHacked(state, cameraId) {
+  return state.disabledCameraIds?.includes(cameraId) || isCameraHackActive(state, cameraId);
+}
+
+function applyCameraDetection(state, nodeId, effectiveStealth) {
+  const camera = state.graph.cameras.find((entry) => entry.nodeId === nodeId && !cameraIsHacked(state, entry.id));
+  if (!camera || effectiveStealth >= CAMERA_STEALTH_THRESHOLD) return state;
+  const hops = bfsHopDistances(state.graph.edges, nodeId);
+  const threats = { ...state.threats };
+  for (const threat of Object.values(state.threats)) {
+    const hop = hops.get(threat.nodeId);
+    if (hop === undefined || hop > CAMERA_ALERT_RANGE) continue;
+    threats[threat.id] = {
+      ...threat,
+      mode: 'pursuit', alert: 3, lastKnownPlayerNodeId: nodeId, pursuitStrength: 3,
+      target: { kind: 'player', nodeId },
+    };
+  }
+  return {
+    ...state,
+    threats,
+    lastCameraDetection: { cameraId: camera.id, nodeId, detectedAt: state.time },
+  };
 }
 
 /**
@@ -591,22 +664,32 @@ function isEdgeTraversable(state, edge, fromId) {
  * @param {string} destinationNodeId
  * @returns {import('./types.js').FacilityRunState}
  */
-export function moveToAdjacentNode(state, destinationNodeId) {
+export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility = 0, effectiveStealth = 0) {
   if (state.phase !== 'active') throw new Error('run already ended');
   if (!state.playerNodeId) throw new Error('player is not at a node');
   const traversedEdge = state.graph.edges.find((e) => {
     const connects = (e.from === state.playerNodeId && e.to === destinationNodeId) || (e.to === state.playerNodeId && e.from === destinationNodeId);
-    return connects && isEdgeTraversable(state, e, /** @type {string} */ (state.playerNodeId));
+    return connects && isEdgeTraversable(state, e, /** @type {string} */ (state.playerNodeId), effectiveMobility);
   });
   if (!traversedEdge) throw new Error(`${destinationNodeId} is not currently reachable from ${state.playerNodeId}`);
 
   const visitedNodeIds = state.visitedNodeIds.includes(destinationNodeId)
     ? state.visitedNodeIds
     : [...state.visitedNodeIds, destinationNodeId];
-  const moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null };
+  let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null };
+  moved = applyCameraDetection(moved, destinationNodeId, effectiveStealth);
+  const stealthIndex = Math.max(-2, Math.min(4, effectiveStealth)) + 2;
+  const movementNoise = [3, 2, 1, 0, 0, 0, 0][stealthIndex];
+  if (movementNoise > 0) moved = reportNoise(moved, destinationNodeId, /** @type {1|2|3} */ (movementNoise), state.time);
+  if (effectiveStealth <= 2) {
+    const tier = /** @type {1|2} */ (effectiveStealth <= -2 ? 2 : 1);
+    moved = { ...moved, evidence: [...moved.evidence, { id: idForNewEntry(state, moved.evidence, 'evidence'), nodeId: destinationNodeId, tier, createdBySectorId: destinationNodeId.split('_')[0] }] };
+  }
   // 엣지마다 기하학적 길이에 따라 다른 시간 비용을 갖는다(facilityGraph.js 참고) — 더 이상
   // 모든 이동이 균일한 STANDARD_EDGE_TIME_COST가 아니다.
-  return advanceTime(moved, moved.time + traversedEdge.timeCost);
+  const mobilityIndex = Math.max(-2, Math.min(4, effectiveMobility)) + 2;
+  const timeCost = Math.max(10, Math.round(traversedEdge.timeCost * MOBILITY_MOVE_TIME_MULTIPLIER[mobilityIndex]));
+  return advanceTime(moved, moved.time + timeCost);
 }
 
 /**
@@ -676,10 +759,99 @@ export function basicRecon(state) {
     if (e.from === state.playerNodeId) targets.add(e.to);
     if (e.to === state.playerNodeId) targets.add(e.from);
   }
-  const threatNodes = new Set(Object.values(state.threats).map((t) => t.nodeId));
-  const observations = { ...state.observations };
-  for (const nodeId of targets) observations[nodeId] = { observedAt: state.time, hasThreat: threatNodes.has(nodeId) };
-  return advanceTime({ ...state, observations }, state.time + BASIC_RECON_TIME);
+  const activeRecon = { source: /** @type {const} */ ('basic'), sourceNodeId: state.playerNodeId, targetNodeIds: [...targets], expiresAt: null };
+  return advanceTime(refreshActiveRecon({ ...state, activeRecon }), state.time + BASIC_RECON_TIME);
+}
+
+/** Effective Hacking -> direct hacking range in graph hops. */
+export function cameraHackRange(effectiveHacking) {
+  return CAMERA_HACK_RANGE_BY_HACKING[Math.max(-2, Math.min(4, effectiveHacking)) + 2];
+}
+
+/** Whether a hacking target is reachable directly, or through the hacked interface at this node. */
+function canReachHackingTarget(state, targetNodeId, effectiveHacking) {
+  if (effectiveForRequirement(effectiveHacking) < 1) return false;
+  const playerNode = state.graph.nodes.find((node) => node.id === state.playerNodeId);
+  const targetNode = state.graph.nodes.find((node) => node.id === targetNodeId);
+  if (!playerNode || !targetNode) return false;
+  const currentInterface = state.graph.accessInterfaces.find((entry) => entry.nodeId === state.playerNodeId);
+  const hackedInterfaceIds = state.hackedInterfaceIds || [];
+  if (currentInterface && hackedInterfaceIds.includes(currentInterface.id) && playerNode.sectorId === targetNode.sectorId) return true;
+  const hop = bfsHopDistances(state.graph.edges, state.playerNodeId).get(targetNodeId);
+  return hop !== undefined && hop <= cameraHackRange(effectiveHacking);
+}
+
+/** Hack the access interface installed at the player's current node. */
+export function hackAccessInterface(state, interfaceId, effectiveHacking) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('access interface hacking unavailable');
+  if (effectiveForRequirement(effectiveHacking) < 1) throw new Error('Hacking 1+ required');
+  const accessInterface = state.graph.accessInterfaces.find((entry) => entry.id === interfaceId);
+  if (!accessInterface) throw new Error(`unknown access interface ${interfaceId}`);
+  if (accessInterface.nodeId !== state.playerNodeId) throw new Error('access interface must be hacked at its node');
+  if ((state.hackedInterfaceIds || []).includes(interfaceId)) return state;
+  let next = applyOverloadDelta(state, CAMERA_HACK_OVERLOAD);
+  next = { ...next, hackedInterfaceIds: [...(next.hackedInterfaceIds || []), interfaceId] };
+  return advanceTime(next, state.time + CAMERA_HACK_TIME);
+}
+
+/** Hack a camera at the current/nearby node, or anywhere in this sector through a hacked interface. */
+export function hackCamera(state, cameraId, effectiveHacking) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('camera hacking unavailable');
+  const camera = state.graph.cameras.find((entry) => entry.id === cameraId);
+  if (!camera) throw new Error(`unknown camera ${cameraId}`);
+  if ((state.disabledCameraIds || []).includes(cameraId)) throw new Error('camera is already destroyed');
+  if (effectiveForRequirement(effectiveHacking) < 1) throw new Error('Hacking 1+ required');
+  if (!canReachHackingTarget(state, camera.nodeId, effectiveHacking)) throw new Error(`camera ${cameraId} is out of range`);
+
+  const completesAt = state.time + CAMERA_HACK_TIME;
+  const expiresAt = completesAt + CAMERA_HACK_DURATION;
+  const targetNodeIds = new Set([camera.nodeId]);
+  for (const edge of state.graph.edges) {
+    if (edge.from === camera.nodeId) targetNodeIds.add(edge.to);
+    if (edge.to === camera.nodeId) targetNodeIds.add(edge.from);
+  }
+  let next = applyOverloadDelta(state, CAMERA_HACK_OVERLOAD);
+  next = {
+    ...next,
+    hackedCameras: [...next.hackedCameras.filter((entry) => entry.cameraId !== cameraId), { cameraId, expiresAt }],
+    activeRecon: { source: 'camera', sourceNodeId: camera.nodeId, targetNodeIds: [...targetNodeIds], expiresAt },
+  };
+  return advanceTime(refreshActiveRecon(next), completesAt);
+}
+
+/** Permanently destroy a camera from its node. This is a loud Force action. */
+export function destroyCamera(state, cameraId, effectiveForce) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('camera destruction unavailable');
+  if (effectiveForRequirement(effectiveForce) < 1) throw new Error('Force 1+ required');
+  const camera = state.graph.cameras.find((entry) => entry.id === cameraId);
+  if (!camera) throw new Error(`unknown camera ${cameraId}`);
+  if (camera.nodeId !== state.playerNodeId) throw new Error('Force requires standing at the camera');
+  if ((state.disabledCameraIds || []).includes(cameraId)) return state;
+  let next = reportNoise(state, state.playerNodeId, /** @type {1|2|3} */ (CAMERA_FORCE_NOISE), state.time);
+  next = { ...next, disabledCameraIds: [...(next.disabledCameraIds || []), cameraId] };
+  return advanceTime(next, state.time + CAMERA_FORCE_TIME);
+}
+
+/** Disable a sector battery generator. Hacking follows the normal direct/interface access rule;
+ * Force is loud and requires physically standing on the generator node. */
+export function disableGenerator(state, generatorId, capabilityKind, effectiveCapability) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('generator control unavailable');
+  const generator = state.graph.generators?.find((entry) => entry.id === generatorId);
+  if (!generator) throw new Error(`unknown generator ${generatorId}`);
+  if (state.disabledGeneratorIds.includes(generatorId)) return state;
+  if (effectiveForRequirement(effectiveCapability) < 1) throw new Error(`${capabilityKind} 1+ required`);
+
+  let next = state;
+  if (capabilityKind === 'hacking') {
+    if (!canReachHackingTarget(state, generator.nodeId, effectiveCapability)) throw new Error('generator is out of hacking range');
+    next = applyOverloadDelta(next, GENERATOR_HACK_OVERLOAD);
+    next = { ...next, disabledGeneratorIds: [...next.disabledGeneratorIds, generatorId] };
+    return advanceTime(next, state.time + GENERATOR_HACK_TIME);
+  }
+  if (capabilityKind !== 'force' || state.playerNodeId !== generator.nodeId) throw new Error('Force requires standing at the generator');
+  next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (GENERATOR_FORCE_NOISE), state.time);
+  next = { ...next, disabledGeneratorIds: [...next.disabledGeneratorIds, generatorId] };
+  return advanceTime(next, state.time + GENERATOR_FORCE_TIME);
 }
 
 /**
@@ -705,6 +877,7 @@ export function useOpportunity(state, opportunityId, mode) {
   let next = { ...state, graph, keyDiscovered: state.keyDiscovered || opportunity.keyEligible };
   if (noise > 0 && state.playerNodeId) next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (noise), state.time);
   next = advanceTime(next, state.time + time);
+  next = { ...next, lastActionResult: { kind: 'farm', nodeId: opportunity.nodeId, opportunityId, status: next.combatTrigger ? 'ambushed' : 'completed', completedAt: next.time } };
   return { state: next, keyGranted: opportunity.keyEligible };
 }
 
