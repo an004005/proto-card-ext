@@ -133,7 +133,7 @@ export function createRunState(graph, seed, overloadConfig = {}) {
 /**
  * §8: apply an Overload change (positive = gain, respects the multiplier and rounds; negative =
  * reduction, clamped to the equipped floor — see overloadEngine.js, the same rules combat uses).
- * 100 초과는 런을 끝내지 않는다. 전투에서는 초과분이 저주 카드로 전환된다.
+ * 100 초과는 런을 끝내지 않는다. 전투에서는 초과분이 상태이상 카드로 전환된다.
  * @param {import('./types.js').FacilityRunState} state
  * @param {number} amount
  * @returns {import('./types.js').FacilityRunState}
@@ -575,7 +575,7 @@ function applyTimerBoundary(state, t) {
 /**
  * §5.1/§5.1.2/§5.2: advance `state.time` to `targetTime`, processing every 10-point boundary's
  * timer events and (on that same boundary) one round of threat target-selection/movement. Stops
- * early if the run collapses at 4000.
+ * early if the run reaches RUN_COLLAPSE_TIME.
  * @param {import('./types.js').FacilityRunState} state
  * @param {number} targetTime
  * @returns {import('./types.js').FacilityRunState}

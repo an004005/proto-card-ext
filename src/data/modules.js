@@ -1,4 +1,4 @@
-// Modules (기획서 §9). module_charge_slash only enters the deck if 카타나 is also equipped
+// Modules (docs/game-rules.md). module_charge_slash only enters the deck if 카타나 is also equipped
 // (its card def carries requiresWeapon: 'katana' — see equipmentEngine.js).
 
 /** @typedef {import('./equipment.js').EquipmentDef} EquipmentDef */
@@ -36,7 +36,7 @@ export const MODULE_DEFINITIONS = {
 };
 
 /**
- * Per-stage flat bonuses for the "variable" power modules (기획서 §9). Looked up live at
+ * Per-stage flat bonuses for the "variable" power modules. Looked up live at
  * every damage/block calculation while the power is active — never cached.
  * @type {Object.<string, number[]>}
  */

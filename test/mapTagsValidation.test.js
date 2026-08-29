@@ -8,7 +8,7 @@ import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
 
 const NOT_EXECUTABLE = new Set([
   'junk_item', 'currency_item', 'equipment_item', 'ammo_item', 'consumable_item',
-  'infected_curse', 'wound_curse', 'dizziness_curse', 'mucus_curse', 'offering_curse',
+  'infected_status_card', 'wound_status_card', 'dizziness_status_card', 'mucus_status_card', 'offering_status_card',
 ]);
 
 const VALID_TRAITS = new Set([

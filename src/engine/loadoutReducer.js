@@ -18,7 +18,7 @@ import { equipItemFrom, getEquipmentCategory, SLOT_LIMITS } from './inventoryRed
 
 export const BASE_MAX_HP = 70;
 export const BASE_INVENTORY_CAPACITY = 10;
-const CONSUMABLE_SLOT_COUNT = 3;
+export const CONSUMABLE_SLOT_COUNT = 3;
 
 // 창고 화면은 아무것도 장착되지 않은 상태로 시작한다 — 소유한 장비/소모품은 전부 창고에서
 // 시작하고(buildStartingWarehouse), 플레이어가 직접 장비 슬롯으로 옮겨야 덱에 편입된다.

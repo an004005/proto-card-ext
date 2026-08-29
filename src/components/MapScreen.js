@@ -1,5 +1,5 @@
-// 48노드 익스트랙션 맵 화면 (docs/extraction-map-implementation-spec.md §10, 사용자 피드백으로
-// §10.2 안개 설계를 수정: 전체 지도(노드+엣지)는 항상 보이고, 위협 존재 여부 같은 "내용" 정보만
+// 160노드 익스트랙션 맵 화면 (docs/extraction-map-implementation-spec.md).
+// 전체 지도(노드+엣지)는 항상 보이고, 위협 존재 여부 같은 "내용" 정보만
 // 시야(현재+인접) 밖에서는 마지막으로 확인한 값으로 고정된다 — gameReducer.js의
 // refreshLocalObservations가 매 행동 끝에 현재+인접 노드를 observations에 스냅샷한다).
 //
@@ -155,7 +155,7 @@ function exitStatusLabel(exit) {
  * 미달 등 다른 이유로 실패) 과부화 판단과 무관하므로 막지 않는다 — 실제 클릭 시 에러로 뜬다.
  */
 function wouldExceedOverload(run, ps, actionFn) {
-  // Overload 100 is no longer a map-side game-over condition. Combat converts excess into curses.
+  // Overload 100 is no longer a map-side game-over condition. Combat converts excess into status cards.
   return false;
 }
 
@@ -407,12 +407,12 @@ export function MapScreen() {
               <${IconClock} /><span>시간 <strong>${run.time}</strong>/${RUN_COLLAPSE_TIME}</span>
             </div>
           <//>
-          <${Tooltip} content="현재 장착 장비가 만드는 과부화 바닥선 위로는 전투/현장 행동으로 계속 쌓입니다. 100을 넘겨도 런은 종료되지 않지만, 초과분은 전투 중 저주 카드로 전환됩니다.">
+          <${Tooltip} content="현재 장착 장비가 만드는 과부화 바닥선 위로는 전투/현장 행동으로 계속 쌓입니다. 100을 넘겨도 런은 종료되지 않지만, 초과분은 전투 중 상태이상 카드로 전환됩니다.">
             <div style=${{ display: 'flex', alignItems: 'center', width: '130px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
               <${OverloadGauge} overload=${ps.overload} floor=${run.overloadFloor} compact=${true} />
             </div>
           <//>
-          <${Tooltip} content=${`인벤토리 용량(${ps.inventory.capacity}칸)을 넘는 아이템은 "짐"이 되어 전투 중 저주 카드로 덱에 섞입니다. 용량 안으로 정리하세요.`}>
+          <${Tooltip} content=${`인벤토리 용량(${ps.inventory.capacity}칸)을 넘는 아이템은 "짐"이 되어 전투 중 과적 카드로 덱에 섞입니다. 용량 안으로 정리하세요.`}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)' }}>
               <${IconBox} /><span>인벤토리 <strong>${ps.inventory.items.length}</strong>/${ps.inventory.capacity}${burdenCount > 0 ? ` (짐 ${burdenCount})` : ''}</span>
             </div>

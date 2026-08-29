@@ -41,9 +41,9 @@ function describeIntent(move, enemyStatuses = {}, playerVulnerable = false) {
     return { isAttack: false, value: statusEffect.amount, tooltip: `${label} ${statusEffect.amount} 부여` };
   }
   if (move.flee) return { isAttack: false, value: null, tooltip: '도주' };
-  if (move.insertCurse) {
-    const count = move.insertCurseCount || 1;
-    return { isAttack: false, value: null, tooltip: `저주 카드 삽입${count > 1 ? ` ×${count}` : ''}` };
+  if (move.insertStatusCard) {
+    const count = move.insertStatusCardCount || 1;
+    return { isAttack: false, value: null, tooltip: `상태이상 카드 삽입${count > 1 ? ` ×${count}` : ''}` };
   }
   if (move.summon) return { isAttack: false, value: null, tooltip: `소환: ${MONSTER_DEFINITIONS[move.summon]?.name || move.summon}` };
   if (move.selfDestruct) return { isAttack: false, value: null, tooltip: '자폭' };
@@ -51,7 +51,7 @@ function describeIntent(move, enemyStatuses = {}, playerVulnerable = false) {
   return { isAttack: false, value: null, tooltip: move.id || '' };
 }
 
-// 수치가 있는 인텐트(공격/방어/버프/디버프 등)는 아이콘 밑에 숫자를 바로 보여준다. 도주·저주
+// 수치가 있는 인텐트(공격/방어/버프/디버프 등)는 아이콘 밑에 숫자를 바로 보여준다. 도주·상태이상 카드
 // 삽입처럼 단일 수치로 요약이 안 되는 것들은 숫자 없이 아이콘만 두고, 자세한 내용은 호버
 // 툴팁으로만 보여준다.
 export function IntentIcon({ intent, enemyStatuses = {}, playerVulnerable = false }) {

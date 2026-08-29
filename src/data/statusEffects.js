@@ -1,9 +1,9 @@
-// Status metadata for the Card Extraction ruleset (기획서 §7.1).
+// Status metadata for the Card Extraction ruleset (docs/terminology.md).
 // weak/vulnerable decay at the end of the holder's own turn (same rule as before).
 // armor converts to block right before the holder would be attacked — end of the player's own
-// turn, or start of an enemy's own turn — then decays by 1 (§7.1).
+// turn, or start of an enemy's own turn — then decays by 1.
 // stun causes the holder to skip their next action; their already-rolled move carries over
-// to the following turn instead of being re-rolled (§7.1, enemies only in this prototype).
+// to the following turn instead of being re-rolled (enemies only in this prototype).
 // reflect is consumed the next time its holder takes damage (튕겨내기), not turn-based decay.
 /** @type {string[]} */
 export const DECAYING_STATUSES = ['weak', 'vulnerable', 'fragile', 'entangled'];

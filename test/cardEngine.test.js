@@ -53,8 +53,8 @@ test('discardRandomFromHand moves exactly one card from hand to discard', () => 
   assert.equal(result.piles.discardPile.length, 1);
 });
 
-test('insertCardToDiscard adds a fresh instance directly into the discard pile (monster curses)', () => {
-  const piles = insertCardToDiscard(createEmptyPiles(), 'mucus_curse');
+test('insertCardToDiscard adds a fresh instance directly into the discard pile (monster status cards)', () => {
+  const piles = insertCardToDiscard(createEmptyPiles(), 'mucus_status_card');
   assert.equal(piles.discardPile.length, 1);
-  assert.equal(piles.discardPile[0].defId, 'mucus_curse');
+  assert.equal(piles.discardPile[0].defId, 'mucus_status_card');
 });

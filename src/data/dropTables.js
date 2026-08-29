@@ -1,5 +1,4 @@
-// Drop tables (기획서 §12.1, §14b). 전투 승리 후 자동 지급 방식은 rewardEngine.js(§신규
-// 보상 화면)로 처리된다.
+// Drop tables. 전투 승리 후 자동 지급 방식은 rewardEngine.js의 보상 화면 경로로 처리된다.
 import { pick } from '../engine/rng.js';
 
 /** @type {{value: string, weight: number}[]} */

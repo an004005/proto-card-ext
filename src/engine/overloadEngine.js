@@ -2,7 +2,8 @@
 // It persists across the whole run (never reset per combat); only rest/stabilizer reduce it,
 // and never below the equipped "floor" (바닥 = sum of implant costs, fixed for the run since
 // the warehouse is inaccessible mid-run). In combat, exceeding 100 is no longer instant death —
-// combatEngine.js inserts curse cards proportional to the excess instead (this combat only).
+// combatEngine.js clamps it back down to 100 and inserts status cards proportional to the excess
+// instead (drawPile, this combat only), so combat-scoped overload is never stored above 100.
 // On the facility map there is no meltdown/run-ending state at all anymore: MapScreen.js
 // pre-emptively disables any action that would push overload over 100, so it never actually gets
 // there. isLethalOverload/OVERLOAD_MAX below are unused dead code left over from when the map
@@ -11,7 +12,7 @@ export const OVERLOAD_MAX = 100;
 
 /**
  * 3단계: 0(노멀) 0-29, 1(강화·예열) 30-69, 2(강화+페널티·과열) 70 이상(100 초과분은 여기서
- * 더 오르지 않고 combatEngine.js의 저주 카드 삽입으로 처리된다 — 더 이상 즉사 조건이 아니다).
+ * 더 오르지 않고 combatEngine.js의 상태이상 카드 삽입으로 처리된다 — 더 이상 즉사 조건이 아니다).
  * @param {number} overload
  * @returns {0|1|2}
  */
@@ -47,10 +48,9 @@ export function reduceOverload(overload, amount, floorOverload) {
 }
 
 /**
- * Shared "기본 카드 공통 단계 공식" (기획서 §4.2 / §16): stage 1(강화·예열)과 2(강화+페널티·
- * 과열) 모두 +25%(반올림) 보정을 받고, stage 0(노멀)만 원래 수치를 쓴다. stage 2의 "페널티"는
- * 이 보정과 별개로 combatEngine.js의 카드 코스트 +1로 처리된다. scalesWithStage가 꺼진 카드
- * (뽑기·저주·상태 전용 등)는 보정하지 않는다.
+ * Shared non-damage stage formula (docs/game-rules.md): stage 1 and 2 both receive a +25%
+ * rounded adjustment, while stage 0 uses the original value. Damage uses its own ceil rule in
+ * statusEngine.js. Stage 2's cost penalty is handled separately in combatEngine.js.
  * @param {number} baseValue
  * @param {number} stage
  * @param {boolean} scalesWithStage

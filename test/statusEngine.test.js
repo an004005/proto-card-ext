@@ -4,10 +4,13 @@ import {
   applyStatus, decayStatusesAtTurnEnd, applyArmorAtTurnStart, computeDamage, computeBlock, applyDamage,
 } from '../src/engine/statusEngine.js';
 
-test('computeDamage: stage-scale -> +flatBonus -> weak(x0.75) -> vulnerable(x1.5), each floored', () => {
-  // base 6, stage1 scale ->8, +2 flat ->10, weak -> floor(7.5)=7, vulnerable -> floor(10.5)=10
+test('computeDamage: damage fractions round up, while the weak step always rounds down', () => {
+  // base 6, stage1 -> ceil(7.5)=8, +2 ->10, weak -> floor(7.5)=7, vulnerable -> ceil(10.5)=11
   const dmg = computeDamage(6, { stage: 1, scalesWithStage: true, flatBonus: 2, weak: true, vulnerable: true });
-  assert.equal(dmg, 10);
+  assert.equal(dmg, 11);
+  assert.equal(computeDamage(9, { stage: 1, scalesWithStage: true }), 12); // ceil(11.25)
+  assert.equal(computeDamage(5, { stage: 0, scalesWithStage: false, weak: true }), 3); // floor(3.75)
+  assert.equal(computeDamage(5, { stage: 0, scalesWithStage: false, vulnerable: true }), 8); // ceil(7.5)
 });
 
 test('computeDamage with no modifiers just applies the stage scale', () => {

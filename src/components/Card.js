@@ -2,6 +2,7 @@ import { html } from '../lib.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { getEffectiveCost, resolveCard } from '../engine/combatEngine.js';
 import { getStage, applyStageScale } from '../engine/overloadEngine.js';
+import { computeDamage } from '../engine/statusEngine.js';
 import { STATUS_LABELS, POWER_LABELS } from '../data/statusEffects.js';
 import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
 import { describeItem } from '../data/itemDisplay.js';
@@ -12,12 +13,12 @@ export const TYPE_INFO = {
   attack: { color: 'var(--color-accent)', label: 'ATTACK · 공격', cls: 'tag-accent' },
   skill: { color: 'var(--color-neutral-700)', label: 'SKILL · 스킬', cls: 'tag-neutral' },
   power: { color: 'var(--color-accent-2-700)', label: 'POWER · 파워', cls: 'tag-accent-2' },
-  curse: { color: 'var(--color-neutral-500)', label: 'CURSE · 저주', cls: 'tag-neutral' },
-  status: { color: 'var(--color-neutral-600)', label: 'STATUS · 상태이상', cls: 'tag-neutral' },
+  status_card: { color: 'var(--color-neutral-500)', label: 'STATUS CARD · 상태이상 카드', cls: 'tag-neutral' },
+  burden: { color: 'var(--color-neutral-600)', label: 'BURDEN · 과적 카드', cls: 'tag-neutral' },
 };
 
 // getStage()는 0~2만 반환한다(§과부화 3단계 개편 — 100 초과는 별도 단계가 아니라
-// combatEngine.js의 저주 카드 삽입으로 처리됨). 예전 4단계(멜트다운 포함) 표기는 제거했다.
+// combatEngine.js의 상태이상 카드 삽입으로 처리됨). 예전 4단계(멜트다운 포함) 표기는 제거했다.
 const STAGE_LABELS = ['0단계 (노멀)', '1단계 (최적)', '2단계 (과열)'];
 const STAGE_ZONE_LABELS = ['노멀', '최적', '과열'];
 
@@ -31,9 +32,10 @@ const VARIABLE_POWER_BONUS_LABELS = {
 
 function describeEffect(effect, def, stage) {
   const scale = (v) => (def.stageTable ? v : applyStageScale(v, stage, def.scalesWithStage));
+  const scaleDamage = (v) => (def.stageTable ? v : computeDamage(v, { stage, scalesWithStage: def.scalesWithStage }));
   switch (effect.kind) {
     case 'damage':
-      return (effect.target === 'all_enemies' ? '광역 피해 ' : '피해 ') + scale(effect.value);
+      return (effect.target === 'all_enemies' ? '광역 피해 ' : '피해 ') + scaleDamage(effect.value);
     case 'block':
       return '방어 ' + scale(effect.value);
     case 'applyStatus': {

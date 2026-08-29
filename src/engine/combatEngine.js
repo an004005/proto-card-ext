@@ -1,7 +1,7 @@
 // Pure combat state machine for the Card Extraction ruleset. Every export is
 // (state, ...args) => newState — no DOM/Preact, runnable headlessly under `node --test`.
 import * as cardEngine from './cardEngine.js';
-import { computeDamage, computeBlock, applyDamage, decayStatusesAtTurnEnd, applyStatus, applyArmorAtTurnStart, applyPoisonAtTurnStart } from './statusEngine.js';
+import { computeDamage, computeBlock, applyDamage, applyVulnerableDamage, decayStatusesAtTurnEnd, applyStatus, applyArmorAtTurnStart, applyPoisonAtTurnStart } from './statusEngine.js';
 import { getStage, gainOverload } from './overloadEngine.js';
 import { currentMove, advanceAiState, createInitialAiState } from './monsterAI.js';
 import { isItemBurdenGivenOrder } from './inventoryEngine.js';
@@ -20,32 +20,31 @@ import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
 /** @typedef {import('./types.js').Statuses} Statuses */
 /** @typedef {import('./types.js').EffectContext} EffectContext */
 
-const HAND_SIZE = 5;
-const DURABILITY_DECAY_CHANCE = 0.01;
+export const HAND_SIZE = 5;
+export const BASE_ENERGY = 3;
+export const DURABILITY_DECAY_CHANCE = 0.01;
 
 // ---- card resolution helpers ----
 
 /**
- * §과부화 3단계 개편: 과부화가 100을 넘으면 초과분 10당(올림) 저주 카드 1장을 이번 전투에만
- * 덱에 삽입한다 — 더 이상 즉사 조건이 아니다.
- * @param {number} overload
- * @returns {number}
- */
-function computeOverloadCurseCount(overload) {
-  return Math.ceil(Math.max(0, overload - 100) / 10);
-}
-
-/**
+ * §과부화 3단계 개편: 과부화가 100을 넘으면 그 자리에서 100으로 clamp하고, 초과분 10당(올림)
+ * 상태이상 카드 1장을 뽑을 더미(drawPile)의 무작위 위치에 삽입한다(이번 전투에만) — 더 이상 즉사
+ * 조건이 아니며, overload 자체는 전투 중 100을 넘는 값으로 저장되지 않는다.
+ * @param {number} rawOverload clamp 이전의 값 (100을 넘을 수 있음)
  * @param {import('./types.js').Piles} piles
- * @param {number} previousCount
- * @param {number} overload
- * @returns {import('./types.js').Piles}
+ * @param {RngState} rngState
+ * @returns {{overload: number, piles: import('./types.js').Piles, rngState: RngState}}
  */
-function insertOverloadCurses(piles, previousCount, overload) {
-  const desired = computeOverloadCurseCount(overload);
+function clampOverloadAndInsertStatusCards(rawOverload, piles, rngState) {
+  const statusCardCount = Math.ceil(Math.max(0, rawOverload - 100) / 10);
   let p = piles;
-  for (let i = previousCount; i < desired; i++) p = cardEngine.insertCardToDiscard(p, 'overload_curse');
-  return p;
+  let rng = rngState;
+  for (let i = 0; i < statusCardCount; i++) {
+    const inserted = cardEngine.insertCardToDrawRandom(p, 'overload_status_card', rng);
+    p = inserted.piles;
+    rng = inserted.rngState;
+  }
+  return { overload: Math.min(rawOverload, 100), piles: p, rngState: rng };
 }
 
 /**
@@ -241,15 +240,17 @@ export function createCombatState({
   const loaded = Math.min(maxLoad, usableAmmo);
   const reserve = usableAmmo - loaded;
 
+  const clamped = clampOverloadAndInsertStatusCards(overload, shuffled.piles, rng);
+
   // phase 'setup' — caller must run beginPlayerFirst() or beginEnemyFirst() (ambush, §7.3)
   // to actually open the combat; neither has happened yet.
   return {
     phase: 'setup',
     turn: 1,
-    overload, overloadFloor, overloadGainMultiplier,
+    overload: clamped.overload, overloadFloor, overloadGainMultiplier,
     player: {
       hp: playerHp, maxHp: playerMaxHp, block: 0,
-      energy: 3, maxEnergy: 3, loaded, reserve, maxLoad,
+      energy: BASE_ENERGY, maxEnergy: BASE_ENERGY, loaded, reserve, maxLoad,
       statuses: {}, powers: {}, temporaryEffects: {},
       extraDrawPerTurn: extraDrawPerTurn || 0,
       turnStartAoeDamage: turnStartAoeDamage || 0,
@@ -259,9 +260,8 @@ export function createCombatState({
       durabilityDecayInstanceIds: [],
     },
     enemies,
-    piles: insertOverloadCurses(shuffled.piles, 0, overload),
-    overloadCurseCount: computeOverloadCurseCount(overload),
-    rngState: rng,
+    piles: clamped.piles,
+    rngState: clamped.rngState,
   };
 }
 
@@ -374,7 +374,7 @@ function checkBossPhaseTransition(state, enemyId) {
   s = { ...s, rngState: created.rngState };
   let piles = s.piles;
   for (let i = 0; i < (def.phaseTransitionInsertCount || 0); i++) {
-    piles = cardEngine.insertCardToDiscard(piles, def.phaseTransitionInsertCurse);
+    piles = cardEngine.insertCardToDiscard(piles, def.phaseTransitionInsertStatusCard);
   }
   return { ...s, piles };
 }
@@ -483,18 +483,18 @@ function applyOneEffect(state, effect, context) {
 
         if (target.scope === 'all_enemies') {
           for (const enemy of livingEnemies(s)) {
-            const vulnerableAmount = enemy.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
+            const vulnerableAmount = applyVulnerableDamage(amount, !!enemy.statuses.vulnerable);
             s = damageTarget(s, 'enemy', enemy.id, vulnerableAmount, ignoresBlock, null);
           }
         } else if (target.scope === 'enemy') {
           const enemy = s.enemies.find((e) => e.id === target.enemyId);
           if (enemy && enemy.hp > 0) {
-            const vulnerableAmount = enemy.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
+            const vulnerableAmount = applyVulnerableDamage(amount, !!enemy.statuses.vulnerable);
             s = damageTarget(s, 'enemy', target.enemyId, vulnerableAmount, ignoresBlock, null);
           }
         } else if (target.scope === 'player') {
           if (s.player.hp > 0) {
-            const vulnerableAmount = s.player.statuses.vulnerable ? Math.floor(amount * 1.5) : amount;
+            const vulnerableAmount = applyVulnerableDamage(amount, !!s.player.statuses.vulnerable);
             s = damageTarget(s, 'player', null, vulnerableAmount, false, context.enemyId);
           }
         }
@@ -622,7 +622,7 @@ function applyEffects(state, effects, context) {
 // ---- win/loss ----
 
 /**
- * §과부화 3단계 개편: 100 초과는 더 이상 즉사 조건이 아니다(저주 카드 삽입으로 대체) —
+ * §과부화 3단계 개편: 100 초과는 더 이상 즉사 조건이 아니다(상태이상 카드 삽입으로 대체) —
  * HP 0 이하만 패배로 판정한다.
  * @param {CombatState} state @returns {CombatState}
  */
@@ -652,12 +652,13 @@ export function playCard(state, instanceId, targetId) {
   const stage = getStage(state.overload);
   const resolved = resolveCard(def, stage);
 
-  const newOverload = gainOverload(state.overload, def.overloadGain || 0, state.overloadGainMultiplier);
+  const rawOverload = gainOverload(state.overload, def.overloadGain || 0, state.overloadGainMultiplier);
+  const clamped = clampOverloadAndInsertStatusCards(rawOverload, pilesAfterRemoval, state.rngState);
   let s = {
     ...state,
-    piles: insertOverloadCurses(pilesAfterRemoval, state.overloadCurseCount, newOverload),
-    overload: newOverload,
-    overloadCurseCount: computeOverloadCurseCount(newOverload),
+    piles: clamped.piles,
+    overload: clamped.overload,
+    rngState: clamped.rngState,
     player: {
       ...state.player,
       energy: state.player.energy - getEffectiveCost(def, stage, state.player.powers, state.player.statuses),
@@ -687,7 +688,7 @@ export function playCard(state, instanceId, targetId) {
     s = { ...s, piles: def.exhausts ? cardEngine.moveToExhaust(s.piles, card) : cardEngine.moveToDiscard(s.piles, card) };
   }
 
-  // 장비 내구도(§신규): 이 카드가 장비 인스턴스 소속이면(손상 저주카드/필러/과적 카드는 제외)
+  // 장비 내구도(§신규): 이 카드가 장비 인스턴스 소속이면(손상 상태이상 카드/필러/과적 카드는 제외)
   // 1% 확률로 그 인스턴스에 감소 1회 축적 — 실제 적용은 전투 종료 후(finalizeIfCombatEnded).
   if (card.equipmentInstanceId) {
     const roll = nextFloat(s.rngState);
@@ -750,10 +751,10 @@ function executeEnemyAction(state, enemyId) {
   if (move.effects) {
     s = applyEffects(s, move.effects, { source: 'enemy', enemyId, scalesWithStage: false, sourceStatuses: enemy.statuses });
   }
-  if (move.insertCurse) {
+  if (move.insertStatusCard) {
     let piles = s.piles;
-    const count = move.insertCurseCount || 1;
-    for (let i = 0; i < count; i++) piles = cardEngine.insertCardToDiscard(piles, move.insertCurse);
+    const count = move.insertStatusCardCount || 1;
+    for (let i = 0; i < count; i++) piles = cardEngine.insertCardToDiscard(piles, move.insertStatusCard);
     s = { ...s, piles };
   }
   if (move.stealCurrency) {

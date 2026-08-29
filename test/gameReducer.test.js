@@ -34,7 +34,7 @@ function equipDefaultLoadout(s) {
 
 // 시설맵엔 "다음 노드"라는 확정 개념이 없다 — 현재 위치의 인접 노드 중 실제로 이동 가능한
 // 첫 번째로 이동한다(막힌/일방통행 특수 엣지는 MOVE_TO_NODE가 조용히 no-op하므로 다음 후보로
-// 넘어간다). 시간이 흐르며(간선당 ~100) RUN_COLLAPSE_TIME(4000)에 도달하면 결국 gameOver로
+// 넘어간다). 시간이 흐르며(간선당 ~100) RUN_COLLAPSE_TIME에 도달하면 결국 gameOver로
 // 끝나므로, 순수 랜덤워크로도 헤드리스 테스트는 유한 스텝 안에 종결된다.
 function driveMapForward(s) {
   const run = s.facilityRunState;
@@ -241,7 +241,7 @@ test('PLAY_CARD with an invalid instanceId is a full no-op snapshot', () => {
   assert.equal(after, before);
 });
 
-test('junk and currency items only enter the deck as curse cards once they are burden (past capacity)', () => {
+test('junk and currency items only enter the deck as status cards once they are burden (past capacity)', () => {
   let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   const capacity = s.playerState.inventory.capacity;

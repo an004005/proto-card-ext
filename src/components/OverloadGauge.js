@@ -21,7 +21,7 @@ export function OverloadGauge({ overload, floor, compact = false }) {
       ${!compact ? html`
         <div style=${{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7 }}>
           <span>과부화</span>
-          <span>${info.label} (${stage}단계)${overload > 100 ? ` — 100 초과, 저주 카드 ${Math.ceil((overload - 100) / 10)}장(이번 전투만)` : ''}</span>
+          <span>${info.label} (${stage}단계)${overload > 100 ? ` — 100 초과, 상태이상 카드 ${Math.ceil((overload - 100) / 10)}장(이번 전투만)` : ''}</span>
         </div>
       ` : null}
       <div style=${{ height, background: 'var(--color-neutral-300)', border: '1px solid var(--color-divider)', position: 'relative', overflow: 'hidden' }}>

@@ -29,7 +29,7 @@ test('different seeds usually produce different graphs', () => {
   assert.notDeepEqual(a.graph.edges, b.graph.edges);
 });
 
-// #2 48노드, 구역별 12노드, 위협 2/3/4/3, 특수 엣지 12~16.
+// 현재 레이아웃 상수의 노드·구역·위협·특수 엣지 범위를 검증한다.
 test('node/sector/threat/special-edge counts match the spec for many seeds', () => {
   for (let seed = 0; seed < 40; seed++) {
     const { graph } = generateFacilityGraph(seed);

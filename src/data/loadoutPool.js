@@ -1,4 +1,4 @@
-// Warehouse (창고) vs farming-only pool split (기획서 §13.2). Warehouse items are available
+// Warehouse (창고) vs farming-only pool split (docs/game-rules.md). Warehouse items are available
 // at run start; farming-only items only ever appear via drops.
 /**
  * @typedef {Object} EquipmentPool

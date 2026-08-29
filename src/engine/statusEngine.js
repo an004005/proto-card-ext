@@ -39,7 +39,7 @@ export function applyStatus(statuses, key, amount) {
 }
 
 /**
- * weak/vulnerable/fragile/entangled decay by 1 at the end of the holder's own turn (기획서 §7.1).
+ * weak/vulnerable/fragile/entangled decay by 1 at the end of the holder's own turn.
  * @param {Statuses} statuses
  * @returns {Statuses}
  */
@@ -55,7 +55,7 @@ export function decayStatusesAtTurnEnd(statuses) {
 }
 
 /**
- * 갑옷: 턴 시작 시 스택만큼 방어도 획득, 매턴 스택 1 감소 (기획서 §7.1).
+ * 갑옷: 턴 시작 시 스택만큼 방어도 획득, 매턴 스택 1 감소.
  * @template {{block: number, statuses: Statuses}} T
  * @param {T} combatant
  * @returns {T}
@@ -84,16 +84,22 @@ export function applyPoisonAtTurnStart(combatant) {
 }
 
 /**
- * Damage formula: stage-scale base -> + flat module/atk bonuses -> weak (x0.75) -> vulnerable (x1.5).
+ * Damage formula: ceil stage-scaled base -> + flat module/atk bonuses -> weak (x0.75, floor)
+ * -> vulnerable (x1.5, ceil). Damage fractions round up except at the weak step.
  * @param {number} baseValue
  * @param {{stage: number, scalesWithStage: boolean, flatBonus?: number, weak?: boolean, vulnerable?: boolean}} opts
  * @returns {number}
  */
 export function computeDamage(baseValue, { stage, scalesWithStage, flatBonus = 0, weak = false, vulnerable = false }) {
-  let amount = applyStageScale(baseValue, stage, scalesWithStage) + flatBonus;
+  const stageMultiplier = scalesWithStage && (stage === 1 || stage === 2) ? 1.25 : 1;
+  let amount = Math.ceil(baseValue * stageMultiplier + flatBonus);
   if (weak) amount = Math.floor(amount * 0.75);
-  if (vulnerable) amount = Math.floor(amount * 1.5);
+  amount = applyVulnerableDamage(amount, vulnerable);
   return Math.max(0, amount);
+}
+
+export function applyVulnerableDamage(amount, vulnerable) {
+  return vulnerable ? Math.ceil(amount * 1.5) : amount;
 }
 
 /**

@@ -11,7 +11,7 @@ import {
 } from './combatMapIntegration.js';
 import {
   buildDeckFromLoadout, computeFloorOverload, computeOverloadGainMultiplier, getImplantEffect,
-  computeMaxLoadBonus, computeDamagedCurseEntries, applyDurabilityDecay,
+  computeMaxLoadBonus, computeDamagedStatusCardEntries, applyDurabilityDecay,
 } from './equipmentEngine.js';
 import { addItem, removeItem, isItemBurdenGivenOrder, getUsableAmmo, spendAmmo } from './inventoryEngine.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
@@ -29,15 +29,15 @@ import { GENERATOR_COMBAT_START_ARMOR } from '../data/facilityLayout.js';
  */
 export function getDeckEntries(playerState) {
   const equipmentEntries = buildDeckFromLoadout(playerState.loadout);
-  // 내구도 4 미만인 장착 장비마다 이번 전투에만 삽입되는 손상 저주 카드(§신규 내구도).
-  const curseEntries = computeDamagedCurseEntries(playerState.loadout);
+  // 내구도 4 미만인 장착 장비마다 이번 전투에만 삽입되는 손상 상태이상 카드(§신규 내구도).
+  const statusCardEntries = computeDamagedStatusCardEntries(playerState.loadout);
   const inv = playerState.inventory;
   const orderedIds = inv.items.map((i) => i.id);
-  // 잡템·환금템·미장착 장비·탄약 모두 과적(짐) 상태로 넘어간 것만 저주 카드로 덱에 들어간다.
+  // 잡템·환금템·미장착 장비·탄약 모두 과적(짐) 상태로 넘어간 것만 상태이상 카드로 덱에 들어간다.
   const lootEntries = inv.items
     .filter((i) => BURDEN_CARD_DEF_BY_KIND[i.kind] && isItemBurdenGivenOrder(orderedIds, [], inv.capacity, i.id))
     .map((i) => ({ defId: BURDEN_CARD_DEF_BY_KIND[i.kind], itemId: i.id }));
-  return [...equipmentEntries, ...curseEntries, ...lootEntries];
+  return [...equipmentEntries, ...statusCardEntries, ...lootEntries];
 }
 
 /**

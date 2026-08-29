@@ -1,6 +1,6 @@
-// Consumables (기획서 §11). Pouch holds 3 slots, not deck cards — used by paying the listed
-// cost directly from a POST_COMBAT/combat action, not via the card pile system.
-// 수리 부품 intentionally omitted — durability system is out of prototype scope.
+// Consumables (docs/game-rules.md). Pouch holds 3 slots, not deck cards; current combat use
+// consumes the item without deducting the definition's display-only cost value.
+// 수리 부품은 아직 구현하지 않았다(docs/planned.md).
 /** @typedef {import('../engine/types.js').MapTags} MapTags */
 
 /**
@@ -11,7 +11,7 @@
  * @property {Object} effect
  * @property {string} effect.kind
  * @property {string} description
- * @property {MapTags} mapTags 구현 명세 §9.1, docs/card-map-tag-mapping.md.
+ * @property {MapTags} mapTags docs/card-map-tag-mapping.md.
  */
 
 /** @type {Object.<string, ConsumableDef>} */

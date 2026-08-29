@@ -1,4 +1,4 @@
-// Weapons and armor (기획서 §5, §8). Equipping one adds its whole cardList to the run deck.
+// Weapons and armor. Equipping one adds its whole cardList to the run deck (docs/game-rules.md).
 
 /**
  * @typedef {Object} EquipmentDef
@@ -53,7 +53,7 @@ export const WEAPON_DEFINITIONS = {
 export const ARMOR_TOP_DEFINITIONS = {
   heavy_top: {
     id: 'heavy_top', name: '중갑상의', slot: 'top',
-    cardList: [{ defId: 'heavy_top_dodge', count: 1 }, { defId: 'heavy_top_block', count: 2 }, { defId: 'heavy_top_curse', count: 1 }],
+    cardList: [{ defId: 'heavy_top_dodge', count: 1 }, { defId: 'heavy_top_block', count: 2 }, { defId: 'heavy_top_status_card', count: 1 }],
   },
   light_top: {
     id: 'light_top', name: '경갑상의', slot: 'top',
@@ -69,6 +69,6 @@ export const ARMOR_BOTTOM_DEFINITIONS = {
   },
   heavy_bottom: {
     id: 'heavy_bottom', name: '중장하의', slot: 'bottom',
-    cardList: [{ defId: 'heavy_bottom_support', count: 1 }, { defId: 'heavy_bottom_shove', count: 1 }, { defId: 'heavy_bottom_curse', count: 1 }],
+    cardList: [{ defId: 'heavy_bottom_support', count: 1 }, { defId: 'heavy_bottom_shove', count: 1 }, { defId: 'heavy_bottom_status_card', count: 1 }],
   },
 };

@@ -112,17 +112,17 @@ export const MONSTER_DEFINITIONS = {
   leaf_slime_m: {
     id: 'leaf_slime_m', name: '나뭇잎 슬라임', hp: 33, isMachine: false, tier: 'normal',
     sequence: [
-      { id: 'goo', mapNoise: 0, damage: 0, insertCurse: 'sticky_curse' },
+      { id: 'goo', mapNoise: 0, damage: 0, insertStatusCard: 'sticky_status_card' },
       { id: 'thorn', mapNoise: 1, damage: 8 },
     ],
   },
   twig_slime_m: {
     id: 'twig_slime_m', name: '가지 슬라임', hp: 27, isMachine: false, tier: 'normal',
     sequence: [
-      { id: 'goo2', mapNoise: 0, damage: 0, insertCurse: 'sticky_curse' },
+      { id: 'goo2', mapNoise: 0, damage: 0, insertStatusCard: 'sticky_status_card' },
       { random: [
         { weight: 50, move: { id: 'pounce', mapNoise: 1, damage: 11 } },
-        { weight: 50, move: { id: 'goo3', mapNoise: 0, damage: 0, insertCurse: 'sticky_curse' } },
+        { weight: 50, move: { id: 'goo3', mapNoise: 0, damage: 0, insertStatusCard: 'sticky_status_card' } },
       ] },
     ],
   },
@@ -151,7 +151,7 @@ export const MONSTER_DEFINITIONS = {
   phrog_parasite: {
     id: 'phrog_parasite', name: '게구리 기생체', hp: 62, isMachine: false, tier: 'elite',
     sequence: [
-      { id: 'infect', mapNoise: 0, damage: 0, insertCurse: 'infected_curse' },
+      { id: 'infect', mapNoise: 0, damage: 0, insertStatusCard: 'infected_status_card' },
       { id: 'smash3', mapNoise: 1, damage: 4, hits: 4 },
     ],
   },
@@ -203,7 +203,7 @@ export const MONSTER_DEFINITIONS = {
   sawtooth_eye: {
     id: 'sawtooth_eye', name: '톱니눈', hp: 6, isMachine: false, tier: 'minion',
     sequence: [
-      { id: 'dizzy_spores', mapNoise: 1, damage: 0, insertCurse: 'dizziness_curse', insertCurseCount: 2 },
+      { id: 'dizzy_spores', mapNoise: 1, damage: 0, insertStatusCard: 'dizziness_status_card', insertStatusCardCount: 2 },
     ],
   },
 };

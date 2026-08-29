@@ -108,7 +108,7 @@ test('isAtOpenExit: true only while standing on an open standard exit, or the ke
   assert.equal(isAtOpenExit({ ...keyState, keyDiscovered: false }), false);
 });
 
-test('exit A cannot be requested once disabled, and B collapse grace ends the run at 4000', () => {
+test('exit A cannot be requested once disabled, and B collapse grace ends the run at RUN_COLLAPSE_TIME', () => {
   let state = makeRun(9);
   state = advanceTime(state, EXIT_A_DISABLED_AT);
   assert.equal(state.exits.A.status, 'disabled');
@@ -122,7 +122,7 @@ test('exit A cannot be requested once disabled, and B collapse grace ends the ru
   assert.equal(state.time, RUN_COLLAPSE_TIME);
 });
 
-test('collapse at 4000 takes priority even mid-request', () => {
+test('collapse at RUN_COLLAPSE_TIME takes priority even mid-request', () => {
   let state = makeRun(11);
   state = advanceTime(state, EXIT_B_DISABLED_AT - 50); // request just before B disables
   state = requestExtraction(state, 'B', 4); // fastest wait tier: 100

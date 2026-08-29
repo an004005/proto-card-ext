@@ -18,9 +18,7 @@ function loadout(weapons, top, bottom, modules, implantIds) {
   };
 }
 
-// Cross-checked by hand against docs/extraction-map-implementation-spec.md §12.2's baseline
-// table (P/S/H/M/F/D + floor) during doc review — this locks that table's arithmetic in as a
-// regression test now that the aggregation code actually exists.
+// P/S/H/M/F/D + floor의 대표 로드아웃 산술을 고정하는 회귀 테스트다.
 const BASELINES = [
   { id: 'perception_spatial', l: loadout(['katana', 'rifle'], 'light_top', 'tactical_bottom', ['module_spatial', 'module_neural'], ['implant1', 'implant3']), expect: [2, 2, 0, 1, 1, 1], floor: 15 },
   { id: 'perception_threat', l: loadout(['katana', 'rifle'], 'light_top', 'tactical_bottom', ['module_spatial', 'module_neural'], ['implant2']), expect: [3, 2, 0, 1, 1, 1], floor: 20 },

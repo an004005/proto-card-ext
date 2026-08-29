@@ -1,6 +1,15 @@
 {
   "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "docs:reference": "node scripts/generate-reference-workbook.mjs",
+    "docs:check": "node scripts/generate-reference-workbook.mjs --check"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
   "devDependencies": {
+    "exceljs": "^4.4.0",
     "typescript": "^7.0.2"
   }
 }

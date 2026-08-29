@@ -29,7 +29,7 @@ export function createCardInstance(defId, itemId, equipmentInstanceId) {
 }
 
 /**
- * entries: [{defId}] for ordinary cards, [{defId, itemId}] for loot-linked curse cards
+ * entries: [{defId}] for ordinary cards, [{defId, itemId}] for loot-linked status cards
  * (junk_item/currency_item) whose playability depends on that specific inventory item's
  * burden status — see inventoryEngine.isItemBurdenGivenOrder — or [{defId, equipmentInstanceId}]
  * for cards from an equipped weapon/top/bottom/module's cardList, so combatEngine can attribute
@@ -138,14 +138,28 @@ export function moveInnateCardsToFront(piles, isInnate) {
 }
 
 /**
- * Used for monster-inserted curses (점액/공물) — always lands in the discard pile so it's
- * drawn naturally on a future turn, same as STS-style curse insertion.
+ * Used for monster-inserted status cards (점액/공물) — always lands in the discard pile so it's
+ * drawn naturally on a future turn, same as STS-style status card insertion.
  * @param {Piles} piles
  * @param {string} defId
  * @returns {Piles}
  */
 export function insertCardToDiscard(piles, defId) {
   return { ...piles, discardPile: [...piles.discardPile, createCardInstance(defId)] };
+}
+
+/**
+ * Used for overload-excess status cards (§과부화 3단계 개편): inserted at a random position in the
+ * draw pile so it can come up before the next reshuffle, unlike the discard-pile status cards above.
+ * @param {Piles} piles
+ * @param {string} defId
+ * @param {RngState} rngState
+ * @returns {{piles: Piles, rngState: RngState}}
+ */
+export function insertCardToDrawRandom(piles, defId, rngState) {
+  const { value: index, state } = nextInt(rngState, piles.drawPile.length + 1);
+  const drawPile = [...piles.drawPile.slice(0, index), createCardInstance(defId), ...piles.drawPile.slice(index)];
+  return { piles: { ...piles, drawPile }, rngState: state };
 }
 
 /**

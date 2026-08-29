@@ -1,10 +1,10 @@
-// Card definitions for the Card Extraction ruleset (기획서 §8 카드 일람, §9 모듈).
-// Numbers are the "0단계 기준" values from the doc; scaling is applied at resolution time
+// Card definitions for the Card Extraction ruleset (docs/card-extraction-reference.xlsx 카드 일람).
+// Numbers are the 0단계 기준 values; scaling is applied at resolution time
 // by overloadEngine.applyStageScale(), never baked into these numbers.
 //
 // Shape (plain cards): { id, name, type, attackKind, cost, ammoCost, exhausts,
 //   scalesWithStage, overloadGain, effects: [...], description }
-// Shape (module cards with a per-stage table, §9): { id, name, type, attackKind, exhausts,
+// Shape (module cards with a per-stage table): { id, name, type, attackKind, exhausts,
 //   overloadGain, powerKind: 'variable'|'fixed'|null, stageTable: [ {cost, effects}×4 ],
 //   requiresWeapon?, description }
 //
@@ -211,8 +211,8 @@ export const CARD_DEFINITIONS = {
     description: '방어 9.',
     mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
-  heavy_top_curse: {
-    id: 'heavy_top_curse', name: '무게 저주', type: 'curse', attackKind: null,
+  heavy_top_status_card: {
+    id: 'heavy_top_status_card', name: '과적', type: 'status_card', attackKind: null,
     cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '1코 소멸 (효과 없음). 이 전투에서만 제외 — 다음 전투에 복귀.',
@@ -276,8 +276,8 @@ export const CARD_DEFINITIONS = {
     description: '방어 5, 피해 5.',
     mapTags: { noise: 1, traits: ['melee', 'escape'], disengageProgress: 1 },
   },
-  heavy_bottom_curse: {
-    id: 'heavy_bottom_curse', name: '무게 저주', type: 'curse', attackKind: null,
+  heavy_bottom_status_card: {
+    id: 'heavy_bottom_status_card', name: '과적', type: 'status_card', attackKind: null,
     cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '1코 소멸 (효과 없음). 이 전투에서만 제외 — 다음 전투에 복귀.',
@@ -363,98 +363,98 @@ export const CARD_DEFINITIONS = {
 
   // ---- 모듈 5: 전자기 간섭 ----
   // ---- 과적(짐) 상태이상 카드 (잡템/환금템/미장착 장비·소모품/탄약이 과적 상태로 넘어가면
-  // 덱에 삽입, §6). 몬스터가 넣는 저주(curse)와 구분되는 별도 type: 'status' — 페널티가
+  // 덱에 삽입, §6). 상태이상 카드(status_card)와 구분되는 별도 type: 'burden' — 페널티가
   // 아니라 "짊어진 짐" 그 자체를 나타낸다. 평소엔 unplayable(과적 아님). 소지 아이템이
   // 과적(짐)으로 넘어가면 combatEngine이 카드 인스턴스의 itemId를 통해 동적으로 playable
   // 처리 — 이 defId 자체는 항상 unplayable.
   junk_item: {
-    id: 'junk_item', name: '잡템', type: 'status', attackKind: null,
+    id: 'junk_item', name: '잡템', type: 'burden', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
   currency_item: {
-    id: 'currency_item', name: '환금템', type: 'status', attackKind: null,
+    id: 'currency_item', name: '환금템', type: 'burden', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
   equipment_item: {
-    id: 'equipment_item', name: '미장착 장비', type: 'status', attackKind: null,
+    id: 'equipment_item', name: '미장착 장비', type: 'burden', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
   ammo_item: {
-    id: 'ammo_item', name: '탄약 더미', type: 'status', attackKind: null,
+    id: 'ammo_item', name: '탄약 더미', type: 'burden', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
   consumable_item: {
-    id: 'consumable_item', name: '미장착 소모품', type: 'status', attackKind: null,
+    id: 'consumable_item', name: '미장착 소모품', type: 'burden', attackKind: null,
     unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
 
-  // ---- 몬스터 삽입 저주 (전투 한정) ----
-  sticky_curse: {
-    id: 'sticky_curse', name: '점액투성이', type: 'curse', attackKind: null,
+  // ---- 몬스터 삽입 상태이상 카드 (전투 한정) ----
+  sticky_status_card: {
+    id: 'sticky_status_card', name: '점액투성이', type: 'status_card', attackKind: null,
     unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '아무 효과 없음. 1코로 사용해 소멸.',
     mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
   // 장비 내구도가 4 미만이면 (4-내구도)장만큼 전투 시작 시 이 카드가 덱에 삽입됨(§신규 내구도).
-  // 어느 장비 손상인지는 구분하지 않는 범용 카드 — sticky_curse와 동일 패턴, 소지 아이템과
+  // 어느 장비 손상인지는 구분하지 않는 범용 카드 — sticky_status_card와 동일 패턴, 소지 아이템과
   // 연결되지 않으므로 equipmentInstanceId가 없어 스스로는 내구도 감소 판정 대상이 아님.
-  equipment_damaged_curse: {
-    id: 'equipment_damaged_curse', name: '손상된 장비', type: 'curse', attackKind: null,
+  equipment_damaged_status_card: {
+    id: 'equipment_damaged_status_card', name: '손상된 장비', type: 'status_card', attackKind: null,
     unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '아무 효과 없음. 1코로 사용해 소멸. 장비 내구도 저하로 이번 전투에만 발생.',
     mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
-  // 과부화가 100을 넘으면 초과분(10당 1장, 올림)만큼 삽입됨(§과부화 3단계 개편) — equipment_damaged_curse와
+  // 과부화가 100을 넘으면 초과분(10당 1장, 올림)만큼 삽입됨(§과부화 3단계 개편) — equipment_damaged_status_card와
   // 동일 패턴의 범용 카드, 이번 전투에만 존재하고 다음 전투로 넘어가지 않는다.
-  overload_curse: {
-    id: 'overload_curse', name: '과부화 잔여', type: 'curse', attackKind: null,
+  overload_status_card: {
+    id: 'overload_status_card', name: '과부화 잔여', type: 'status_card', attackKind: null,
     unplayable: false, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '아무 효과 없음. 1코로 사용해 소멸. 과부화가 100을 넘어 이번 전투에만 발생.',
     mapTags: { noise: 0, traits: [], disengageProgress: 0 },
   },
-  infected_curse: {
-    id: 'infected_curse', name: '감염', type: 'curse', attackKind: null,
+  infected_status_card: {
+    id: 'infected_status_card', name: '감염', type: 'status_card', attackKind: null,
     unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
     damagePerTurnHeld: 3,
     effects: [],
     description: '사용 불가. 턴 종료 시 손패에 있으면 장당 3의 피해(방어도로 막을 수 있음).',
   },
-  wound_curse: {
-    id: 'wound_curse', name: '부상', type: 'curse', attackKind: null,
+  wound_status_card: {
+    id: 'wound_status_card', name: '부상', type: 'status_card', attackKind: null,
     unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '사용 불가. 그 외엔 아무 효과 없음.',
   },
-  dizziness_curse: {
-    id: 'dizziness_curse', name: '어지러움', type: 'curse', attackKind: null,
+  dizziness_status_card: {
+    id: 'dizziness_status_card', name: '어지러움', type: 'status_card', attackKind: null,
     unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
     volatile: true,
     effects: [],
     description: '사용 불가. 턴 종료 시 손패에 있으면 소멸(휘발성).',
   },
 
-  // ---- 몬스터 삽입 저주 (전투 한정, 다음 전투에 복귀하지 않음) ----
-  mucus_curse: {
-    id: 'mucus_curse', name: '점액', type: 'curse', attackKind: null,
+  // ---- 몬스터 삽입 상태이상 카드 (전투 한정, 다음 전투에 복귀하지 않음) ----
+  mucus_status_card: {
+    id: 'mucus_status_card', name: '점액', type: 'status_card', attackKind: null,
     unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '사용 불가. 전투 종료 시 소멸 (다음 전투에 복귀하지 않음).',
   },
-  offering_curse: {
-    id: 'offering_curse', name: '공물', type: 'curse', attackKind: null,
+  offering_status_card: {
+    id: 'offering_status_card', name: '공물', type: 'status_card', attackKind: null,
     unplayable: true, exhausts: false, scalesWithStage: false, overloadGain: 0,
     effects: [],
     description: '사용 불가. 전투 종료 시 소멸 (다음 전투에 복귀하지 않음).',

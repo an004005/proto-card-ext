@@ -1,4 +1,4 @@
-// Implants (기획서 §10). Passive — no cards. Equipping one permanently occupies `floorOverload`
+// Implants (docs/game-rules.md). Passive — no cards. Equipping one permanently occupies `floorOverload`
 // of the run's overload floor (never reducible below it).
 
 /**

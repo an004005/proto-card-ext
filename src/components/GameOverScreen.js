@@ -1,6 +1,6 @@
 import { html } from '../lib.js';
 import { snapshotSignal } from '../state/runState.js';
-import { RUN_COLLAPSE_TIME } from '../data/facilityLayout.js';
+import { RUN_COLLAPSE_TIME, TOTAL_NODES } from '../data/facilityLayout.js';
 import { computeInventoryScore, startNewRun } from './runEndHelpers.js';
 
 function causeOfDeath(facilityRunState) {
@@ -22,7 +22,7 @@ export function GameOverScreen() {
       <div style=${{ display: 'flex', gap: 'var(--space-8)', margin: 'var(--space-4) 0', fontSize: '14px' }}>
         <span>사인 <strong>${causeOfDeath(run)}</strong></span>
         <span>경과 시간 <strong>${run ? run.time : 0}</strong>/${RUN_COLLAPSE_TIME}</span>
-        <span>탐사 노드 <strong>${visitedCount}</strong>/48</span>
+        <span>탐사 노드 <strong>${visitedCount}</strong>/${TOTAL_NODES}</span>
       </div>
       <p style=${{ fontSize: '12px', opacity: 0.6 }}>미회수 점수: ${score}크레드</p>
       <button class="btn btn-primary" style=${{ padding: '12px 40px' }} onClick=${startNewRun}>새 런 시작</button>

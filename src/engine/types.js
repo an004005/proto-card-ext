@@ -55,7 +55,7 @@
  * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
  */
 
-// ---- facility graph (48-node extraction map, docs/extraction-map-implementation-spec.md §3-4) ----
+// ---- facility graph (160-node extraction map, docs/extraction-map-implementation-spec.md) ----
 // These types describe the generated graph shape only (facilityGraph.js). The broader RunState
 // from the spec (time, threats' live mode/alert, exits' request lifecycle, etc.) is added in a
 // later phase once the time/threat engine lands.
@@ -229,7 +229,7 @@
  * @property {string|null} playerNodeId
  * @property {string[]} visitedNodeIds 탐사 안개(§10.2)용 — 시작 노드부터 포함.
  * @property {string[]} openedEdgeIds Capability로 연 'blocked'/'electronic' 특수 엣지.
- * @property {number} overload 0..100+ (100 초과는 전투 저주 카드로 처리한다).
+ * @property {number} overload 0..100+ (100 초과는 전투 상태이상 카드로 처리한다).
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
  * @property {Record<string, {observedAt: number, hasThreat: boolean, exitStatus?: string}>} observations 기본 정찰(§6.2) 및
@@ -283,7 +283,7 @@
  * @typedef {Object} CardDef
  * @property {string} id
  * @property {string} name
- * @property {'attack'|'skill'|'power'|'curse'|'status'} type 'status' = 과적(짐) 카드 전용(§6), 몬스터 저주(curse)와 구분
+ * @property {'attack'|'skill'|'power'|'status_card'|'burden'} type 'status_card' = 상태이상 카드, 'burden' = 과적(짐) 카드 전용(§6)
  * @property {?('melee'|'ranged')} attackKind
  * @property {number} [cost] absent when `stageTable` is used instead
  * @property {number} [ammoCost]
@@ -296,13 +296,13 @@
  * @property {'variable'|'fixed'} [powerKind]
  * @property {boolean} [unplayable]
  * @property {string} [requiresWeapon]
- * @property {number} [damagePerTurnHeld] 감염류 저주: 턴 종료 시 손패에 있으면 장당 이만큼 피해
- * @property {boolean} [volatile] 어지러움류 저주: 턴 종료 시 손패에 있으면 소진(버림 더미 대신)
+ * @property {number} [damagePerTurnHeld] 감염 상태이상 카드: 턴 종료 시 손패에 있으면 장당 이만큼 피해
+ * @property {boolean} [volatile] 어지러움 상태이상 카드: 턴 종료 시 손패에 있으면 소진(버림 더미 대신)
  * @property {boolean} [retain] 보존(사일런트): 턴 종료 시 버려지지 않고 손패에 유지됨
  * @property {boolean} [innate] 선천성: 전투 시작 시 뽑기 더미 맨 앞에 배치되어 첫 턴에 반드시 잡힘
  * @property {boolean} [sly] 교활(사일런트): 턴 종료 전에 손패에서 버려지면(플레이된 것이 아니라) 무료로 자동 발동 후 버림 더미로 이동
  * @property {string} description
- * @property {MapTags} [mapTags] 맵 소음/이탈 태그 (구현 명세 §9.1, docs/card-map-tag-mapping.md). 실행 불가 카드(잡템/저주 등) 제외, 실행 가능한 카드는 전부 명시 — 데이터 검증 테스트가 강제한다.
+ * @property {MapTags} [mapTags] 맵 소음/이탈 태그 (구현 명세 §9.1, docs/card-map-tag-mapping.md). 실행 불가 카드(잡템/상태이상 카드 등) 제외, 실행 가능한 카드는 전부 명시 — 데이터 검증 테스트가 강제한다.
  */
 
 /**
@@ -318,9 +318,9 @@
  * @typedef {Object} CardInstance
  * @property {string} instanceId
  * @property {string} defId
- * @property {string} [itemId] 잡템/환금템/장비/탄약 저주 카드만 — 연결된 인벤토리 아이템 id
+ * @property {string} [itemId] 잡템/환금템/장비/탄약 상태이상 카드만 — 연결된 인벤토리 아이템 id
  * @property {string} [equipmentInstanceId] 장비(무기/상의/하의/모듈) cardList에서 온 카드만 — 그
- *   카드를 낸 장비 인스턴스(Item.id). 필러/과적/장비손상 저주 카드는 없음.
+ *   카드를 낸 장비 인스턴스(Item.id). 필러/과적/장비손상 상태이상 카드는 없음.
  */
 
 /**
@@ -365,8 +365,8 @@
  * @property {number} damage
  * @property {number} [hits]
  * @property {CardEffect[]} [effects]
- * @property {string} [insertCurse]
- * @property {number} [insertCurseCount] default 1
+ * @property {string} [insertStatusCard]
+ * @property {number} [insertStatusCardCount] default 1
  * @property {boolean} [stealCurrency]
  * @property {boolean} [selfDestruct]
  * @property {boolean} [flee]
@@ -417,10 +417,9 @@
  * @typedef {Object} CombatState
  * @property {'setup'|'player_turn'|'enemy_turn'|'victory'|'defeat'} phase
  * @property {number} turn
- * @property {number} overload
+ * @property {number} overload 전투 중에는 100을 넘는 값으로 저장되지 않는다 — 100 초과분은 상태이상 카드 삽입으로 즉시 clamp됨(§과부화 3단계 개편).
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
- * @property {number} overloadCurseCount 과부화 100 초과분으로 이번 전투에 삽입된 저주 카드 수(§과부화 3단계 개편).
  * @property {PlayerCombatState} player
  * @property {EnemyState[]} enemies
  * @property {Piles} piles
@@ -442,7 +441,7 @@
  * @property {Statuses} [startingStatuses] e.g. { artifact: 1 } — merged into the enemy's statuses on spawn
  * @property {boolean} [doubleActionIfPlayerHasBurden]
  * @property {number} [phaseTransitionHpFraction] 0-1, of maxHp
- * @property {string} [phaseTransitionInsertCurse]
+ * @property {string} [phaseTransitionInsertStatusCard]
  * @property {number} [phaseTransitionInsertCount]
  * @property {(Move|{random: RandomMoveBranch})[]} [phase2Sequence]
  */

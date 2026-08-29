@@ -35,7 +35,7 @@ test('베기 deals 6 base damage at stage 0 and costs 1 energy', () => {
   assert.equal(state.enemies[0].hp, before - 6);
 });
 
-test('stage 1 scales 베기 damage to 8 (6 * 1.25, rounded) via §4.2', () => {
+test('stage 1 scales 베기 damage to 8 (6 * 1.25, rounded up) via §4.2', () => {
   let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], overload: 30 });
   const before = state.enemies[0].hp;
   const card = findCard(state, 'katana_slash');
@@ -43,15 +43,14 @@ test('stage 1 scales 베기 damage to 8 (6 * 1.25, rounded) via §4.2', () => {
   assert.equal(state.enemies[0].hp, before - 8);
 });
 
-test('vulnerable multiplies damage taken by 1.5, floored', () => {
-  let state = makeCombat({ deck: [...Array(5).fill('katana_slash'), 'dagger_stab'], monsterIds: ['nibbit'] });
+test('vulnerable multiplies damage taken by 1.5 and rounds damage up', () => {
+  let state = makeCombat({ deck: Array(10).fill('rifle_buttstock'), monsterIds: ['nibbit'] });
   const enemyId = state.enemies[0].id;
-  // dagger_stab has no vulnerable effect on the target — apply vulnerable manually via a helper attack.
   state = { ...state, enemies: state.enemies.map((e) => ({ ...e, statuses: { vulnerable: 1 } })) };
   const before = state.enemies[0].hp;
-  const card = findCard(state, 'katana_slash');
+  const card = findCard(state, 'rifle_buttstock');
   state = playCard(state, card.instanceId, enemyId);
-  assert.equal(state.enemies[0].hp, before - 9); // floor(6*1.5)=9
+  assert.equal(state.enemies[0].hp, before - 8); // ceil(5*1.5)=8
 });
 
 test('ammo-gated cards are unplayable without enough ammo, but stay in hand', () => {
@@ -163,35 +162,41 @@ test('신경 강화 adds a live block bonus that tracks the CURRENT stage, not t
   assert.equal(state.player.block - before, 9);
 });
 
-test('overload exceeding 100 inserts curse cards instead of causing defeat (§과부화 3단계 개편)', () => {
+function statusCardCount(state) {
+  return state.piles.drawPile.filter((c) => c.defId === 'overload_status_card').length
+    + state.piles.hand.filter((c) => c.defId === 'overload_status_card').length
+    + state.piles.discardPile.filter((c) => c.defId === 'overload_status_card').length
+    + state.piles.exhaustPile.filter((c) => c.defId === 'overload_status_card').length;
+}
+
+test('overload exceeding 100 clamps to 100 and inserts status cards into the draw pile instead of causing defeat (§과부화 3단계 개편)', () => {
   let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 95, ammo: 99, playerHp: 70 });
-  const card = findCard(state, 'rifle_suppress'); // overloadGain 10 -> 105, 5 excess -> ceil(5/10) = 1 curse
+  const card = findCard(state, 'rifle_suppress'); // overloadGain 10 -> raw 105, 5 excess -> ceil(5/10) = 1 status card, clamped to 100
   state = playCard(state, card.instanceId, null);
-  assert.equal(state.overload, 105);
+  assert.equal(state.overload, 100);
   assert.notEqual(state.phase, 'defeat');
   assert.equal(state.player.hp, 70); // no HP loss from overload alone
-  assert.equal(state.overloadCurseCount, 1);
-  assert.equal(state.piles.discardPile.filter((c) => c.defId === 'overload_curse').length, 1);
+  assert.equal(statusCardCount(state), 1);
 });
 
-test('overload curse count only grows within a combat — playing more cards adds more curses as the excess grows further', () => {
+test('overload clamped to 100 each time it is exceeded — playing more cards keeps adding status cards as the raw excess recurs', () => {
   let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 95, ammo: 99, playerHp: 70 });
   const first = findCard(state, 'rifle_suppress');
-  state = playCard(state, first.instanceId, null); // 95 -> 105, 1 curse
-  assert.equal(state.overloadCurseCount, 1);
+  state = playCard(state, first.instanceId, null); // 95 -> raw 105, clamped to 100, 1 status card
+  assert.equal(state.overload, 100);
+  assert.equal(statusCardCount(state), 1);
   state = { ...state, player: { ...state.player, energy: 99 } }; // stage-2's +1 cost would otherwise starve the second play
   const second = findCard(state, 'rifle_suppress');
-  state = playCard(state, second.instanceId, null); // 105 -> 115, excess 15 -> ceil(15/10) = 2 curses
-  assert.equal(state.overload, 115);
-  assert.equal(state.overloadCurseCount, 2);
-  assert.equal(state.piles.discardPile.filter((c) => c.defId === 'overload_curse').length, 2);
+  state = playCard(state, second.instanceId, null); // 100 -> raw 110, clamped to 100, +1 status card (excess 10 -> ceil(10/10) = 1)
+  assert.equal(state.overload, 100);
+  assert.equal(statusCardCount(state), 2);
 });
 
-test('starting a combat with overload already over 100 pre-inserts the matching curse count', () => {
+test('starting a combat with overload already over 100 clamps to 100 and pre-inserts the matching status-card count into the draw pile', () => {
   const state = makeCombat({ deck: Array(5).fill('katana_slash'), monsterIds: ['nibbit'], overload: 123 });
-  assert.equal(state.overloadCurseCount, 3); // ceil(23/10)
+  assert.equal(state.overload, 100); // ceil(23/10) = 3 status cards, then clamped
+  assert.equal(statusCardCount(state), 3);
   const total = state.piles.drawPile.length + state.piles.discardPile.length + state.piles.hand.length;
-  assert.equal(state.piles.discardPile.filter((c) => c.defId === 'overload_curse').length, 3);
   assert.ok(total >= 5 + 3);
 });
 
@@ -203,16 +208,16 @@ test('stage 2 (70%+ overload) adds +1 to every card cost on top of the existing 
   assert.equal(before - after.player.energy, 2); // base cost 1 + stage-2 penalty 1
 });
 
-test('무게 저주 has no effect and exhausts, but never blocks the turn from continuing', () => {
-  let state = makeCombat({ deck: ['heavy_top_curse', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'] });
-  const curse = findCard(state, 'heavy_top_curse');
+test('과적 상태이상 카드는 효과 없이 소멸하며 턴 진행을 막지 않는다', () => {
+  let state = makeCombat({ deck: ['heavy_top_status_card', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'] });
+  const statusCard = findCard(state, 'heavy_top_status_card');
   const hpBefore = state.enemies[0].hp;
-  state = playCard(state, curse.instanceId, null);
+  state = playCard(state, statusCard.instanceId, null);
   assert.equal(state.enemies[0].hp, hpBefore); // no effect
   assert.equal(state.piles.exhaustPile.length, 1);
 });
 
-test('loot curse cards (잡템/환금템) are unplayable unless their item is currently burden', () => {
+test('loot status cards (잡템/환금템) are unplayable unless their item is currently burden', () => {
   let state = makeCombat({ deck: Array(4).fill('katana_slash'), monsterIds: ['nibbit'] });
   state = {
     ...state,
@@ -287,10 +292,10 @@ test('뒤얽힘(entangled) adds its stack to attack card cost', () => {
   assert.equal(after.player.energy, 0);
 });
 
-test('감염(infected_curse) left in hand at turn end deals blockable damage per copy and moves to discard', () => {
+test('감염(infected_status_card) left in hand at turn end deals blockable damage per copy and moves to discard', () => {
   let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], playerHp: 70 });
-  const curseCard = { instanceId: 'test-infected', defId: 'infected_curse' };
-  state = { ...state, piles: { ...state.piles, hand: [...state.piles.hand, curseCard] } };
+  const statusCard = { instanceId: 'test-infected', defId: 'infected_status_card' };
+  state = { ...state, piles: { ...state.piles, hand: [...state.piles.hand, statusCard] } };
   state = endPlayerTurn(state);
   assert.equal(state.player.hp, 70 - 3);
   assert.ok(state.piles.discardPile.some((c) => c.instanceId === 'test-infected'));
@@ -299,17 +304,17 @@ test('감염(infected_curse) left in hand at turn end deals blockable damage per
 
 test('감염 damage is absorbed by block like any other damage', () => {
   let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], playerHp: 70 });
-  const curseCard = { instanceId: 'test-infected-2', defId: 'infected_curse' };
-  state = { ...state, player: { ...state.player, block: 10 }, piles: { ...state.piles, hand: [...state.piles.hand, curseCard] } };
+  const statusCard = { instanceId: 'test-infected-2', defId: 'infected_status_card' };
+  state = { ...state, player: { ...state.player, block: 10 }, piles: { ...state.piles, hand: [...state.piles.hand, statusCard] } };
   state = endPlayerTurn(state);
   assert.equal(state.player.hp, 70); // fully absorbed
   assert.equal(state.player.block, 7);
 });
 
-test('어지러움(dizziness_curse, volatile) left in hand at turn end vanishes into the exhaust pile, not discard', () => {
+test('어지러움(dizziness_status_card, volatile) left in hand at turn end vanishes into the exhaust pile, not discard', () => {
   let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'] });
-  const curseCard = { instanceId: 'test-dizzy', defId: 'dizziness_curse' };
-  state = { ...state, piles: { ...state.piles, hand: [...state.piles.hand, curseCard] } };
+  const statusCard = { instanceId: 'test-dizzy', defId: 'dizziness_status_card' };
+  state = { ...state, piles: { ...state.piles, hand: [...state.piles.hand, statusCard] } };
   state = endPlayerTurn(state);
   assert.ok(state.piles.exhaustPile.some((c) => c.instanceId === 'test-dizzy'));
   assert.ok(!state.piles.discardPile.some((c) => c.instanceId === 'test-dizzy'));

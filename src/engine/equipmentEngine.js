@@ -1,4 +1,4 @@
-// Loadout -> deck / stat derivation (기획서 §5, §10, §16 "덱빌딩 = 로드아웃 구성").
+// Loadout -> deck / stat derivation (docs/game-rules.md).
 import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } from '../data/equipment.js';
 import { MODULE_DEFINITIONS } from '../data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../data/implants.js';
@@ -11,10 +11,10 @@ export const MAX_WEAPON_SLOTS = 2;
 export const EMPTY_SLOT_FILLER_COUNT = 3;
 
 // 장비 내구도(§신규): 최대 10, 드랍 시 3~9 랜덤(rewardEngine.rollLootDurability), 시작 장비는
-// 항상 10. (4-내구도) >= 1 이면 그만큼 손상 저주 카드가 그 전투에만 삽입된다.
+// 항상 10. (4-내구도) >= 1 이면 그만큼 손상 상태이상 카드가 그 전투에만 삽입된다.
 export const MAX_DURABILITY = 10;
-const DAMAGED_CURSE_THRESHOLD = 4;
-const DAMAGED_CURSE_DEF_ID = 'equipment_damaged_curse';
+const DAMAGED_STATUS_CARD_THRESHOLD = 4;
+const DAMAGED_STATUS_CARD_DEF_ID = 'equipment_damaged_status_card';
 
 /**
  * @param {{defId: string, count: number}[]} cardList
@@ -50,7 +50,7 @@ export function buildDeckFromLoadout(loadout) {
     if (!def) continue;
     for (const cardEntry of def.cardList) {
       const cardDef = CARD_DEFINITIONS[cardEntry.defId];
-      // 돌진 베기: 카타나 장착 시에만 덱에 추가 (기획서 §9 모듈2).
+      // 돌진 베기: 카타나 장착 시에만 덱에 추가.
       if (cardDef.requiresWeapon && !weapons.some((w) => w.equipmentId === cardDef.requiresWeapon)) continue;
       for (let i = 0; i < cardEntry.count; i++) entries.push({ defId: cardEntry.defId, equipmentInstanceId: item.id });
     }
@@ -67,19 +67,19 @@ export function buildDeckFromLoadout(loadout) {
 
 /**
  * 장착된 무기/상의/하의/모듈 중 내구도 4 미만인 것마다 (4-내구도)장의 범용 "손상된 장비"
- * 저주 카드를 만든다 — 전투 시작 시 덱에만 삽입되고 인벤토리엔 남지 않는다(§신규 내구도).
+ * 상태이상 카드를 만든다 — 전투 시작 시 덱에만 삽입되고 인벤토리엔 남지 않는다(§신규 내구도).
  * 임플란트는 cardList가 없어 대상에서 제외.
  * @param {Loadout} loadout
  * @returns {{defId: string}[]}
  */
-export function computeDamagedCurseEntries(loadout) {
+export function computeDamagedStatusCardEntries(loadout) {
   const instances = [
     ...(loadout.weapons || []), loadout.top, loadout.bottom, ...(loadout.modules || []),
   ].filter(Boolean);
   const entries = [];
   for (const item of instances) {
-    const count = Math.max(0, DAMAGED_CURSE_THRESHOLD - item.durability);
-    for (let i = 0; i < count; i++) entries.push({ defId: DAMAGED_CURSE_DEF_ID });
+    const count = Math.max(0, DAMAGED_STATUS_CARD_THRESHOLD - item.durability);
+    for (let i = 0; i < count; i++) entries.push({ defId: DAMAGED_STATUS_CARD_DEF_ID });
   }
   return entries;
 }

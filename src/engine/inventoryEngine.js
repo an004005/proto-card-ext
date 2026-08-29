@@ -1,6 +1,6 @@
-// Inventory / 과적(overcapacity) / 짐(burden) (기획서 §6). 30 (+임플란트③) slots, no
+// Inventory / 과적(overcapacity) / 짐(burden) (docs/game-rules.md). 기본 10 (+임플란트③) slots, no
 // weight, no stacking — 1 item = 1 card. Items beyond capacity, in acquisition order, are
-// "burden": still occupies a deck slot as a curse card, but that card becomes playable
+// "burden": still occupies a deck slot as a status card, but that card becomes playable
 // (cost 1) to permanently discard the item.
 
 /** @typedef {import('./types.js').Inventory} Inventory */
@@ -117,7 +117,7 @@ export function addAmmo(inventory, amount) {
 
 /**
  * Only core (non-burden) ammo stacks count toward usable ammo — overflowed stacks sit as
- * unplayable curse cards (ammo_item) until discarded, same rule as junk/currency.
+ * unplayable status cards (ammo_item) until discarded, same rule as junk/currency.
  * @param {Inventory} inventory
  * @returns {number}
  */

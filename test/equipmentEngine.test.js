@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildDeckFromLoadout, computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus,
-  computeOverloadGainMultiplier, getImplantEffect, computeMaxLoadBonus, computeDamagedCurseEntries,
+  computeOverloadGainMultiplier, getImplantEffect, computeMaxLoadBonus, computeDamagedStatusCardEntries,
   applyDurabilityDecay, MAX_DURABILITY,
 } from '../src/engine/equipmentEngine.js';
 
@@ -75,11 +75,11 @@ test('computeMaxLoadBonus sums maxLoadBonus across equipped weapons (§신규 �
   assert.equal(computeMaxLoadBonus(loadout({ weapons: [equipItem('katana', 'w1')] })), 0);
 });
 
-test('computeDamagedCurseEntries inserts (4-durability) curses per equipped weapon/top/bottom/module, never for implants', () => {
-  assert.deepEqual(computeDamagedCurseEntries(loadout({ weapons: [equipItem('katana', 'w1', MAX_DURABILITY)] })), []);
-  assert.equal(computeDamagedCurseEntries(loadout({ weapons: [equipItem('katana', 'w1', 1)] })).length, 3);
-  assert.equal(computeDamagedCurseEntries(loadout({ weapons: [equipItem('katana', 'w1', 0)] })).length, 4);
-  assert.ok(computeDamagedCurseEntries(loadout({ weapons: [equipItem('katana', 'w1', 0)] })).every((e) => e.defId === 'equipment_damaged_curse'));
+test('computeDamagedStatusCardEntries inserts (4-durability) status cards per equipped weapon/top/bottom/module, never for implants', () => {
+  assert.deepEqual(computeDamagedStatusCardEntries(loadout({ weapons: [equipItem('katana', 'w1', MAX_DURABILITY)] })), []);
+  assert.equal(computeDamagedStatusCardEntries(loadout({ weapons: [equipItem('katana', 'w1', 1)] })).length, 3);
+  assert.equal(computeDamagedStatusCardEntries(loadout({ weapons: [equipItem('katana', 'w1', 0)] })).length, 4);
+  assert.ok(computeDamagedStatusCardEntries(loadout({ weapons: [equipItem('katana', 'w1', 0)] })).every((e) => e.defId === 'equipment_damaged_status_card'));
 });
 
 test('applyDurabilityDecay decrements per instance and destroys at 0, leaving other slots untouched', () => {

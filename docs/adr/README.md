@@ -8,7 +8,7 @@
 - `status: amended by ...`: 결정의 방향은 유지하지만 표시된 후속 문서가 범위나 수치를 수정했다. 구현에는 후속 문서를 사용한다.
 - `status: superseded by ...`: 현재 구현에는 적용하지 않고 결정 이력으로만 남긴다.
 
-현재 구현 계약의 권위는 [구현 명세](../extraction-map-implementation-spec.md)에 있다. 장비·카드 ID별 값은 [장비 매핑](../map-equipment-capability-mapping.md)과 [카드 매핑](../card-map-tag-mapping.md), 용어 의미는 [용어집](../../CONTEXT.md)이 보조한다. active ADR도 이 문서들과 충돌하면 직접 구현 근거로 사용하지 않는다.
+현재 구현의 권위는 `src/` 코드와 `test/`에 있다. [맵 구현 명세](../extraction-map-implementation-spec.md), [장비 계약](../map-equipment-capability-mapping.md), [맵 태그 계약](../card-map-tag-mapping.md), 자동 생성 엑셀은 현재 코드를 설명하는 참조 자료다. active ADR도 현재 코드와 충돌하면 구현 근거로 사용하지 않는다.
 
 ## 비활성·수정 ADR
 

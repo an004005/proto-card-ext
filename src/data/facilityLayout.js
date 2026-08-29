@@ -53,8 +53,8 @@ export const EDGE_TIME_MAX = 260;
 // 2차 패스는 여전히 분리된 컴포넌트가 있으면 차수 4 한도 안에서 가장 가까운 쌍부터 이어 붙여
 // 반드시 하나로 연결한다(사실상 Kruskal). 3차 패스는 남은 브릿지(끊기면 그래프가 갈라지는
 // 엣지)를 Tarjan 알고리즘으로 찾아 같은 차수 4 한도 안에서 양쪽을 잇는 보강 엣지를 추가해
-// 실질적인 2-edge-connectivity를 만든다 — 순수 원형 위상(이전 48노드 설계)이 주던 "구조적으로
-// 증명된" 보장은 아니지만, 탈출구 배치가 요구하는 2-edge-disjoint 경로를 사실상 항상
+// 실질적인 2-edge-connectivity를 만든다. 구조적으로 증명된 보장은 아니지만,
+// 탈출구 배치가 요구하는 2-edge-disjoint 경로를 사실상 항상
 // 만족시키기에 충분하다(node --test로 실측 확인).
 export const BASE_EDGE_DEGREE_SOFT_CAP = 2;
 export const BASE_EDGE_DEGREE_HARD_CAP = 4;
@@ -149,7 +149,7 @@ export const GENERATOR_COMBAT_START_ARMOR = 5;
 export const MOBILITY_MOVE_TIME_MULTIPLIER = [1.4, 1.2, 1, 0.9, 0.8, 0.7, 0.6];
 
 // 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 3 / 실험 5 / 격납고 5 / 보안 6 /
-// 동력 7 / 폐기물 6 / 통신 4 / 거주 4 (총 40, 48노드 시절 밀도 0.25/노드를 160노드로 유지).
+// 동력 7 / 폐기물 6 / 통신 4 / 거주 4 (총 40).
 export const THREAT_COUNT_BY_SECTOR = {
   entrance: 3, labs: 5, hangar: 5, security: 6, power: 7, waste: 6, comms: 4, residential: 4,
 };

@@ -10,7 +10,7 @@ test('getStage buckets match the 3-stage overload redesign: 0-29 normal, 30-69 b
   assert.equal(getStage(70), 2);
   assert.equal(getStage(99), 2);
   assert.equal(getStage(100), 2);
-  assert.equal(getStage(130), 2); // exceeding 100 stays at stage 2 — combatEngine.js handles the excess via curse cards, not a higher stage
+  assert.equal(getStage(130), 2); // exceeding 100 stays at stage 2 — combatEngine.js handles the excess via status cards, not a higher stage
 });
 
 test('isLethalOverload is true at and only at >= 100', () => {
