@@ -1,15 +1,39 @@
 {
+  "name": "card-extraction",
+  "version": "0.1.0",
+  "description": "카드 전투와 절차적 시설 침투를 결합한 익스트랙션 로그라이트 프로토타입",
   "type": "module",
+  "main": "electron/main.js",
   "scripts": {
     "test": "node --test",
     "docs:reference": "node scripts/generate-reference-workbook.mjs",
-    "docs:check": "node scripts/generate-reference-workbook.mjs --check"
+    "docs:check": "node scripts/generate-reference-workbook.mjs --check",
+    "electron": "electron .",
+    "dist": "electron-builder"
   },
   "overrides": {
     "uuid": "^11.1.1"
   },
   "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
     "exceljs": "^4.4.0",
     "typescript": "^7.0.2"
+  },
+  "build": {
+    "appId": "com.an004005.card-extraction",
+    "productName": "Card Extraction",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "src/**/*",
+      "vendor/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    }
   }
 }

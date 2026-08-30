@@ -1,14 +1,15 @@
-// Single CDN entry point. Every other file imports Preact/htm/signals from here, never
-// directly from esm.sh, so a version bump or CDN outage only needs a change in one place.
+// Single entry point. Every other file imports Preact/htm/signals from here, never directly
+// from vendor/, so a version bump only needs a change in one place.
 //
 // "preact" and "preact/hooks" resolve via the <script type="importmap"> in index.html, not a
-// literal esm.sh URL here — @preact/signals (below) is loaded with ?external=preact, which
-// only works if it resolves the bare "preact" specifier to the exact same module instance
-// this file uses. Pin the version in the import map, not here, if it ever needs to change.
+// literal path here — vendor/preact-signals.js (below) imports the bare "preact" and
+// "preact/hooks" specifiers itself, which only works if the import map resolves them to the
+// exact same module instance this file uses. Pin the version in vendor/, not here, if it ever
+// needs to change.
 import { h, render } from 'preact';
 import { useState, useEffect, useRef, useLayoutEffect } from 'preact/hooks';
-import { signal, computed, effect } from 'https://esm.sh/@preact/signals@1.2.1?external=preact';
-import htm from 'https://esm.sh/htm@3.1.1';
+import { signal, computed, effect } from '../vendor/preact-signals.js';
+import htm from '../vendor/htm.js';
 
 export const html = htm.bind(h);
 export { h, render, useState, useEffect, useRef, useLayoutEffect, signal, computed, effect };
