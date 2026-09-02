@@ -11,6 +11,10 @@ import { newRun, setLoadoutSlot, confirmLoadout, autoEquipLoadout } from './load
 import {
   moveToNode, requestExtractionCommand, basicReconCommand, openSpecialEdgeCommand,
   useOpportunityCommand, useFieldEquipmentCommand, hackCameraCommand, hackAccessInterfaceCommand, destroyCameraCommand, disableGeneratorCommand,
+  equipItemOnMapCommand, unequipItemOnMapCommand, unequipImplantOnMapCommand, unequipConsumableOnMapCommand,
+  useConcealmentCommand, hackControlRoomCommand,
+  encounterAmbushCommand, encounterIgnoreCommand, encounterEvadeCommand, encounterFightCommand,
+  useMapConsumableCommand,
 } from './facilityReducer.js';
 import {
   playCardCommand, endTurnCommand, useConsumable, beginDisengageCommand, cancelDisengageCommand,
@@ -42,6 +46,13 @@ export function gameReducer(snapshot, command) {
     case 'MOVE_TO_NODE': return moveToNode(snapshot, command.nodeId);
     case 'REQUEST_EXTRACTION': return requestExtractionCommand(snapshot, command.exitId);
     case 'BASIC_RECON': return basicReconCommand(snapshot);
+    case 'USE_CONCEALMENT': return useConcealmentCommand(snapshot);
+    case 'HACK_CONTROL_ROOM': return hackControlRoomCommand(snapshot);
+    case 'ENCOUNTER_AMBUSH': return encounterAmbushCommand(snapshot);
+    case 'ENCOUNTER_IGNORE': return encounterIgnoreCommand(snapshot);
+    case 'ENCOUNTER_EVADE': return encounterEvadeCommand(snapshot);
+    case 'ENCOUNTER_FIGHT': return encounterFightCommand(snapshot);
+    case 'USE_MAP_CONSUMABLE': return useMapConsumableCommand(snapshot, command.itemId);
     case 'HACK_CAMERA': return hackCameraCommand(snapshot, command.cameraId);
     case 'HACK_ACCESS_INTERFACE': return hackAccessInterfaceCommand(snapshot, command.interfaceId);
     case 'DESTROY_CAMERA': return destroyCameraCommand(snapshot, command.cameraId);
@@ -57,11 +68,17 @@ export function gameReducer(snapshot, command) {
     case 'RESOLVE_DISENGAGE': return resolveDisengageCommand(snapshot);
     case 'SELECT_REWARD': return selectReward(snapshot, command.slotKey, command.optionIndex);
     case 'CONFIRM_REWARDS': return confirmRewards(snapshot);
-    case 'EQUIP_ITEM': return equipItem(snapshot, command.itemId);
+    // 맵에서는 장비 교체 1건마다 시간(MAP_EQUIP_TIME_COST)이 든다 — 출격 준비(loadout) 화면에서는
+    // 그대로 무료/즉시.
+    case 'EQUIP_ITEM':
+      return snapshot.currentScreen === 'map' ? equipItemOnMapCommand(snapshot, command.itemId) : equipItem(snapshot, command.itemId);
     case 'EQUIP_ITEM_FROM_WAREHOUSE': return equipItemFromWarehouse(snapshot, command.itemId);
-    case 'UNEQUIP_ITEM': return unequipItem(snapshot, command.itemId);
-    case 'UNEQUIP_IMPLANT': return unequipImplant(snapshot, command.equipmentId);
-    case 'UNEQUIP_CONSUMABLE': return unequipConsumable(snapshot, command.itemId);
+    case 'UNEQUIP_ITEM':
+      return snapshot.currentScreen === 'map' ? unequipItemOnMapCommand(snapshot, command.itemId) : unequipItem(snapshot, command.itemId);
+    case 'UNEQUIP_IMPLANT':
+      return snapshot.currentScreen === 'map' ? unequipImplantOnMapCommand(snapshot, command.equipmentId) : unequipImplant(snapshot, command.equipmentId);
+    case 'UNEQUIP_CONSUMABLE':
+      return snapshot.currentScreen === 'map' ? unequipConsumableOnMapCommand(snapshot, command.itemId) : unequipConsumable(snapshot, command.itemId);
     case 'MOVE_TO_INVENTORY': return moveItemBetweenCollections(snapshot, command.itemId, 'warehouse', 'inventory');
     case 'MOVE_TO_WAREHOUSE': return moveItemBetweenCollections(snapshot, command.itemId, 'inventory', 'warehouse');
     case 'DISCARD_ITEM': return discardItem(snapshot, command.itemId);

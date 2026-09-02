@@ -1,4 +1,4 @@
-// 160-node extraction facility graph generation (docs/extraction-map-implementation-spec.md §4).
+// 240-node extraction facility graph generation (docs/extraction-map-implementation-spec.md §4).
 // Pure and deterministic: every function threads rngState explicitly (see rng.js), never calls
 // Math.random(). This module is standalone — it does not touch mapEngine.js/gameReducer.js/
 // MapScreen.js, which keep running the existing 8-floor map until a later phase swaps them over.
@@ -53,6 +53,7 @@ import {
   LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SPECIAL_EDGE_CATEGORY_WEIGHTS,
   SPECIAL_EDGE_SECOND_TAG_CHANCE, LANDMARKS_BY_SECTOR, OPPORTUNITY_COUNT_WEIGHTS,
   OPPORTUNITY_USES_WEIGHTS, KEY_DROP_CHANCE, CAMERA_NODE_CHANCE, ACCESS_INTERFACE_NODE_CHANCE,
+  CONCEALMENT_NODE_WEIGHTS,
   THREAT_COUNT_BY_SECTOR, THREAT_MIN_HOPS_FROM_START,
   THREAT_MIN_HOPS_BETWEEN_MARKERS, THREAT_PATROL_ROUTE_MIN, THREAT_PATROL_ROUTE_MAX,
   THREAT_GROUP_SIZE_WEIGHTS, ENTRANCE_THREAT_MAX_GROUP_SIZE, GENERATION_MAX_ATTEMPTS, GENERATOR_SECTOR_IDS,
@@ -105,7 +106,7 @@ function findBridges(nodeIds, edges) {
 
   /** @param {string} start */
   function dfsFrom(start) {
-    // Explicit stack (not recursion) — 160 nodes is small enough that recursion would be fine
+    // Explicit stack (not recursion) — 240 nodes is small enough that recursion would be fine
     // too, but this keeps it independent of any call-stack depth assumptions.
     /** @type {[string, number, number][]} */
     const stack = [[start, -1, 0]]; // [node, parentEdgeIdx, nextChildIndex]
@@ -567,6 +568,25 @@ function placeOpportunities(nodes, rngState) {
 }
 
 /**
+ * §신규 은엄폐: some nodes get a fixed 1-3 concealment value (temporary Stealth bonus while
+ * standing there), most get none (0, omitted from the map).
+ * @param {import('./types.js').FacilityNode[]} nodes
+ * @param {import('./rng.js').RngState} rngState
+ * @returns {{concealmentByNodeId: Record<string, 1|2|3>, rngState: import('./rng.js').RngState}}
+ */
+function placeConcealment(nodes, rngState) {
+  let state = rngState;
+  /** @type {Record<string, 1|2|3>} */
+  const concealmentByNodeId = {};
+  for (const node of nodes) {
+    const { value, state: sValue } = weightedPick(state, CONCEALMENT_NODE_WEIGHTS);
+    state = sValue;
+    if (value > 0) concealmentByNodeId[node.id] = /** @type {1|2|3} */ (value);
+  }
+  return { concealmentByNodeId, rngState: state };
+}
+
+/**
  * Roll cameras and access interfaces independently. Deterministic sector fallbacks guarantee at
  * least one of each device without preventing both devices from sharing a node.
  * @param {import('./types.js').FacilityNode[]} nodes
@@ -724,11 +744,17 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
   const threatResult = placeThreats(allEdges, topology.nodeIdsBySector, topology.startNodeId, state);
   state = threatResult.rngState;
 
+  // 은엄폐는 맨 마지막에 뽑는다 — 다른 콘텐츠(특히 위협 배치/경로)보다 나중 draw여야 이 기능을
+  // 추가하기 전 시드의 위협 배치가 그대로 보존된다(회귀 테스트가 그 결정성에 기대고 있었음).
+  const concealmentResult = placeConcealment(topology.nodes, state);
+  state = concealmentResult.rngState;
+
   return {
     content: {
       edges: allEdges,
       landmarks: landmarkResult.landmarks,
       opportunities: opportunityResult.opportunities,
+      concealmentByNodeId: concealmentResult.concealmentByNodeId,
       cameras: securityResult.cameras,
       accessInterfaces: securityResult.accessInterfaces,
       generators: generatorResult.generators,
@@ -739,7 +765,7 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
 }
 
 /**
- * §4.1: generate the full 160-node facility graph for a seed. Deterministic — same seed always
+ * §4.1: generate the full 240-node facility graph for a seed. Deterministic — same seed always
  * produces the same graph, threats, opportunities, and key-eligible rolls.
  * @param {number} seed
  * @returns {{graph: import('./types.js').FacilityGraph, rngState: import('./rng.js').RngState, usedFallback: boolean}}
@@ -760,6 +786,7 @@ export function generateFacilityGraph(seed) {
           exits: result.topology.exits,
           landmarks: contentResult.content.landmarks,
           opportunities: contentResult.content.opportunities,
+          concealmentByNodeId: contentResult.content.concealmentByNodeId,
           cameras: contentResult.content.cameras,
           accessInterfaces: contentResult.content.accessInterfaces,
           generators: contentResult.content.generators,
@@ -782,6 +809,7 @@ export function generateFacilityGraph(seed) {
       exits: fallbackTopology.exits,
       landmarks: contentResult.content.landmarks,
       opportunities: contentResult.content.opportunities,
+          concealmentByNodeId: contentResult.content.concealmentByNodeId,
       cameras: contentResult.content.cameras,
       accessInterfaces: contentResult.content.accessInterfaces,
       generators: contentResult.content.generators,

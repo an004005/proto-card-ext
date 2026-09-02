@@ -40,7 +40,7 @@ test('combat timeline keeps intermediate combat snapshots and ends at the reduce
   const facilityRunState = createRunState(graph, 1);
   const snapshot = {
     currentScreen: 'combat', activeCombatState: combat(), playerState: { loadout: { consumableSlots: [] }, overload: 0 },
-    facilityRunState, combatContext: { nodeId: facilityRunState.playerNodeId, ammoAtStart: 8, roundNoiseValues: [], reinforcementQueue: [], disengage: { escapeIntent: false, disengageProgress: 0 } },
+    facilityRunState, combatContext: { nodeId: facilityRunState.playerNodeId, ammoAtStart: 8, noiseGauge: 0, noiseIntensity: 0, disengage: { escapeIntent: false, disengageProgress: 0 } },
   };
   const command = { type: 'END_TURN' };
   const timeline = buildCombatTimeline(snapshot, command);

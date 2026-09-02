@@ -103,16 +103,3 @@ export function pickThreatEncounter(rngState, sectorId, size) {
   const { value: monsterIds, state } = pick(rngState, pool.length ? pool : ALL_THREAT_ENCOUNTER_TEMPLATES.normal);
   return { monsterIds, rngState: state };
 }
-
-const REINFORCEMENT_MONSTER_POOL = ALL_THREAT_ENCOUNTER_TEMPLATES.normal.flat();
-
-/**
- * 증원(§9.1)으로 한 개체씩 합류하는 몬스터를 뽑는다 — pickThreatEncounter는 그룹 전체를
- * 뽑으므로 단일 개체 합류엔 맞지 않는다.
- * @param {import('../engine/rng.js').RngState} rngState
- * @returns {{monsterId: string, rngState: import('../engine/rng.js').RngState}}
- */
-export function pickReinforcementMonster(rngState) {
-  const { value, state } = pick(rngState, REINFORCEMENT_MONSTER_POOL);
-  return { monsterId: value, rngState: state };
-}

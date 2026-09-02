@@ -47,6 +47,11 @@
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
   --radius-sm: 0px; --radius-md: 0px; --radius-lg: 0px;
 
+  --color-status-100: #f2ecfd;
+  --color-status-700: #6d28d9;
+  --color-status-800: #5b21b6;
+  --color-negative: #dc2626;
+
   --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
   --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);
   --shadow-lg: 0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent);
@@ -84,6 +89,8 @@ button { font: inherit; }
 .btn-secondary { border-color: var(--color-divider); }
 .btn-secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--color-text) 7%, transparent); }
 .btn-secondary:active:not(:disabled) { background: color-mix(in srgb, var(--color-text) 14%, transparent); }
+.btn-danger { background: var(--color-negative); color: var(--color-bg); }
+.btn-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--color-negative) 85%, black); }
 
 .tag {
   display: inline-flex; align-items: center; font-size: 11px;
@@ -92,6 +99,7 @@ button { font: inherit; }
 .tag-accent { background: var(--color-accent-100); color: var(--color-accent-800); }
 .tag-accent-2 { background: var(--color-accent-2-100); color: var(--color-accent-2-800); }
 .tag-neutral { background: var(--color-neutral-100); color: var(--color-neutral-800); }
+.tag-status { background: var(--color-status-100); color: var(--color-status-800); }
 .tag-outline { border: 1px solid var(--color-accent); color: var(--color-accent); }
 
 .hand-card { transition: transform 0.12s ease, box-shadow 0.12s ease; }

@@ -2,22 +2,35 @@ import { html } from '../lib.js';
 import { Tooltip } from './Tooltip.js';
 import { EquipmentTooltipContent } from './EquipmentTooltipContent.js';
 import { describeCapabilityModifiers } from '../data/capabilityDisplay.js';
+import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
+
+/** 퀵슬롯에 장착된 소모품이 맵에서 즉시 사용 가능한 "회복류"인지 — DeckInventoryView의
+ * isHealingConsumable과 같은 기준(mapTags.traits에 'healing'), 슬롯 표시용 객체 기준으로 재확인. */
+function isHealingConsumableSlot(sl) {
+  if (sl.catKey !== 'consumable' || !sl.defId) return false;
+  const def = CONSUMABLE_DEFINITIONS[sl.defId];
+  return !!def?.mapTags.traits.includes('healing');
+}
 
 // manage=true(맵 중 인벤토리 팝업)일 때만 드래그앤드롭 활성화: 장착된 슬롯을 드래그해서 시작할
 // 수 있고(짐으로 되돌리는 건 DeckInventoryView의 인벤토리 영역이 드롭 대상), 인벤토리 아이템
 // 카드를 슬롯 위에 놓으면 장착된다(이미 찬 슬롯이면 gameReducer의 equipItem이 자동 스왑).
-export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped = null, onDropOnSlot = null }) {
+// onItemUseMenu가 주어지면(맵 중, 창고 아님) 회복류 소모품 퀵슬롯을 우클릭해 즉시 사용 팝업을 연다
+// — DeckInventoryView의 인벤토리 그리드와 동일한 진입점을 공유(소지품/퀵슬롯 무관하게 사용 가능).
+export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped = null, onDropOnSlot = null, onItemUseMenu = null }) {
   return html`
     <div style=${{ width: '260px', border: '2px solid var(--color-divider)', padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: '8px', background: 'var(--color-surface)', flexShrink: 0 }}>
       <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '13px' }}>장비 슬롯</div>
       <div style=${{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
         ${allEquipSlots.map((sl) => {
+          const canUseMenu = sl.filled && !!onItemUseMenu && isHealingConsumableSlot(sl);
           const cell = html`
             <div
               draggable=${manage && sl.filled}
               onDragStart=${manage && sl.filled ? () => onDragEquipped(sl) : undefined}
               onDragOver=${manage ? (e) => e.preventDefault() : undefined}
               onDrop=${manage ? (e) => { e.preventDefault(); onDropOnSlot(); } : undefined}
+              onContextMenu=${canUseMenu ? (e) => { e.preventDefault(); onItemUseMenu({ id: sl.itemId, defId: sl.defId }); } : undefined}
               style=${{
                 border: sl.filled ? '2px solid var(--color-divider)' : '2px dashed var(--color-neutral-400)',
                 padding: '6px', minHeight: '52px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '2px',

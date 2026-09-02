@@ -7,6 +7,7 @@ import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { isCardPlayable, getCardTargetKind } from '../engine/combatEngine.js';
 import { canDisengage, DISENGAGE_REQUIRED_PROGRESS } from '../engine/combatMapIntegration.js';
 import { Tooltip } from './Tooltip.js';
+import { NoiseGauge } from './NoiseGauge.js';
 import { PlayerStatusBar } from './PlayerStatusBar.js';
 import { EnemyRow } from './EnemyRow.js';
 import { Hand } from './Hand.js';
@@ -83,6 +84,7 @@ export function CombatScreen() {
             </select>
           </label>
         </div>
+        <${NoiseGauge} gauge=${combatContext?.noiseGauge ?? 0} intensity=${combatContext?.noiseIntensity ?? 0} />
         <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', width: '280px', fontSize: '11px' }}>
           <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
             <span class="tag tag-outline">DEBUG · 디버그</span>

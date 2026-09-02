@@ -132,7 +132,7 @@ export function computeMaxLoadBonus(loadout) {
  * @returns {Object[]} the `effect` object of each equipped implant
  */
 function implantEffects(loadout) {
-  return (loadout.implantIds || []).map((id) => IMPLANT_DEFINITIONS[id]).filter(Boolean).map((d) => d.effect);
+  return (loadout.implantIds || []).map((id) => IMPLANT_DEFINITIONS[id]).filter(Boolean).flatMap((d) => d.effects);
 }
 
 /** @param {Loadout} loadout @returns {number} */

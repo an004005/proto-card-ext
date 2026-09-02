@@ -13,7 +13,7 @@ export const TYPE_INFO = {
   attack: { color: 'var(--color-accent)', label: 'ATTACK · 공격', cls: 'tag-accent' },
   skill: { color: 'var(--color-neutral-700)', label: 'SKILL · 스킬', cls: 'tag-neutral' },
   power: { color: 'var(--color-accent-2-700)', label: 'POWER · 파워', cls: 'tag-accent-2' },
-  status_card: { color: 'var(--color-neutral-500)', label: 'STATUS CARD · 상태이상 카드', cls: 'tag-neutral' },
+  status_card: { color: 'var(--color-status-700, #6d28d9)', label: 'STATUS CARD · 상태이상 카드', cls: 'tag-status' },
   burden: { color: 'var(--color-neutral-600)', label: 'BURDEN · 과적 카드', cls: 'tag-neutral' },
 };
 
@@ -95,7 +95,8 @@ export function CardDetailTooltip({ def, cost, type, overload, item }) {
           <div style=${{ fontSize: '10px', marginTop: '6px', opacity: 0.85 }}>
             ${!def.stageTable ? `코스트 ${cost}` : ''}${def.ammoCost ? ` · 총알 ${def.ammoCost}` : ''}
           </div>
-          ${def.overloadGain ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.75 }}>과부화 부여 +${def.overloadGain}</div>` : null}
+          ${def.overloadGain ? html`<div style=${{ fontSize: '10px', marginTop: '2px', color: 'var(--color-negative, #dc2626)', opacity: 0.9 }}>과부화 부여 +${def.overloadGain}</div>` : null}
+          ${def.mapTags?.noise ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.8 }}>소음 게이지 +${def.mapTags.noise}</div>` : null}
         </div>
       </div>
 

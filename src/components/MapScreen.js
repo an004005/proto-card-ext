@@ -10,9 +10,9 @@ import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
 import { computeCapabilities, listFieldActiveEquipment, effectiveForRequirement } from '../engine/capabilityEngine.js';
 import { bfsHopDistances } from '../engine/graphUtils.js';
-import { openSpecialEdge, applyOverloadDelta, canTraverseEdge, cameraHackRange, isCameraHackActive } from '../engine/runEngine.js';
-import { computeFloorOverload, computeOverloadGainMultiplier } from '../engine/equipmentEngine.js';
-import { SECTOR_IDS, SECTOR_NAMES, RUN_COLLAPSE_TIME } from '../data/facilityLayout.js';
+import { openSpecialEdge, applyOverloadDelta, canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget } from '../engine/runEngine.js';
+import { computeFloorOverload, computeOverloadGainMultiplier, getImplantEffect } from '../engine/equipmentEngine.js';
+import { SECTOR_IDS, SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
 import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE } from '../data/capabilityDisplay.js';
 import { OverloadGauge } from './OverloadGauge.js';
@@ -21,6 +21,7 @@ import { Tooltip } from './Tooltip.js';
 import { PlayLog } from './PlayLog.js';
 import { HistoryControls } from './HistoryControls.js';
 import { describeItem } from '../data/itemDisplay.js';
+import { EncounterPanel } from './EncounterPanel.js';
 
 const FIELD_ACTION_LABELS = { snapshot_scan: '집중 투시', temporary_barrier: '임시 장벽', remote_intrusion: '원격 침투' };
 const FIELD_TARGET_LABELS = { edge: '엣지(통로) 지정', node_contents: '주변 노드 파악', electronic_device: '전자 장치 지정' };
@@ -254,6 +255,8 @@ export function MapScreen() {
   }, [farmToastKey]);
 
   const capabilities = computeCapabilities(ps.loadout);
+  const hasMapImplant = !!getImplantEffect(ps.loadout, 'sectorLandmarkArrow');
+  const landmarkArrowTarget = getSectorLandmarkArrowTarget(run, hasMapImplant);
   const fieldEquipment = listFieldActiveEquipment(ps.loadout);
   const burdenCount = getBurdenItems(ps.inventory).length;
   const positions = layoutPositions(run.graph);
@@ -269,6 +272,7 @@ export function MapScreen() {
 
   const currentSectorId = run.graph.nodes.find((n) => n.id === run.playerNodeId)?.sectorId;
   const currentSectorAlert = currentSectorId ? run.sectorAlerts[currentSectorId] : null;
+  const currentLandmark = run.graph.landmarks.find((l) => l.nodeId === run.playerNodeId);
   const currentExit = exitByNode[run.playerNodeId];
   const currentOpportunities = run.graph.opportunities.filter((o) => o.nodeId === run.playerNodeId && o.usesRemaining > 0);
   const visitedNodeIds = new Set(run.visitedNodeIds);
@@ -460,6 +464,8 @@ export function MapScreen() {
         `;
       })() : null}
 
+      ${run.encounter ? html`<${EncounterPanel} run=${run} capabilities=${capabilities} />` : null}
+
       ${farmToast ? (() => {
         const loot = farmLootDisplay(farmToast.loot);
         return html`<div style=${{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, minWidth: '240px', padding: '10px 14px', border: '1px solid #15803d', borderLeft: '4px solid #15803d', background: '#f0fdf4', boxShadow: 'var(--shadow-lg)', color: '#14532d', fontSize: '12px' }}>
@@ -613,6 +619,28 @@ export function MapScreen() {
                   </g>
                 `;
               })}
+              ${landmarkArrowTarget ? (() => {
+                const from = positions[run.playerNodeId];
+                const to = positions[landmarkArrowTarget.nodeId];
+                const angle = Math.atan2(to.y - from.y, to.x - from.x);
+                const angleDeg = angle * 180 / Math.PI;
+                const sx = from.x + Math.cos(angle) * 20;
+                const sy = from.y + Math.sin(angle) * 20;
+                const ax = from.x + Math.cos(angle) * 46;
+                const ay = from.y + Math.sin(angle) * 46;
+                const name = LANDMARKS_BY_SECTOR[landmarkArrowTarget.sectorId]?.name || landmarkArrowTarget.id;
+                const label = `지도 임플란트 — 구역 핵심시설: ${name}`;
+                return html`
+                  <g pointer-events="none">
+                    <line x1=${sx} y1=${sy} x2=${ax} y2=${ay} stroke="var(--color-accent)" stroke-width="3" stroke-linecap="round"></line>
+                    <polygon points="-6,-5 8,0 -6,5" fill="var(--color-accent)" transform=${`translate(${ax},${ay}) rotate(${angleDeg})`}></polygon>
+                  </g>
+                  <circle
+                    cx=${ax} cy=${ay} r="14" fill="transparent" style=${{ cursor: 'default' }}
+                    onMouseEnter=${(ev) => showHover(ev, label)} onMouseMove=${(ev) => showHover(ev, label)} onMouseLeave=${hideHover}
+                  ></circle>
+                `;
+              })() : null}
             </g>
           </svg>
 
@@ -715,6 +743,25 @@ export function MapScreen() {
                     ` : null}
                   </div>
 
+                  ${(() => {
+                    const concealmentValue = run.graph.concealmentByNodeId[run.playerNodeId];
+                    const scouted = run.observations[run.playerNodeId]?.concealment != null;
+                    if (!concealmentValue || !scouted) return null;
+                    const active = run.activeConcealment?.nodeId === run.playerNodeId;
+                    return html`
+                      <div>
+                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-accent-700)', marginBottom: '4px' }}>은엄폐</div>
+                        ${active
+                          ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-accent-700)', fontWeight: 800 }}>사용 중 · 은신 +${run.activeConcealment.bonus} (이 노드를 벗어나면 사라짐)</div>`
+                          : html`
+                            <${Tooltip} align="left" content=${`이 노드에 배치된 은엄폐(+${concealmentValue})를 사용해 이 자리에 머무는 동안 실효 Stealth를 올립니다. 시간 20 소요. 다른 노드로 이동하면 사라집니다.`}>
+                              <button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', borderColor: 'var(--color-accent)', color: 'var(--color-accent-700)' }} onClick=${() => runCommand({ type: 'USE_CONCEALMENT' })}>은엄폐 사용 (은신 +${concealmentValue}, 시간 20)</button>
+                            <//>
+                          `}
+                      </div>
+                    `;
+                  })()}
+
                   ${currentInterface ? html`
                     <div>
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>카메라 접속 인터페이스</div>
@@ -775,6 +822,37 @@ export function MapScreen() {
                       ${!run.disabledGeneratorIds.includes(currentGenerator.id) ? html`<button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: currentGenerator.id, capabilityKind: 'force' })}>Force로 발전기 무력화 (시간 100 · 소음 2)</button>` : null}
                     </div>
                   ` : null}
+
+                  ${currentLandmark ? (() => {
+                    const level = Math.max(0, Math.min(3, effectiveForRequirement(capabilities.hacking)));
+                    const rows = [
+                      { level: 1, label: '순찰경로 영구 표시' },
+                      { level: 2, label: `경계도 -${Math.max(0, level - 1)}` },
+                      { level: 3, label: '맵 전체 위협 patrol 전환' },
+                    ];
+                    return html`
+                      <div>
+                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>구역 통제실</div>
+                        <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>
+                          현재 해킹 ${capabilities.hacking} — 실행하면 도달한 레벨까지 전부 적용됩니다(상위 레벨이 하위 효과 포함).
+                        </div>
+                        <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
+                          ${rows.map((row) => html`
+                            <div key=${row.level} style=${{
+                              display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', padding: '4px 6px',
+                              background: row.level <= level ? 'var(--color-accent-100)' : 'var(--color-neutral-100)',
+                              color: row.level <= level ? 'var(--color-accent-700)' : 'var(--color-neutral-600)',
+                            }}>
+                              <span>해킹 ${row.level}</span><span>${row.label}${row.level > level ? ' (잠김)' : ''}</span>
+                            </div>
+                          `)}
+                        </div>
+                        <${Tooltip} align="left" content="구역 랜드마크 노드에서만 시도할 수 있습니다. 접속 인터페이스 해킹과는 별개입니다. 시간 150 · 과부화 +10.">
+                          <button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%' }} disabled=${level < 1} onClick=${() => runCommand({ type: 'HACK_CONTROL_ROOM' })}>통제실 해킹 실행</button>
+                        <//>
+                      </div>
+                    `;
+                  })() : null}
 
                   ${currentOpportunities.length > 0 ? html`
                     <div>

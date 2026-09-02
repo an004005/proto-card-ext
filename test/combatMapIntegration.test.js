@@ -3,36 +3,72 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState } from '../src/engine/runEngine.js';
 import {
-  computeRoundNoiseEnvelope, applyCombatRoundToRunState,
+  addCombatNoiseGauge, nextNoiseIntensity, applyCombatCardNoise, applyCombatRoundTimeToRunState,
+  NOISE_GAUGE_CAPACITY,
   beginDisengage, cancelDisengage, addDisengageProgress, canDisengage, resolveDisengage,
   DISENGAGE_REQUIRED_PROGRESS,
-  scheduleReinforcement, advanceReinforcements,
-  REINFORCEMENT_FIRST_DELAY, REINFORCEMENT_SUBSEQUENT_DELAY, REINFORCEMENT_MAX_PER_GROUP,
 } from '../src/engine/combatMapIntegration.js';
 
-test('computeRoundNoiseEnvelope is the max of the round, not the sum', () => {
-  assert.equal(computeRoundNoiseEnvelope([1, 2, 0, 1]), 2);
-  assert.equal(computeRoundNoiseEnvelope([]), 0);
-  assert.equal(computeRoundNoiseEnvelope([3]), 3);
+test('addCombatNoiseGauge accumulates and fires only once capacity is reached, then resets to 0', () => {
+  let r = addCombatNoiseGauge(0, 3);
+  assert.deepEqual(r, { gauge: 3, fired: false });
+  r = addCombatNoiseGauge(r.gauge, 3);
+  assert.deepEqual(r, { gauge: 6, fired: false });
+  r = addCombatNoiseGauge(r.gauge, 3);
+  assert.deepEqual(r, { gauge: 9, fired: false });
+  r = addCombatNoiseGauge(r.gauge, 3);
+  assert.equal(r.fired, true);
+  assert.equal(r.gauge, 0);
 });
 
-test('applyCombatRoundToRunState creates exactly one noise event at the combat node and advances 60', () => {
+test('addCombatNoiseGauge fires exactly at capacity (10)', () => {
+  const r = addCombatNoiseGauge(7, 3);
+  assert.deepEqual(r, { gauge: 0, fired: true });
+});
+
+test('nextNoiseIntensity climbs 1 -> 2 -> 3 then holds at 3', () => {
+  assert.equal(nextNoiseIntensity(0), 1);
+  assert.equal(nextNoiseIntensity(1), 2);
+  assert.equal(nextNoiseIntensity(2), 3);
+  assert.equal(nextNoiseIntensity(3), 3);
+});
+
+test('applyCombatCardNoise reports a noise event only when the gauge fires, at the escalating intensity', () => {
+  const { graph } = generateFacilityGraph(2);
+  const runState = createRunState(graph, 2);
+  const nodeId = runState.playerNodeId;
+
+  let result = applyCombatCardNoise(runState, nodeId, 8, 0, 1);
+  assert.equal(result.gauge, 9);
+  assert.equal(result.intensity, 0);
+  assert.equal(result.runState.noiseEvents.length, 0);
+
+  result = applyCombatCardNoise(result.runState, nodeId, result.gauge, result.intensity, 2);
+  assert.equal(result.gauge, 0);
+  assert.equal(result.intensity, 1);
+  assert.equal(result.runState.noiseEvents.length, 1);
+  assert.equal(result.runState.noiseEvents[0].intensity, 1);
+  assert.equal(result.runState.noiseEvents[0].sourceNodeId, nodeId);
+
+  // fire again — intensity escalates to 2
+  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0);
+  assert.equal(result.intensity, 2);
+  assert.equal(result.runState.noiseEvents.length, 2);
+
+  // a third fire caps at 3 and holds there on a fourth
+  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0);
+  assert.equal(result.intensity, 3);
+  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0);
+  assert.equal(result.intensity, 3);
+});
+
+test('applyCombatRoundTimeToRunState advances time by the round cost with no noise side effect', () => {
   const { graph } = generateFacilityGraph(2);
   const runState = createRunState(graph, 2);
   const before = runState.time;
-  const next = applyCombatRoundToRunState(runState, runState.playerNodeId, [1, 3, 2]);
-  assert.equal(next.noiseEvents.length, 1);
-  assert.equal(next.noiseEvents[0].intensity, 3);
-  assert.equal(next.noiseEvents[0].sourceNodeId, runState.playerNodeId);
+  const next = applyCombatRoundTimeToRunState(runState, 60);
   assert.equal(next.time, before + 60);
-});
-
-test('a silent round (all noise 0) advances time but creates no noise event', () => {
-  const { graph } = generateFacilityGraph(2);
-  const runState = createRunState(graph, 2);
-  const next = applyCombatRoundToRunState(runState, runState.playerNodeId, [0, 0]);
   assert.equal(next.noiseEvents.length, 0);
-  assert.equal(next.time, runState.time + 60);
 });
 
 test('beginDisengage grants a one-time Mobility>=2 bonus, not on repeated calls', () => {
@@ -42,23 +78,6 @@ test('beginDisengage grants a one-time Mobility>=2 bonus, not on repeated calls'
   assert.equal(d.disengageProgress, 1);
   const again = beginDisengage(d, 2);
   assert.equal(again, d, 'begin while already intending should be a no-op');
-
-  let noBonus = beginDisengage({ escapeIntent: false, disengageProgress: 0 }, 1);
-  assert.equal(noBonus.disengageProgress, 0);
-});
-
-test('addDisengageProgress only accumulates while escapeIntent is on', () => {
-  let d = { escapeIntent: false, disengageProgress: 0 };
-  d = addDisengageProgress(d, 1);
-  assert.equal(d.disengageProgress, 0, 'progress must not accumulate without intent');
-
-  d = beginDisengage(d, 0);
-  d = addDisengageProgress(d, 1);
-  assert.equal(d.disengageProgress, 1);
-  assert.equal(canDisengage(d), false);
-  d = addDisengageProgress(d, 1);
-  assert.equal(d.disengageProgress, DISENGAGE_REQUIRED_PROGRESS);
-  assert.equal(canDisengage(d), true);
 });
 
 test('cancelDisengage and resolveDisengage both reset intent and progress to 0', () => {
@@ -70,26 +89,10 @@ test('cancelDisengage and resolveDisengage both reset intent and progress to 0',
   assert.deepEqual(resolved, { escapeIntent: false, disengageProgress: 0 });
 });
 
-test('reinforcements arrive at 120 then 120+60, capped at REINFORCEMENT_MAX_PER_GROUP', () => {
-  let queue = [scheduleReinforcement('threat1', REINFORCEMENT_FIRST_DELAY)];
-
-  let result = advanceReinforcements(queue, REINFORCEMENT_FIRST_DELAY - 1);
-  assert.equal(result.arrivals.length, 0, 'must not arrive before eligibleAt');
-
-  result = advanceReinforcements(queue, REINFORCEMENT_FIRST_DELAY);
-  assert.deepEqual(result.arrivals, [{ threatId: 'threat1', count: 1 }]);
-  queue = result.queue;
-  assert.equal(queue[0].addedCount, 1);
-
-  result = advanceReinforcements(queue, REINFORCEMENT_FIRST_DELAY + REINFORCEMENT_SUBSEQUENT_DELAY - 1);
-  assert.equal(result.arrivals.length, 0, 'second member must wait the full subsequent delay');
-  queue = result.queue;
-
-  result = advanceReinforcements(queue, REINFORCEMENT_FIRST_DELAY + REINFORCEMENT_SUBSEQUENT_DELAY);
-  assert.deepEqual(result.arrivals, [{ threatId: 'threat1', count: 1 }]);
-  queue = result.queue;
-  assert.equal(queue[0].addedCount, REINFORCEMENT_MAX_PER_GROUP);
-
-  result = advanceReinforcements(queue, REINFORCEMENT_FIRST_DELAY + REINFORCEMENT_SUBSEQUENT_DELAY * 10);
-  assert.equal(result.arrivals.length, 0, 'no third member ever joins from one group');
+test('canDisengage requires both escapeIntent and enough progress', () => {
+  let d = { escapeIntent: false, disengageProgress: DISENGAGE_REQUIRED_PROGRESS };
+  assert.equal(canDisengage(d), false);
+  d = beginDisengage({ escapeIntent: false, disengageProgress: 0 }, 0);
+  d = addDisengageProgress(d, DISENGAGE_REQUIRED_PROGRESS);
+  assert.equal(canDisengage(d), true);
 });

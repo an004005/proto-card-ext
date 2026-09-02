@@ -32,11 +32,25 @@ function equipDefaultLoadout(s) {
   return ids.reduce(equipFromWarehouseByEquipmentId, s);
 }
 
+// §신규 조우 시스템: 콜리전이 더 이상 즉시 전투를 열지 않고 run.encounter로 선택지를 띄운다.
+// 헤드리스 드라이버는 그 선택지를 결정론적으로 해소해야 진행할 수 있다 — 우위면 기습(전투
+// 진입, 테스트가 원하는 결과), 열세(행동권 있음)면 안전한 아무 행동(BASIC_RECON)으로 그
+// 행동권을 소모, 그래도 안 풀리면(forced) 전투로, 동률이면(무시 불가) 회피로 위협을 떼어낸다.
+function resolveEncounterOnce(s) {
+  const encounter = s.facilityRunState?.encounter;
+  if (!encounter) return s;
+  if (encounter.tier === 'advantage') return gameReducer(s, { type: 'ENCOUNTER_AMBUSH' });
+  if (encounter.tier === 'forced') return gameReducer(s, { type: 'ENCOUNTER_FIGHT' });
+  if (encounter.tier === 'even') return gameReducer(s, { type: 'ENCOUNTER_EVADE' });
+  return gameReducer(s, { type: 'BASIC_RECON' }); // disadvantage, grace action available
+}
+
 // 시설맵엔 "다음 노드"라는 확정 개념이 없다 — 현재 위치의 인접 노드 중 실제로 이동 가능한
 // 첫 번째로 이동한다(막힌/일방통행 특수 엣지는 MOVE_TO_NODE가 조용히 no-op하므로 다음 후보로
 // 넘어간다). 시간이 흐르며(간선당 ~100) RUN_COLLAPSE_TIME에 도달하면 결국 gameOver로
 // 끝나므로, 순수 랜덤워크로도 헤드리스 테스트는 유한 스텝 안에 종결된다.
 function driveMapForward(s) {
+  if (s.facilityRunState?.encounter) return resolveEncounterOnce(s);
   const run = s.facilityRunState;
   const neighbors = run.graph.edges
     .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
@@ -81,6 +95,7 @@ function firstHopToward(parent, fromId, toId) {
 // 위협을 향해 최단 경로로 걸어가 결정론적으로 combatTrigger를 유발한다 — 순수 랜덤워크는 짧은
 // guard 안에 위협과 마주친다는 보장이 없다(시설이 넓고 위협도 각자 순찰하므로).
 function moveTowardNearestThreat(s) {
+  if (s.facilityRunState?.encounter) return resolveEncounterOnce(s);
   const run = s.facilityRunState;
   const { parent, dist } = bfsWithParents(run.graph, run.playerNodeId);
   const threatNodeIds = Object.values(run.threats).map((t) => t.nodeId).filter((id) => dist[id] !== undefined);
@@ -149,25 +164,26 @@ test('SET_LOADOUT_SLOT toggles implant slots (3-limit) and no-ops for non-implan
 });
 
 test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seeds starting ammo, and generates the facility map', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 1 }); // default implants: 1,3,6 -> hp+7, floor 10+5+15=30
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 1 }); // default implants: 1,3,6 -> hp+7, floor 10+5+0=15 (implant6's cost is now +15% overload gain, not a floor)
   s = equipDefaultLoadout(s);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   assert.equal(s.currentScreen, 'map');
   assert.equal(s.playerState.maxHp, 77);
   assert.equal(s.playerState.hp, 77);
-  assert.equal(s.playerState.overload, 30);
+  assert.equal(s.playerState.overload, 15);
   assert.equal(s.playerState.inventory.capacity, 15);
-  // 인벤토리는 완전히 빈 채로 시작 — 장착 안 한 farming-only 장비 17종, 시작 소모품 3개,
-  // 시작 탄약(8발, 1스택)까지 전부 창고(무제한, 과적 규칙 미적용)에 남아있다가 플레이어가
-  // 직접 인벤토리로 옮겨야 실제 런에 반영된다(옮기지 않으면 탄약 0으로 출격).
+  // 인벤토리는 완전히 빈 채로 시작 — 장착 안 한 farming-only 장비 18종(임플란트⑦ 지도가
+  // 창고 시작 풀에 추가됨), 시작 소모품 3개, 시작 탄약(8발, 1스택)까지 전부 창고(무제한,
+  // 과적 규칙 미적용)에 남아있다가 플레이어가 직접 인벤토리로 옮겨야 실제 런에 반영된다
+  // (옮기지 않으면 탄약 0으로 출격).
   const items = s.playerState.inventory.items;
   assert.equal(items.length, 0);
   const warehouseItems = s.playerState.warehouse.items;
-  assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 17);
+  assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 18);
   assert.equal(warehouseItems.filter((i) => i.kind === 'consumable').length, 3);
   assert.deepEqual(warehouseItems.filter((i) => i.kind === 'ammo').map((i) => i.amount), [8]);
-  assert.equal(warehouseItems.length, 21);
-  assert.equal(s.facilityRunState.graph.nodes.length, 160);
+  assert.equal(warehouseItems.length, 22);
+  assert.equal(s.facilityRunState.graph.nodes.length, 240);
   assert.equal(s.facilityRunState.playerNodeId, s.facilityRunState.graph.startNodeId);
 });
 
@@ -281,11 +297,41 @@ test('EQUIP_ITEM/UNEQUIP_ITEM move gear (by instance itemId) between the loadout
   assert.deepEqual(s.playerState.loadout.weapons.map((w) => w.equipmentId), ['katana']);
   assert.ok(s.playerState.inventory.items.some((i) => i.kind === 'equipment' && i.equipmentId === 'rifle' && i.durability === 10));
 
-  const midCombat = driveToNextCombatOrEnd(s);
+  // "blocked mid-combat" only needs any combat snapshot with an equipped weapon — drive from a
+  // fresh loadout-confirmed state rather than `s`, since MAP_EQUIP_TIME_COST above already
+  // advanced facilityRunState.time/threat positions in a way that isn't relevant here.
+  let fresh = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  fresh = gameReducer(fresh, { type: 'CONFIRM_LOADOUT' });
+  fresh = {
+    ...fresh,
+    playerState: { ...fresh.playerState, loadout: { ...fresh.playerState.loadout, weapons: [{ id: 'item-katana', kind: 'equipment', equipmentId: 'katana', durability: 10 }] } },
+  };
+  const midCombat = driveToNextCombatOrEnd(fresh);
   assert.equal(midCombat.currentScreen, 'combat');
   const equippedKatanaId = midCombat.playerState.loadout.weapons[0].id;
   const blocked = gameReducer(midCombat, { type: 'UNEQUIP_ITEM', itemId: equippedKatanaId });
   assert.equal(blocked, midCombat); // guarded to currentScreen === 'map', no-op mid-combat
+});
+
+test('EQUIP_ITEM on the map costs MAP_EQUIP_TIME_COST (50) and is free/instant during loadout prep', () => {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 3 });
+  // Free/instant during loadout prep — no facilityRunState to advance yet.
+  const rifle = s.playerState.warehouse.items.find((i) => i.equipmentId === 'rifle');
+  s = gameReducer(s, { type: 'EQUIP_ITEM_FROM_WAREHOUSE', itemId: rifle.id });
+  assert.deepEqual(s.playerState.loadout.weapons.map((w) => w.equipmentId), ['rifle']);
+
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const timeBefore = s.facilityRunState.time;
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-katana', kind: 'equipment', equipmentId: 'katana', durability: 10 }] },
+    },
+  };
+  s = gameReducer(s, { type: 'EQUIP_ITEM', itemId: 'item-katana' });
+  assert.equal(s.facilityRunState.time, timeBefore + 50);
+  assert.deepEqual(s.playerState.loadout.weapons.map((w) => w.equipmentId).sort(), ['katana', 'rifle']);
 });
 
 test('EQUIP_ITEM refuses to (re-)equip a broken (durability 0) item', () => {
@@ -369,13 +415,164 @@ test('a threat wandering onto the player mid-action (not just mid-move) forces c
   // Park a threat one hop away with its very next patrol stop set to the player's *current*
   // node, due to move within the 80-time-unit basic recon (well past the next 10-point tick).
   const [threatId, threat] = Object.entries(run.threats)[0];
+  // alert 3 + a rigged boss roster guarantees perception 4, comfortably above the default
+  // (unequipped) loadout's stealth 0 — so this collision is deterministically tier 'disadvantage'
+  // on first judgment.
   const rigged = {
     ...threat, nodeId: neighborId, patrolRoute: [run.playerNodeId], patrolIndex: 0, mode: 'patrol',
-    nextMoveAt: run.time + 10, alert: 0, target: null, investigationMemory: null, lastKnownPlayerNodeId: null, pursuitStrength: 0,
+    nextMoveAt: run.time + 10, alert: 3, size: 4, monsterIds: ['ceremonial_beast'],
+    target: null, investigationMemory: null, lastKnownPlayerNodeId: null, pursuitStrength: 0,
   };
   s = { ...s, facilityRunState: { ...run, threats: { ...run.threats, [threatId]: rigged } } };
 
   s = gameReducer(s, { type: 'BASIC_RECON' });
+  assert.equal(s.facilityRunState.encounter?.threatId, threatId);
+  assert.equal(s.facilityRunState.encounter?.tier, 'disadvantage');
+  assert.equal(s.currentScreen, 'map'); // no longer instant combat — the collision opens a choice instead
+
+  // spend the one grace action (still co-located, still same perception/stealth) -> forced, then fight.
+  s = gameReducer(s, { type: 'BASIC_RECON' });
+  assert.equal(s.facilityRunState.encounter?.tier, 'forced');
+  s = gameReducer(s, { type: 'ENCOUNTER_FIGHT' });
   assert.equal(s.currentScreen, 'combat');
   assert.equal(s.combatContext.threatId, threatId);
+});
+
+// §신규 조우 시스템 전용 테스트 — 위협 하나를 플레이어 인접 노드에 놓고 지정한 alert/size로
+// 고정한 뒤 BASIC_RECON 한 번으로 결정론적 콜리전을 일으켜, 원하는 tier의 run.encounter를 얻는다.
+function riggedEncounterState(seed, { alert, size, monsterIds, equip = false }) {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed });
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'katana');
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'rifle');
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'light_top');
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'tactical_bottom');
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'module_body');
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'module_neural');
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'implant1');
+  if (equip) s = equipFromWarehouseByEquipmentId(s, 'implant3');
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const run = s.facilityRunState;
+  const neighborId = run.graph.edges.find((e) => e.from === run.playerNodeId)?.to
+    || run.graph.edges.find((e) => e.to === run.playerNodeId)?.from;
+  const [threatId, threat] = Object.entries(run.threats)[0];
+  const rigged = {
+    ...threat, nodeId: neighborId, patrolRoute: [run.playerNodeId], patrolIndex: 0, mode: 'patrol',
+    nextMoveAt: run.time + 10, alert, size, monsterIds: monsterIds ?? threat.monsterIds,
+    target: null, investigationMemory: null, lastKnownPlayerNodeId: null, pursuitStrength: 0,
+  };
+  s = { ...s, facilityRunState: { ...run, threats: { ...run.threats, [threatId]: rigged } } };
+  s = gameReducer(s, { type: 'BASIC_RECON' });
+  return { s, threatId };
+}
+
+test('encounter tier advantage: ambush stuns every enemy and keeps player-first turn order; ignore is available; other map actions are not blocked', () => {
+  const { s, threatId } = riggedEncounterState(10, { alert: 0, size: 2, monsterIds: ['nibbit'], equip: true }); // stealth 2 > perception -1 (alert 0 + normal -1)
+  assert.equal(s.facilityRunState.encounter?.tier, 'advantage');
+  assert.equal(s.currentScreen, 'map');
+
+  // not blocked: a normal map action still works at 'advantage' (re-judges, doesn't force anything)
+  const reconAgain = gameReducer(s, { type: 'BASIC_RECON' });
+  assert.notEqual(reconAgain, s);
+
+  const ambushed = gameReducer(s, { type: 'ENCOUNTER_AMBUSH' });
+  assert.equal(ambushed.currentScreen, 'combat');
+  assert.equal(ambushed.combatContext.threatId, threatId);
+  assert.equal(ambushed.activeCombatState.turn, 1); // beginPlayerFirst, not beginEnemyFirst
+  assert.ok(ambushed.activeCombatState.enemies.every((e) => e.statuses.stun === 1));
+
+  const ignored = gameReducer(s, { type: 'ENCOUNTER_IGNORE' });
+  assert.equal(ignored.currentScreen, 'map');
+  assert.equal(ignored.facilityRunState.encounter, null);
+});
+
+test('encounter tier even: ignore is refused (무시 불가), evade works and resets the threat to patrol, other map actions are blocked until resolved', () => {
+  const { s, threatId } = riggedEncounterState(10, { alert: 1, size: 4, monsterIds: ['ceremonial_beast'], equip: true }); // stealth 2 === perception 2 (alert 1 + boss 1)
+  assert.equal(s.facilityRunState.encounter?.tier, 'even');
+
+  const ignoreAttempt = gameReducer(s, { type: 'ENCOUNTER_IGNORE' });
+  assert.equal(ignoreAttempt, s); // refused
+
+  const blockedRecon = gameReducer(s, { type: 'BASIC_RECON' });
+  assert.equal(blockedRecon, s); // blocked while tier === 'even'
+
+  const evaded = gameReducer(s, { type: 'ENCOUNTER_EVADE' });
+  assert.equal(evaded.facilityRunState.encounter, null);
+  assert.equal(evaded.facilityRunState.threats[threatId].mode, 'patrol');
+  assert.equal(evaded.facilityRunState.threats[threatId].lastKnownPlayerNodeId, null);
+});
+
+test('encounter tier disadvantage: grace action allowed once, then forced with no evade/ignore, and entering combat always applies enemy-first ambush', () => {
+  const { s, threatId } = riggedEncounterState(11, { alert: 3, size: 4, monsterIds: ['ceremonial_beast'] }); // stealth 0 < perception 4 (alert 3 + boss 1), no equip
+  assert.equal(s.facilityRunState.encounter?.tier, 'disadvantage');
+  assert.equal(s.facilityRunState.encounter?.graceUsed, false);
+
+  // no evade/ambush available at disadvantage
+  assert.equal(gameReducer(s, { type: 'ENCOUNTER_EVADE' }), s);
+  assert.equal(gameReducer(s, { type: 'ENCOUNTER_AMBUSH' }), s);
+  assert.equal(gameReducer(s, { type: 'ENCOUNTER_FIGHT' }), s); // not forced yet
+
+  const afterGrace = gameReducer(s, { type: 'BASIC_RECON' }); // the one allowed action
+  assert.equal(afterGrace.facilityRunState.encounter?.tier, 'forced');
+
+  const blockedMove = gameReducer(afterGrace, { type: 'BASIC_RECON' });
+  assert.equal(blockedMove, afterGrace); // blocked while forced
+
+  const fought = gameReducer(afterGrace, { type: 'ENCOUNTER_FIGHT' });
+  assert.equal(fought.currentScreen, 'combat');
+  assert.equal(fought.combatContext.threatId, threatId);
+  assert.equal(fought.activeCombatState.turn, 2); // beginEnemyFirst ran one enemy turn first
+});
+
+test('USE_MAP_CONSUMABLE heals from inventory or quickslot, costs MAP_CONSUMABLE_TIME_COST (30), and only accepts healing consumables', () => {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 4 });
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = { ...s, playerState: { ...s.playerState, hp: Math.round(s.playerState.maxHp * 0.5) } };
+
+  // from inventory
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-bandage', kind: 'consumable', defId: 'bandage' }] },
+    },
+  };
+  const hpBefore = s.playerState.hp;
+  const timeBefore = s.facilityRunState.time;
+  s = gameReducer(s, { type: 'USE_MAP_CONSUMABLE', itemId: 'item-bandage' });
+  assert.equal(s.playerState.hp, Math.min(s.playerState.maxHp, hpBefore + Math.round(s.playerState.maxHp * 0.2)));
+  assert.equal(s.facilityRunState.time, timeBefore + 30);
+  assert.ok(!s.playerState.inventory.items.some((i) => i.id === 'item-bandage'));
+
+  // from a quickslot
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      hp: Math.round(s.playerState.maxHp * 0.5),
+      loadout: { ...s.playerState.loadout, consumableSlots: [{ id: 'item-bandage-2', defId: 'bandage' }, null, null] },
+    },
+  };
+  const hpBefore2 = s.playerState.hp;
+  s = gameReducer(s, { type: 'USE_MAP_CONSUMABLE', itemId: 'item-bandage-2' });
+  assert.equal(s.playerState.hp, hpBefore2 + Math.round(s.playerState.maxHp * 0.2));
+  assert.equal(s.playerState.loadout.consumableSlots[0], null);
+
+  // non-healing consumable (stabilizer) is refused
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-stab', kind: 'consumable', defId: 'stabilizer' }] },
+    },
+  };
+  const refused = gameReducer(s, { type: 'USE_MAP_CONSUMABLE', itemId: 'item-stab' });
+  assert.equal(refused, s);
+});
+
+test('USE_MAP_CONSUMABLE is a no-op outside the map screen (e.g. mid-combat)', () => {
+  let s = gameReducer(null, { type: 'NEW_RUN', seed: 4 });
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  assert.equal(s.currentScreen, 'map');
+  const notOnMap = { ...s, currentScreen: 'combat' };
+  assert.equal(gameReducer(notOnMap, { type: 'USE_MAP_CONSUMABLE', itemId: 'nope' }), notOnMap);
 });

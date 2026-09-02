@@ -17,6 +17,14 @@ import { EquipSlotsPanel } from './EquipSlotsPanel.js';
 import { Tooltip } from './Tooltip.js';
 import { EquipmentTooltipContent } from './EquipmentTooltipContent.js';
 import { CardDetailTooltip, TYPE_INFO } from './Card.js';
+import { MAP_CONSUMABLE_TIME_COST } from '../engine/facilityReducer.js';
+
+/** 맵에서 즉시 사용할 수 있는 "회복류" 소모품인지 — mapTags.traits에 'healing'이 있는 것만. */
+function isHealingConsumable(item) {
+  if (item.kind !== 'consumable') return false;
+  const def = CONSUMABLE_DEFINITIONS[item.defId];
+  return !!def?.mapTags.traits.includes('healing');
+}
 
 // "창고 — 출격 준비"의 인벤토리 탭과 동일한 뷰 — 장비 슬롯 + 장착으로 구성된 덱을 카드 그리드로
 // 보여준다. `inventory`가 주어지면(맵/전투 팝업) 실제 소지품(잡템/환금템/탄약/미장착 장비) 그리드도
@@ -51,7 +59,7 @@ function ItemTooltipContent({ item }) {
   return html`<div style=${{ width: '220px' }}><div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '13px', marginBottom: '6px' }}>${info.name}</div><div style=${{ fontSize: '11px', opacity: 0.85 }}>${info.sub}${genericText ? ` — ${genericText}` : ''}</div></div>`;
 }
 
-function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleClick, dblClickTitle, onDiscard, emptyLabel }) {
+function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleClick, dblClickTitle, onItemUseMenu, onDiscard, emptyLabel }) {
   if (items.length === 0) {
     return html`
       <div style=${{
@@ -68,12 +76,14 @@ function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleCl
         const isBurden = burdenIds.has(item.id);
         const canDrag = draggable;
         const canDblClick = !!onItemDoubleClick;
+        const canUseMenu = !!onItemUseMenu && isHealingConsumable(item);
         return html`
           <${Tooltip} key=${item.id} width=${240} content=${html`<${ItemTooltipContent} item=${item} />`}>
             <div
               draggable=${canDrag}
               onDragStart=${canDrag ? () => onItemDragStart(item) : undefined}
               onDblClick=${canDblClick ? () => onItemDoubleClick(item) : undefined}
+              onContextMenu=${canUseMenu ? (e) => { e.preventDefault(); onItemUseMenu(item); } : undefined}
               title=${canDblClick ? dblClickTitle : undefined}
               style=${{
                 aspectRatio: '1/1', border: `2px solid ${isBurden ? 'var(--color-accent)' : info.color}`,
@@ -102,6 +112,7 @@ function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleCl
 export function DeckInventoryView({ loadout, inventory = null, warehouse = null, manage = false }) {
   const [dragPayload, setDragPayload] = useState(null);
   const [tab, setTab] = useState('inventory'); // 'inventory' | 'deck'
+  const [useMenuItem, setUseMenuItem] = useState(null); // 더블클릭/우클릭으로 연 "사용" 팝업 대상
   const deckSize = buildDeckFromLoadout(loadout).length;
   const floor = computeFloorOverload(loadout);
   const capacity = BASE_INVENTORY_CAPACITY + computeInventoryCapacityBonus(loadout);
@@ -146,6 +157,7 @@ export function DeckInventoryView({ loadout, inventory = null, warehouse = null,
               : { type: 'equippedItem', itemId: sl.itemId },
         )}
         onDropOnSlot=${handleDropOnSlot}
+        onItemUseMenu=${(!warehouse && manage) ? (item) => setUseMenuItem(item) : null}
       />
 
       <div
@@ -211,12 +223,29 @@ export function DeckInventoryView({ loadout, inventory = null, warehouse = null,
                 onItemDragStart=${(item) => setDragPayload({ type: 'inventoryItem', itemId: item.id })}
                 onItemDoubleClick=${manage ? (item) => EQUIPPABLE_KINDS.has(item.kind) && dispatch({ type: 'EQUIP_ITEM', itemId: item.id }) : null}
                 dblClickTitle="더블클릭하여 장착"
+                onItemUseMenu=${(!warehouse && manage) ? (item) => setUseMenuItem(item) : null}
                 onDiscard=${manage ? (itemId) => dispatch({ type: 'DISCARD_ITEM', itemId }) : null}
                 emptyLabel=${warehouse ? '비어있음 — 창고에서 아이템을 여기로 드래그하면 런에 들고 갑니다' : '비어있음'}
               />
             </div>
           </div>
         ` : null}
+      </div>
+      ${useMenuItem ? html`<${MapConsumableUsePopup} item=${useMenuItem} onClose=${() => setUseMenuItem(null)} />` : null}
+    </div>
+  `;
+}
+
+/** 맵에서 회복류 소모품을 우클릭했을 때 뜨는 "사용" 팝업 — ConsumablePopup.dc.html 참고. */
+function MapConsumableUsePopup({ item, onClose }) {
+  const def = CONSUMABLE_DEFINITIONS[item.defId];
+  return html`
+    <div style=${{ position: 'fixed', inset: 0, background: 'color-mix(in srgb, #201e1d 45%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }} onClick=${onClose}>
+      <div style=${{ width: '230px', background: 'var(--color-bg)', border: '1px solid var(--color-divider)', boxShadow: 'var(--shadow-lg)', padding: 'var(--space-4)' }} onClick=${(e) => e.stopPropagation()}>
+        <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '15px', marginBottom: '2px' }}>${def.name}</div>
+        <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', marginBottom: '14px' }}>${def.description}</div>
+        <button class="btn btn-primary" style=${{ width: '100%' }} onClick=${() => { dispatch({ type: 'USE_MAP_CONSUMABLE', itemId: item.id }); onClose(); }}>사용</button>
+        <div style=${{ textAlign: 'center', fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '8px' }}>사용 시 시간 ${MAP_CONSUMABLE_TIME_COST} 소요</div>
       </div>
     </div>
   `;

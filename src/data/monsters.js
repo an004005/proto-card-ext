@@ -11,7 +11,7 @@
 export const MONSTER_DEFINITIONS = {
   // ---- 일반 ----
   nibbit: {
-    id: 'nibbit', name: '니빗', hp: 44, isMachine: false, tier: 'normal',
+    id: 'nibbit', name: '니빗', hp: 44, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'headbutt', mapNoise: 1, damage: 12 },
       { id: 'slice', mapNoise: 1, damage: 6, effects: [{ kind: 'block', value: 5, target: 'self' }] },
@@ -19,7 +19,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   shrinker_beetle: {
-    id: 'shrinker_beetle', name: '자폭충', hp: 39, isMachine: false, tier: 'normal',
+    id: 'shrinker_beetle', name: '자폭충', hp: 39, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'weaken', mapNoise: 0, damage: 0, effects: [{ kind: 'applyStatus', status: 'weak', amount: 1, target: 'player' }] },
       { id: 'bite', mapNoise: 1, damage: 7 },
@@ -27,7 +27,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   inklet: {
-    id: 'inklet', name: '잉클릿', hp: 14, isMachine: false, tier: 'normal',
+    id: 'inklet', name: '잉클릿', hp: 14, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'jab', mapNoise: 1, damage: 3 },
       { random: [
@@ -37,7 +37,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   vine_shambler: {
-    id: 'vine_shambler', name: '덩굴 셰임블러', hp: 61, isMachine: false, tier: 'normal',
+    id: 'vine_shambler', name: '덩굴 셰임블러', hp: 61, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'push', mapNoise: 1, damage: 6, hits: 2 },
       { id: 'wrap', mapNoise: 1, damage: 8, effects: [{ kind: 'applyStatus', status: 'entangled', amount: 1, target: 'player' }] },
@@ -45,7 +45,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   mawler: {
-    id: 'mawler', name: '마울러', hp: 72, isMachine: false, tier: 'normal',
+    id: 'mawler', name: '마울러', hp: 72, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'rip', mapNoise: 1, damage: 4, hits: 2 },
       { random: [
@@ -56,7 +56,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   fogmog: {
-    id: 'fogmog', name: '포그모그', hp: 74, isMachine: false, tier: 'normal',
+    id: 'fogmog', name: '포그모그', hp: 74, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'spore_summon', mapNoise: 0, damage: 0, summon: 'sawtooth_eye' },
       { random: [
@@ -66,13 +66,13 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   snapping_jaxfruit: {
-    id: 'snapping_jaxfruit', name: '포식성 잭스프루트', hp: 32, isMachine: false, tier: 'normal',
+    id: 'snapping_jaxfruit', name: '포식성 잭스프루트', hp: 32, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'energy_orb', mapNoise: 2, damage: 3, effects: [{ kind: 'applyStatus', status: 'atkBonus', amount: 2, target: 'self' }] },
     ],
   },
   slithering_strangler: {
-    id: 'slithering_strangler', name: '미끈거리는 교살마', hp: 54, isMachine: false, tier: 'normal',
+    id: 'slithering_strangler', name: '미끈거리는 교살마', hp: 54, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'constrict_grip', mapNoise: 1, damage: 0, effects: [{ kind: 'applyStatus', status: 'constrict', amount: 3, target: 'player' }] },
       { random: [
@@ -82,7 +82,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   cubex_construct: {
-    id: 'cubex_construct', name: '큐브형 구조체', hp: 65, isMachine: true, tier: 'normal',
+    id: 'cubex_construct', name: '큐브형 구조체', hp: 65, isMachine: true, tier: 'normal', perception: -1,
     startingStatuses: { artifact: 1 },
     sequence: [
       { id: 'charge', mapNoise: 0, damage: 0, effects: [{ kind: 'applyStatus', status: 'atkBonus', amount: 2, target: 'self' }] },
@@ -92,7 +92,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   flyconid: {
-    id: 'flyconid', name: '날개버섯', hp: 48, isMachine: false, tier: 'normal',
+    id: 'flyconid', name: '날개버섯', hp: 48, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { random: [
         { weight: 50, move: { id: 'wither_spore', mapNoise: 1, damage: 8, effects: [{ kind: 'applyStatus', status: 'fragile', amount: 2, target: 'player' }] } },
@@ -102,7 +102,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   fuzzy_wurm_crawler: {
-    id: 'fuzzy_wurm_crawler', name: '복슬지렁이', hp: 56, isMachine: false, tier: 'normal',
+    id: 'fuzzy_wurm_crawler', name: '복슬지렁이', hp: 56, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'acid', mapNoise: 1, damage: 4 },
       { id: 'drain', mapNoise: 0, damage: 0, effects: [{ kind: 'applyStatus', status: 'atkBonus', amount: 7, target: 'self' }] },
@@ -110,14 +110,14 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   leaf_slime_m: {
-    id: 'leaf_slime_m', name: '나뭇잎 슬라임', hp: 33, isMachine: false, tier: 'normal',
+    id: 'leaf_slime_m', name: '나뭇잎 슬라임', hp: 33, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'goo', mapNoise: 0, damage: 0, insertStatusCard: 'sticky_status_card' },
       { id: 'thorn', mapNoise: 1, damage: 8 },
     ],
   },
   twig_slime_m: {
-    id: 'twig_slime_m', name: '가지 슬라임', hp: 27, isMachine: false, tier: 'normal',
+    id: 'twig_slime_m', name: '가지 슬라임', hp: 27, isMachine: false, tier: 'normal', perception: -1,
     sequence: [
       { id: 'goo2', mapNoise: 0, damage: 0, insertStatusCard: 'sticky_status_card' },
       { random: [
@@ -129,7 +129,7 @@ export const MONSTER_DEFINITIONS = {
 
   // ---- 엘리트 ----
   bygone_effigy: {
-    id: 'bygone_effigy', name: '낡은 석상', hp: 128, isMachine: true, tier: 'elite',
+    id: 'bygone_effigy', name: '낡은 석상', hp: 128, isMachine: true, tier: 'elite', perception: 0,
     phaseTransitionHpFraction: 0.5,
     sequence: [
       { id: 'sleep', mapNoise: 0, damage: 0 },
@@ -142,14 +142,14 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   byrdonis: {
-    id: 'byrdonis', name: '맹금 바이도니스', hp: 82, isMachine: false, tier: 'elite',
+    id: 'byrdonis', name: '맹금 바이도니스', hp: 82, isMachine: false, tier: 'elite', perception: 0,
     sequence: [
       { id: 'strike', mapNoise: 1, damage: 17 },
       { id: 'peck', mapNoise: 1, damage: 3, hits: 3 },
     ],
   },
   phrog_parasite: {
-    id: 'phrog_parasite', name: '게구리 기생체', hp: 62, isMachine: false, tier: 'elite',
+    id: 'phrog_parasite', name: '게구리 기생체', hp: 62, isMachine: false, tier: 'elite', perception: 0,
     sequence: [
       { id: 'infect', mapNoise: 0, damage: 0, insertStatusCard: 'infected_status_card' },
       { id: 'smash3', mapNoise: 1, damage: 4, hits: 4 },
@@ -158,7 +158,7 @@ export const MONSTER_DEFINITIONS = {
 
   // ---- 보스 (매 런 무작위 1종, mapLayout.BOSS_ENCOUNTER_TEMPLATES) ----
   ceremonial_beast: {
-    id: 'ceremonial_beast', name: '의식의 짐승', hp: 252, isMachine: false, tier: 'boss',
+    id: 'ceremonial_beast', name: '의식의 짐승', hp: 252, isMachine: false, tier: 'boss', perception: 1,
     phaseTransitionHpFraction: 150 / 252,
     sequence: [
       { id: 'stomp_charge', mapNoise: 1, damage: 0, effects: [{ kind: 'block', value: 10, target: 'self' }] },
@@ -173,7 +173,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   kin_follower: {
-    id: 'kin_follower', name: '혈족 추종자', hp: 58, isMachine: false, tier: 'boss',
+    id: 'kin_follower', name: '혈족 추종자', hp: 58, isMachine: false, tier: 'boss', perception: 1,
     sequence: [
       { id: 'quickstrike', mapNoise: 1, damage: 5 },
       { id: 'boomerang', mapNoise: 1, damage: 2, hits: 2 },
@@ -181,7 +181,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   kin_priest: {
-    id: 'kin_priest', name: '혈족 사제', hp: 190, isMachine: false, tier: 'boss',
+    id: 'kin_priest', name: '혈족 사제', hp: 190, isMachine: false, tier: 'boss', perception: 1,
     sequence: [
       { id: 'frailty_orb', mapNoise: 2, damage: 8, effects: [{ kind: 'applyStatus', status: 'fragile', amount: 2, target: 'player' }] },
       { id: 'weakness_orb', mapNoise: 2, damage: 8, effects: [{ kind: 'applyStatus', status: 'weak', amount: 1, target: 'player' }] },
@@ -190,7 +190,7 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
   vantom: {
-    id: 'vantom', name: '밴텀', hp: 173, isMachine: false, tier: 'boss',
+    id: 'vantom', name: '밴텀', hp: 173, isMachine: false, tier: 'boss', perception: 1,
     sequence: [
       { id: 'ink_throw', mapNoise: 1, damage: 7 },
       { id: 'ink_spear', mapNoise: 1, damage: 6, hits: 2 },
@@ -201,7 +201,7 @@ export const MONSTER_DEFINITIONS = {
 
   // ---- 하수인 (다른 몬스터의 move.summon으로만 등장, 맵 노드에 직접 배정되지 않음) ----
   sawtooth_eye: {
-    id: 'sawtooth_eye', name: '톱니눈', hp: 6, isMachine: false, tier: 'minion',
+    id: 'sawtooth_eye', name: '톱니눈', hp: 6, isMachine: false, tier: 'minion', perception: -1,
     sequence: [
       { id: 'dizzy_spores', mapNoise: 1, damage: 0, insertStatusCard: 'dizziness_status_card', insertStatusCardCount: 2 },
     ],

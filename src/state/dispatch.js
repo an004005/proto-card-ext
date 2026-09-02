@@ -58,6 +58,13 @@ function summarize(command, before) {
     case 'MOVE_TO_NODE': return `MOVE_TO_NODE ${command.nodeId}`;
     case 'REQUEST_EXTRACTION': return `REQUEST_EXTRACTION ${command.exitId}`;
     case 'BASIC_RECON': return 'BASIC_RECON';
+    case 'USE_CONCEALMENT': return 'USE_CONCEALMENT';
+    case 'HACK_CONTROL_ROOM': return 'HACK_CONTROL_ROOM';
+    case 'USE_MAP_CONSUMABLE': return `USE_MAP_CONSUMABLE ${command.itemId}`;
+    case 'ENCOUNTER_AMBUSH': return 'ENCOUNTER_AMBUSH';
+    case 'ENCOUNTER_IGNORE': return 'ENCOUNTER_IGNORE';
+    case 'ENCOUNTER_EVADE': return 'ENCOUNTER_EVADE';
+    case 'ENCOUNTER_FIGHT': return 'ENCOUNTER_FIGHT';
     case 'OPEN_SPECIAL_EDGE': return `OPEN_SPECIAL_EDGE ${command.edgeId}`;
     case 'USE_OPPORTUNITY': return `USE_OPPORTUNITY ${command.opportunityId}`;
     case 'USE_FIELD_EQUIPMENT': return `USE_FIELD_EQUIPMENT ${command.instanceId}`;

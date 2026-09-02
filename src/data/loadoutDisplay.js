@@ -91,6 +91,7 @@ export function buildConsumableSlots(loadout) {
       key: `consumable${i}`,
       catKey: 'consumable',
       itemId: item?.id || null,
+      defId: item?.defId || null,
       category: '소모품',
       filled: !!item,
       name: def?.name,

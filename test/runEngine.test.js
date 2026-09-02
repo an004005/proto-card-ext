@@ -5,12 +5,14 @@ import {
   createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
   openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment, isAtOpenExit,
   hackCamera, hackAccessInterface, destroyCamera, cameraHackRange, disableGenerator,
+  useConcealment, effectiveStealthWithConcealment, refreshActiveRecon, hackControlRoom,
+  getSectorLandmarkArrowTarget,
 } from '../src/engine/runEngine.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
-  OVERLOAD_MELTDOWN, BASIC_RECON_TIME, FARM_TIME,
+  OVERLOAD_MELTDOWN, BASIC_RECON_TIME, FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
 
@@ -297,6 +299,32 @@ test('sector alert rises by exactly 1 per resolved event, not per investigating 
   assert.equal(state.sectorAlerts[sectorId].level, after);
 });
 
+test('sector alert decays by 1 per 1000 elapsed time, floored at 0, independently per sector', () => {
+  let state = makeRun(4);
+  state = { ...state, playerNodeId: 'nowhere' };
+  state = advanceTime(state, 50);
+  const sectorId = Object.values(state.threats)[0].sectorId;
+  const sectorThreat = Object.values(state.threats).find((t) => t.sectorId === sectorId);
+  state = reportNoise(state, sectorThreat.nodeId, 3, state.time);
+  state = advanceTime(state, 500);
+  const escalated = state.sectorAlerts[sectorId].level;
+  assert.ok(escalated >= 1);
+
+  state = advanceTime(state, 999);
+  assert.equal(state.sectorAlerts[sectorId].level, escalated, 'no decay yet just before 1000');
+
+  state = advanceTime(state, 1000);
+  assert.equal(state.sectorAlerts[sectorId].level, escalated - 1, 'decays by exactly 1 at time 1000');
+
+  // resolvedEventIds history is untouched by decay (no re-escalation from the same past event).
+  assert.equal(state.sectorAlerts[sectorId].resolvedEventIds.length, 1);
+
+  // a sector already at 0 stays at 0 (never goes negative).
+  const quietSectorId = Object.keys(state.sectorAlerts).find((id) => id !== sectorId);
+  state = advanceTime(state, 2000);
+  assert.equal(state.sectorAlerts[quietSectorId].level, 0);
+});
+
 test('a blocked edge cannot be walked until opened with Force, and oneWay edges only go one direction', () => {
   let state = makeRun(1);
   const blockedEdge = state.graph.edges.find((e) => e.features.includes('blocked') && !e.features.includes('electronic'));
@@ -445,4 +473,97 @@ test('battery generators can be hacked directly or through a hacked same-sector 
   const forced = disableGenerator({ ...state, playerNodeId: generator.nodeId, disabledGeneratorIds: [] }, generator.id, 'force', 2);
   assert.ok(forced.disabledGeneratorIds.includes(generator.id));
   assert.equal(forced.time, state.time + 100);
+});
+
+test('useConcealment applies its node\'s fixed bonus, costs CONCEALMENT_ACTION_TIME_COST, and only affects the node it was used at', () => {
+  const { graph } = generateFacilityGraph(2);
+  const concealedNodeId = Object.keys(graph.concealmentByNodeId)[0];
+  assert.ok(concealedNodeId, 'fixture seed should have at least one concealed node');
+  const bonus = graph.concealmentByNodeId[concealedNodeId];
+
+  let state = { ...createRunState(graph, 2), playerNodeId: concealedNodeId };
+  assert.equal(effectiveStealthWithConcealment(1, state), 1, 'no bonus before use');
+
+  const before = state.time;
+  state = useConcealment(state);
+  assert.equal(state.time, before + CONCEALMENT_ACTION_TIME_COST);
+  assert.deepEqual(state.activeConcealment, { nodeId: concealedNodeId, bonus });
+  assert.equal(effectiveStealthWithConcealment(1, state), 1 + bonus);
+
+  // moving away clears it — a node without concealment must throw.
+  const neighborId = graph.edges.find((e) => e.from === concealedNodeId || e.to === concealedNodeId);
+  const destinationId = neighborId.from === concealedNodeId ? neighborId.to : neighborId.from;
+  state = moveToAdjacentNode(state, destinationId);
+  assert.equal(state.activeConcealment, null);
+  assert.equal(effectiveStealthWithConcealment(1, state), 1);
+});
+
+test('useConcealment throws at a node with no concealment', () => {
+  const { graph } = generateFacilityGraph(2);
+  const plainNodeId = graph.nodes.find((n) => !graph.concealmentByNodeId[n.id]).id;
+  const state = { ...createRunState(graph, 2), playerNodeId: plainNodeId };
+  assert.throws(() => useConcealment(state));
+});
+
+test('concealment is only exposed via observations once recon\'d, not just by being adjacent', () => {
+  const { graph } = generateFacilityGraph(2);
+  const concealedNodeId = Object.keys(graph.concealmentByNodeId)[0];
+  const state = createRunState(graph, 2);
+  const recon = basicRecon({ ...state, playerNodeId: concealedNodeId });
+  assert.equal(recon.observations[concealedNodeId].concealment, graph.concealmentByNodeId[concealedNodeId]);
+});
+
+test('hackControlRoom requires standing at the sector landmark and Hacking 1+', () => {
+  const { graph } = generateFacilityGraph(2);
+  const state = createRunState(graph, 2);
+  assert.throws(() => hackControlRoom(state, 1), /control room/);
+
+  const landmark = graph.landmarks[0];
+  const atLandmark = { ...state, playerNodeId: landmark.nodeId };
+  assert.throws(() => hackControlRoom(atLandmark, 0), /Hacking/);
+});
+
+test('hackControlRoom level 1 reveals the sector\'s patrol routes permanently, and costs CONTROL_ROOM_HACK_TIME', () => {
+  const { graph } = generateFacilityGraph(2);
+  const landmark = graph.landmarks[0];
+  const state = { ...createRunState(graph, 2), playerNodeId: landmark.nodeId };
+  const before = state.time;
+  const next = hackControlRoom(state, 1);
+  assert.equal(next.time, before + CONTROL_ROOM_HACK_TIME);
+  assert.deepEqual(next.revealedPatrolRouteSectorIds, [landmark.sectorId]);
+  // sector alert / threat modes untouched at level 1
+  assert.equal(next.sectorAlerts[landmark.sectorId].level, state.sectorAlerts[landmark.sectorId].level);
+});
+
+test('hackControlRoom level 2 also decreases this sector\'s alert by (hacking - 1), floored at 0, and level 3 includes both plus a global patrol reset', () => {
+  const { graph } = generateFacilityGraph(2);
+  const landmark = graph.landmarks[0];
+  let state = { ...createRunState(graph, 2), playerNodeId: landmark.nodeId };
+  state = { ...state, sectorAlerts: { ...state.sectorAlerts, [landmark.sectorId]: { level: 3, resolvedEventIds: [] } } };
+  // also put every threat into pursuit to prove level 3 resets them all, not just this sector's.
+  const threats = {};
+  for (const [id, t] of Object.entries(state.threats)) threats[id] = { ...t, mode: 'pursuit', pursuitStrength: 3, lastKnownPlayerNodeId: 'somewhere' };
+  state = { ...state, threats };
+
+  const level2 = hackControlRoom(state, 2);
+  assert.equal(level2.sectorAlerts[landmark.sectorId].level, 2); // 3 - (2-1) = 2
+  assert.deepEqual(level2.revealedPatrolRouteSectorIds, [landmark.sectorId]); // level 1 effect included
+  assert.ok(Object.values(level2.threats).every((t) => t.mode === 'pursuit'), 'level 2 must not reset threat modes');
+
+  const level3 = hackControlRoom(state, 3);
+  assert.equal(level3.sectorAlerts[landmark.sectorId].level, 1); // 3 - (3-1) = 1
+  assert.ok(Object.values(level3.threats).every((t) => t.mode === 'patrol' && t.pursuitStrength === 0 && t.lastKnownPlayerNodeId === null), 'level 3 must reset every threat in the run, not just this sector');
+});
+
+test('getSectorLandmarkArrowTarget points at the current sector\'s landmark until it has been observed, and is null without the implant', () => {
+  const { graph } = generateFacilityGraph(2);
+  const state = createRunState(graph, 2);
+  const playerSectorId = graph.nodes.find((n) => n.id === state.playerNodeId).sectorId;
+  const landmark = graph.landmarks.find((l) => l.sectorId === playerSectorId);
+
+  assert.equal(getSectorLandmarkArrowTarget(state, false), null, 'no implant -> no arrow');
+  assert.deepEqual(getSectorLandmarkArrowTarget(state, true), landmark);
+
+  const observed = { ...state, observations: { ...state.observations, [landmark.nodeId]: { observedAt: 0, hasThreat: false } } };
+  assert.equal(getSectorLandmarkArrowTarget(observed, true), null, 'landmark already observed -> arrow gone');
 });

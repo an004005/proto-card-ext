@@ -16,7 +16,7 @@ export const WAREHOUSE_STARTING_POOL = {
   tops: ['light_top'],
   bottoms: ['tactical_bottom'],
   modules: ['module_neural', 'module_body'],
-  implants: ['implant1', 'implant3', 'implant6'],
+  implants: ['implant1', 'implant3', 'implant6', 'implant7'],
   consumables: [{ defId: 'bandage', count: 2 }, { defId: 'stabilizer', count: 1 }],
 };
 

@@ -14,11 +14,13 @@ import { createRngState, pick } from './rng.js';
 import { bfsHopDistances, buildAdjacency } from './graphUtils.js';
 import { gainOverload, reduceOverload } from './overloadEngine.js';
 import { effectiveForRequirement } from './capabilityEngine.js';
+import { pickThreatEncounter } from '../data/dropTables.js';
+import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 import {
   RUN_COLLAPSE_TIME, WORLD_TICK_INTERVAL, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
-  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS,
+  SECTOR_ALERT_MIN_ENEMY_ALERT, SECTOR_ALERT_DECAY_INTERVAL, NOISE_HOP_RANGE, SECTOR_IDS,
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME, FARM_TIME,
   FARM_NOISE, FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN,
@@ -26,6 +28,7 @@ import {
   CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
   MOBILITY_MOVE_TIME_MULTIPLIER,
   GENERATOR_HACK_TIME, GENERATOR_HACK_OVERLOAD, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
+  CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME, CONTROL_ROOM_HACK_OVERLOAD,
 } from '../data/facilityLayout.js';
 
 // 모듈 레벨 카운터는 같은 프로세스에서 같은 seed로 여러 번 플레이하면(예: 헤드리스 테스트가
@@ -73,13 +76,20 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     }
   }
 
+  // §신규 조우 시스템: 위협 마커에 속한 몬스터 구성을 런 시작 시 한 번 뽑아 고정한다
+  // (computeThreatPerception이 이 monsterIds로 perception을 계산하고, 실제 전투 진입 시에도
+  // 이 구성을 그대로 쓴다 — 조우 때 "본" 위험도와 실제로 붙는 적이 달라지지 않게).
+  let rngState = createRngState(seed);
   /** @type {Record<string, import('./types.js').ThreatRuntimeState>} */
   const threats = {};
   for (const roster of graph.threats) {
+    const rolled = pickThreatEncounter(rngState, roster.sectorId, roster.size);
+    rngState = rolled.rngState;
     threats[roster.id] = {
       id: roster.id,
       sectorId: roster.sectorId,
       size: roster.size,
+      monsterIds: rolled.monsterIds,
       patrolRoute: roster.patrolRoute,
       patrolIndex: 0,
       nodeId: roster.patrolRoute[0],
@@ -101,7 +111,7 @@ export function createRunState(graph, seed, overloadConfig = {}) {
   return {
     graph,
     time: 0,
-    rngState: createRngState(seed),
+    rngState,
     phase: 'active',
     playerNodeId: graph.startNodeId,
     visitedNodeIds: [graph.startNodeId],
@@ -127,6 +137,9 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     sectorAlerts,
     combatTrigger: null,
     keyDiscovered: false,
+    activeConcealment: null,
+    revealedPatrolRouteSectorIds: [],
+    encounter: null,
   };
 }
 
@@ -174,6 +187,23 @@ export function refreshLocalObservations(run) {
   return { ...run, observations };
 }
 
+/**
+ * §신규 지도 임플란트: 현재 구역의 랜드마크(구역 통제실과 같은 노드, graph.landmarks)를
+ * 화살표로 가리킬 대상을 계산한다 — 그 노드를 한 번이라도 관측했으면(observations에 기록)
+ * 더 이상 화살표가 필요 없으므로 null.
+ * @param {import('./types.js').FacilityRunState} run
+ * @param {boolean} hasMapImplant
+ * @returns {import('./types.js').SectorLandmark|null}
+ */
+export function getSectorLandmarkArrowTarget(run, hasMapImplant) {
+  if (!hasMapImplant || !run.playerNodeId) return null;
+  const playerNode = run.graph.nodes.find((n) => n.id === run.playerNodeId);
+  if (!playerNode) return null;
+  const landmark = run.graph.landmarks.find((l) => l.sectorId === playerNode.sectorId);
+  if (!landmark || run.observations[landmark.nodeId]) return null;
+  return landmark;
+}
+
 /** Refresh the nodes watched by an active manual or hacked-camera recon session. */
 export function refreshActiveRecon(run) {
   const recon = run.activeRecon;
@@ -188,6 +218,7 @@ export function refreshActiveRecon(run) {
       observedAt: run.time,
       hasThreat: threatNodeIds.has(nodeId),
       exitStatus: exit?.kind === 'standard' ? exit.status : undefined,
+      concealment: run.graph.concealmentByNodeId[nodeId],
     };
   }
   return { ...run, observations };
@@ -296,6 +327,31 @@ export function reportSighting(state, threatId, playerNodeId) {
       },
     },
   };
+}
+
+/**
+ * §신규 조우 시스템: 위협 마커의 perception을 size/alert에서 파생시킨다 — 몬스터 종류와
+ * 무관한 마커 단위 값. alert(0~3)에, 그 마커에 속한 몬스터들의 perception 중 최댓값을 더한다
+ * (정확한 밸런스 수치는 실측 후 조정 대상 — 관계의 방향만 확정된 부분).
+ * @param {import('./types.js').ThreatRuntimeState} threat
+ * @returns {number}
+ */
+export function computeThreatPerception(threat) {
+  const rosterPerception = threat.monsterIds.reduce(
+    (max, id) => Math.max(max, MONSTER_DEFINITIONS[id]?.perception ?? 0), 0,
+  );
+  return threat.alert + rosterPerception;
+}
+
+/**
+ * @param {number} stealth
+ * @param {number} perception
+ * @returns {'advantage'|'even'|'disadvantage'}
+ */
+export function computeEncounterTier(stealth, perception) {
+  if (stealth > perception) return 'advantage';
+  if (stealth === perception) return 'even';
+  return 'disadvantage';
 }
 
 /** @param {import('./types.js').FacilityRunState} state @param {import('./types.js').FacilitySectorId} sectorId */
@@ -512,6 +568,14 @@ function worldTick(state, tickTime) {
   // through workingState) but not their moves within this same tick — §5.2 doesn't require
   // ordering between markers, only that each picks a target and moves at most once per tick.
   let workingState = state;
+  if (tickTime > 0 && tickTime % SECTOR_ALERT_DECAY_INTERVAL === 0) {
+    const decayedAlerts = {};
+    for (const sectorId of SECTOR_IDS) {
+      const current = workingState.sectorAlerts[sectorId];
+      decayedAlerts[sectorId] = { ...current, level: /** @type {0|1|2|3} */ (Math.max(0, current.level - 1)) };
+    }
+    workingState = { ...workingState, sectorAlerts: decayedAlerts };
+  }
   for (const threat of Object.values(state.threats)) {
     const { threat: updated, rngState, sectorAlerts } = updateThreat(workingState, threat, tickTime);
     nextThreats[threat.id] = updated;
@@ -676,7 +740,7 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
   const visitedNodeIds = state.visitedNodeIds.includes(destinationNodeId)
     ? state.visitedNodeIds
     : [...state.visitedNodeIds, destinationNodeId];
-  let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null };
+  let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null, activeConcealment: null, encounter: null };
   moved = applyCameraDetection(moved, destinationNodeId, effectiveStealth);
   const stealthIndex = Math.max(-2, Math.min(4, effectiveStealth)) + 2;
   const movementNoise = [3, 2, 1, 0, 0, 0, 0][stealthIndex];
@@ -761,6 +825,33 @@ export function basicRecon(state) {
   }
   const activeRecon = { source: /** @type {const} */ ('basic'), sourceNodeId: state.playerNodeId, targetNodeIds: [...targets], expiresAt: null };
   return advanceTime(refreshActiveRecon({ ...state, activeRecon }), state.time + BASIC_RECON_TIME);
+}
+
+/**
+ * §신규 은엄폐: 현재 노드에 배치된 은엄폐를 사용해 그 노드에 머무는 동안 임시로 Stealth를
+ * 올린다(다른 노드로 이동하면 moveToAdjacentNode가 activeConcealment를 지운다). 이 노드에
+ * 은엄폐가 없으면 던진다(§다른 시설맵 액션과 같은 실패 관례).
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function useConcealment(state) {
+  if (state.phase !== 'active') throw new Error('run already ended');
+  if (!state.playerNodeId) throw new Error('player is not at a node');
+  const bonus = state.graph.concealmentByNodeId[state.playerNodeId];
+  if (!bonus) throw new Error(`no concealment at ${state.playerNodeId}`);
+  const activeConcealment = { nodeId: state.playerNodeId, bonus };
+  return advanceTime({ ...state, activeConcealment }, state.time + CONCEALMENT_ACTION_TIME_COST);
+}
+
+/**
+ * @param {number} baseEffectiveStealth
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {number}
+ */
+export function effectiveStealthWithConcealment(baseEffectiveStealth, state) {
+  const active = state.activeConcealment;
+  if (!active || active.nodeId !== state.playerNodeId) return baseEffectiveStealth;
+  return baseEffectiveStealth + active.bonus;
 }
 
 /** Effective Hacking -> direct hacking range in graph hops. */
@@ -852,6 +943,48 @@ export function disableGenerator(state, generatorId, capabilityKind, effectiveCa
   next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (GENERATOR_FORCE_NOISE), state.time);
   next = { ...next, disabledGeneratorIds: [...next.disabledGeneratorIds, generatorId] };
   return advanceTime(next, state.time + GENERATOR_FORCE_TIME);
+}
+
+/**
+ * §신규 구역 통제실 해킹: 그 구역의 랜드마크 노드(graph.landmarks)에서만 시도할 수 있고,
+ * 기존 hackAccessInterface/hackCamera와 별개의 상호작용이다(그것들로는 통제실에 닿을 수
+ * 없다). 해킹 수치별로 누적 언락 — 상위 레벨은 하위 효과를 전부 포함한다:
+ *   1: 이 구역 위협들의 순찰경로를 영구 공개.
+ *   2: 이 구역 경계도를 (해킹 수치 - 1)만큼 감소(최소 0).
+ *   3: 맵 전체 위협을 전부 patrol 모드로 되돌린다(추적 해제).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} effectiveHacking
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function hackControlRoom(state, effectiveHacking) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('control room hacking unavailable');
+  const landmark = state.graph.landmarks.find((l) => l.nodeId === state.playerNodeId);
+  if (!landmark) throw new Error('not at a sector control room');
+  const level = effectiveForRequirement(effectiveHacking);
+  if (level < 1) throw new Error('Hacking 1+ required');
+
+  let next = applyOverloadDelta(state, CONTROL_ROOM_HACK_OVERLOAD);
+
+  const revealedPatrolRouteSectorIds = next.revealedPatrolRouteSectorIds.includes(landmark.sectorId)
+    ? next.revealedPatrolRouteSectorIds
+    : [...next.revealedPatrolRouteSectorIds, landmark.sectorId];
+  next = { ...next, revealedPatrolRouteSectorIds };
+
+  if (level >= 2) {
+    const current = next.sectorAlerts[landmark.sectorId];
+    const decreased = /** @type {0|1|2|3} */ (Math.max(0, current.level - (level - 1)));
+    next = { ...next, sectorAlerts: { ...next.sectorAlerts, [landmark.sectorId]: { ...current, level: decreased } } };
+  }
+
+  if (level >= 3) {
+    const threats = {};
+    for (const [id, threat] of Object.entries(next.threats)) {
+      threats[id] = { ...threat, mode: 'patrol', pursuitStrength: 0, lastKnownPlayerNodeId: null, target: null };
+    }
+    next = { ...next, threats };
+  }
+
+  return advanceTime(next, state.time + CONTROL_ROOM_HACK_TIME);
 }
 
 /**

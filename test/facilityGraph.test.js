@@ -197,3 +197,16 @@ test('threat patrol routes stay within their own sector and within the configure
     }
   }
 });
+
+test('concealment values are within 1-3, absent (0) nodes are omitted, and generation is deterministic', () => {
+  for (let seed = 0; seed < 10; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const nodeIds = new Set(graph.nodes.map((n) => n.id));
+    for (const [nodeId, value] of Object.entries(graph.concealmentByNodeId)) {
+      assert.ok(nodeIds.has(nodeId), `seed ${seed}: concealment on unknown node ${nodeId}`);
+      assert.ok(value >= 1 && value <= 3, `seed ${seed}: concealment value ${value} out of range`);
+    }
+    const again = generateFacilityGraph(seed);
+    assert.deepEqual(again.graph.concealmentByNodeId, graph.concealmentByNodeId);
+  }
+});

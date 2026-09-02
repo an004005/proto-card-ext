@@ -1,4 +1,4 @@
-// 160-node extraction facility layout config (docs/extraction-map-implementation-spec.md §4).
+// 240-node extraction facility layout config (docs/extraction-map-implementation-spec.md §4).
 // Data only — no generation logic here (that's src/engine/facilityGraph.js).
 
 // 구역을 하나의 큰 링(원환) 위에 순서대로 배치한다 — entrance가 시작점, 링에서 정반대(4칸
@@ -19,7 +19,7 @@ export const SECTOR_NAMES = {
   residential: '거주동',
 };
 
-export const NODES_PER_SECTOR = 20;
+export const NODES_PER_SECTOR = 30; // 8구역 x 30 = 240 (기존 160의 1.5배). 위협 수·시간 예산은 그대로.
 export const TOTAL_NODES = SECTOR_IDS.length * NODES_PER_SECTOR;
 
 // Mobility 0 기준 "평균적인" 일반 복도 시간 비용 (구현 명세 §6.2) — 실제 엣지 시간은 이제
@@ -64,7 +64,7 @@ export const BASE_EDGE_DEGREE_HARD_CAP = 4;
 /** @type {[string, string][]} */
 export const SECTOR_ADJACENCY = SECTOR_IDS.map((s, i) => [s, SECTOR_IDS[(i + 1) % SECTOR_IDS.length]]);
 
-// 탈출구별 Mobility 0 가중 이동비용 범위 (구현 명세 §2.2). 160노드 스케일에 맞춰 재조정됨 —
+// 탈출구별 Mobility 0 가중 이동비용 범위 (구현 명세 §2.2). 240노드 스케일에 맞춰 재조정됨 —
 // scratchpad 스크립트로 실측한 뒤 확정한 값(아래 facilityGraph.js 상단 주석 참고).
 export const EXIT_DISTANCE_RANGES = {
   A: { min: 3200, max: 5000 },
@@ -123,6 +123,23 @@ export const OPPORTUNITY_USES_WEIGHTS = [
 ];
 export const KEY_DROP_CHANCE = 0.01;
 
+// 노드별 은엄폐(§신규): 일부 노드에만 배치되며, 값(1~3)만큼 그 노드에서 임시로 실효 Stealth를
+// 올려준다. 다른 노드로 이동하면 사라진다.
+/** @type {{value: 0|1|2|3, weight: number}[]} */
+export const CONCEALMENT_NODE_WEIGHTS = [
+  { value: 0, weight: 60 },
+  { value: 1, weight: 16 },
+  { value: 2, weight: 14 },
+  { value: 3, weight: 10 },
+];
+export const CONCEALMENT_ACTION_TIME_COST = 20;
+
+// 구역 통제실 해킹(§신규) — 각 구역의 랜드마크 노드(graph.landmarks)에서만 시도할 수 있다.
+// 해킹 수치별로 누적 언락(상위 레벨은 하위 효과를 전부 포함): 1=이 구역 순찰경로 영구 표시,
+// 2=이 구역 경계레벨 감소(감소량 = 해킹 수치 - 1), 3=맵 전체 위협 전원 patrol 전환.
+export const CONTROL_ROOM_HACK_TIME = 150;
+export const CONTROL_ROOM_HACK_OVERLOAD = 10;
+
 // Cameras and access interfaces are rolled independently, so either device can exist alone or
 // both can share a node. Generation guarantees at least one of each per sector.
 export const CAMERA_NODE_CHANCE = 0.22;
@@ -171,7 +188,7 @@ export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
 
 // ---- 시간·틱·탈출 (구현 명세 §2, §5, §7) ----
 
-// 160노드 스케일(구 EXIT_DISTANCE_RANGES.B 대비 ~3.45배)에 맞춰 재조정됨.
+// 240노드 스케일(구 EXIT_DISTANCE_RANGES.B 대비 ~3.45배)에 맞춰 재조정됨.
 export const RUN_COLLAPSE_TIME = 14000; // §2.3 t===RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
 export const WORLD_TICK_INTERVAL = 10; // §5.1 "전역 시간이 10 시간 포인트 진행될 때마다 1회".
 
@@ -196,6 +213,10 @@ export const SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 70, 3: 60 };
 
 /** @type {Record<0|1|2|3, 0|1|2>} */
 export const SECTOR_ALERT_MIN_ENEMY_ALERT = { 0: 0, 1: 1, 2: 2, 3: 2 }; // §7.4
+
+// 구역 경계도는 시간 1000당 1씩 감쇠한다(최소 0) — §7.4의 상승 조건과 별개로, 오래 조용히 있으면
+// 다시 가라앉는다.
+export const SECTOR_ALERT_DECAY_INTERVAL = 1000;
 
 /** @type {Record<1|2|3|4, number>} §7.1 소음 단계 -> 홉 범위 */
 export const NOISE_HOP_RANGE = { 1: 1, 2: 2, 3: 3, 4: Infinity };

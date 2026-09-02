@@ -2,12 +2,12 @@
 import { applyStatus, applyDamage } from './statusEngine.js';
 import { reduceOverload } from './overloadEngine.js';
 import {
-  createCombatState, beginPlayerFirst, playCard, advanceTurn, checkWinLoss, createEnemyInstance,
+  createCombatState, beginPlayerFirst, beginEnemyFirst, playCard, advanceTurn, checkWinLoss,
 } from './combatEngine.js';
 import { refreshLocalObservations } from './runEngine.js';
 import { computeCapabilities } from './capabilityEngine.js';
 import {
-  applyCombatRoundToRunState, beginDisengage, cancelDisengage, addDisengageProgress, canDisengage, advanceReinforcements,
+  applyCombatRoundTimeToRunState, applyCombatCardNoise, beginDisengage, cancelDisengage, addDisengageProgress, canDisengage,
 } from './combatMapIntegration.js';
 import {
   buildDeckFromLoadout, computeFloorOverload, computeOverloadGainMultiplier, getImplantEffect,
@@ -16,7 +16,6 @@ import {
 import { addItem, removeItem, isItemBurdenGivenOrder, getUsableAmmo, spendAmmo } from './inventoryEngine.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { BURDEN_CARD_DEF_BY_KIND, CARD_DEFINITIONS } from '../data/cards.js';
-import { pickReinforcementMonster } from '../data/dropTables.js';
 import { startReward } from './rewardReducer.js';
 import { GENERATOR_COMBAT_START_ARMOR } from '../data/facilityLayout.js';
 
@@ -41,10 +40,12 @@ export function getDeckEntries(playerState) {
 }
 
 /**
+ * §신규 조우 시스템: `context.ambush` — 'player'면 플레이어 기습(전 적 스턴 부여 후 정상 플레이어
+ * 선공), 'enemy'면 적 기습(beginEnemyFirst, 적 선공 1턴), 생략하면 기존과 같은 평시 플레이어 선공.
  * @param {GameSnapshot} snapshot
  * @param {string[]} monsterIds
  * @param {number|undefined} hpMultiplier
- * @param {{nodeId: string, threatId?: string}} context
+ * @param {{nodeId: string, threatId?: string, ambush?: 'player'|'enemy'}} context
  * @returns {GameSnapshot}
  */
 export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
@@ -91,11 +92,14 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
     };
   }
 
-  combat = beginPlayerFirst(combat);
+  if (context.ambush === 'player') {
+    combat = { ...combat, enemies: combat.enemies.map((e) => ({ ...e, statuses: applyStatus(e.statuses, 'stun', 1) })) };
+  }
+  combat = context.ambush === 'enemy' ? beginEnemyFirst(combat) : beginPlayerFirst(combat);
   return {
     ...snapshot, activeCombatState: combat, currentScreen: 'combat', rngState: combat.rngState,
     combatContext: {
-      ...context, ammoAtStart: usableAmmo, roundNoiseValues: [], reinforcementQueue: [],
+      ...context, ammoAtStart: usableAmmo, noiseGauge: 0, noiseIntensity: 0,
       disengage: { escapeIntent: false, disengageProgress: 0 },
     },
   };
@@ -108,45 +112,31 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
  * @returns {GameSnapshot}
  */
 export function playCardCommand(snapshot, instanceId, targetId) {
-  if (!snapshot.activeCombatState || !snapshot.combatContext) return snapshot;
+  if (!snapshot.activeCombatState || !snapshot.combatContext || !snapshot.facilityRunState) return snapshot;
   const card = snapshot.activeCombatState.piles.hand.find((c) => c.instanceId === instanceId);
   const combat = playCard(snapshot.activeCombatState, instanceId, targetId);
   if (combat === snapshot.activeCombatState) return snapshot;
 
   const mapTags = card ? CARD_DEFINITIONS[card.defId]?.mapTags : null;
   let combatContext = snapshot.combatContext;
+  let facilityRunState = snapshot.facilityRunState;
   if (mapTags) {
-    combatContext = { ...combatContext, roundNoiseValues: [...combatContext.roundNoiseValues, mapTags.noise] };
+    // §9.1 전투 소음 게이지: checked immediately on every card play, never batched to round end —
+    // enemy intents do not feed it (only played cards do).
+    const noise = applyCombatCardNoise(facilityRunState, combatContext.nodeId, combatContext.noiseGauge, combatContext.noiseIntensity, mapTags.noise);
+    facilityRunState = refreshLocalObservations(noise.runState);
+    combatContext = { ...combatContext, noiseGauge: noise.gauge, noiseIntensity: noise.intensity };
     if (mapTags.disengageProgress) combatContext = { ...combatContext, disengage: addDisengageProgress(combatContext.disengage, mapTags.disengageProgress) };
   }
-  return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, combatContext });
+  return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, combatContext, facilityRunState });
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function endTurnCommand(snapshot) {
   if (!snapshot.activeCombatState || !snapshot.combatContext || !snapshot.facilityRunState) return snapshot;
-  const enemyNoise = snapshot.activeCombatState.enemies.filter((e) => e.hp > 0).map((e) => e.intent.mapNoise);
-  const roundNoiseValues = [...snapshot.combatContext.roundNoiseValues, ...enemyNoise];
-
   const combat = advanceTurn(snapshot.activeCombatState);
-
-  const facilityRunState = refreshLocalObservations(applyCombatRoundToRunState(snapshot.facilityRunState, snapshot.combatContext.nodeId, roundNoiseValues));
-  const { queue, arrivals } = advanceReinforcements(snapshot.combatContext.reinforcementQueue, facilityRunState.time);
-
-  let enemies = combat.enemies;
-  let rngState = combat.rngState;
-  for (const arrival of arrivals) {
-    const picked = pickReinforcementMonster(rngState);
-    rngState = picked.rngState;
-    const created = createEnemyInstance(picked.monsterId, enemies.length, enemies.length, 1, false, rngState);
-    rngState = created.rngState;
-    enemies = [...enemies, created.enemy];
-  }
-
-  const combatContext = { ...snapshot.combatContext, roundNoiseValues: [], reinforcementQueue: queue };
-  return finalizeIfCombatEnded({
-    ...snapshot, activeCombatState: { ...combat, enemies, rngState }, facilityRunState, combatContext, rngState,
-  });
+  const facilityRunState = refreshLocalObservations(applyCombatRoundTimeToRunState(snapshot.facilityRunState));
+  return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, facilityRunState });
 }
 
 /**
@@ -219,15 +209,12 @@ export function finalizeIfCombatEnded(snapshot) {
   const threat = context?.threatId && snapshot.facilityRunState ? snapshot.facilityRunState.threats[context.threatId] : null;
   const tier = threat && threat.size >= 4 ? 'elite' : 'normal';
 
-  // 승리한 위협 그룹(및 이번 전투에 합류한 증원)은 더 이상 순찰/추적하지 않는다 — 격퇴 처리.
+  // 승리한 위협 그룹은 더 이상 순찰/추적하지 않는다 — 격퇴 처리.
   let facilityRunState = snapshot.facilityRunState;
-  if (facilityRunState && context) {
-    const defeatedIds = new Set([context.threatId, ...context.reinforcementQueue.map((e) => e.threatId)].filter(Boolean));
-    if (defeatedIds.size > 0) {
-      const threats = { ...facilityRunState.threats };
-      for (const id of defeatedIds) delete threats[/** @type {string} */ (id)];
-      facilityRunState = { ...facilityRunState, threats };
-    }
+  if (facilityRunState && context && context.threatId) {
+    const threats = { ...facilityRunState.threats };
+    delete threats[context.threatId];
+    facilityRunState = { ...facilityRunState, threats };
   }
 
   const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, inventory, loadout: decayResult.loadout };

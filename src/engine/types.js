@@ -55,7 +55,7 @@
  * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
  */
 
-// ---- facility graph (160-node extraction map, docs/extraction-map-implementation-spec.md) ----
+// ---- facility graph (240-node extraction map, docs/extraction-map-implementation-spec.md) ----
 // These types describe the generated graph shape only (facilityGraph.js). The broader RunState
 // from the spec (time, threats' live mode/alert, exits' request lifecycle, etc.) is added in a
 // later phase once the time/threat engine lands.
@@ -124,6 +124,7 @@
  * @property {ExitPlacement[]} exits A/B/key 순서 무관, 3개.
  * @property {SectorLandmark[]} landmarks
  * @property {Opportunity[]} opportunities
+ * @property {Record<string, 1|2|3>} concealmentByNodeId 은엄폐가 있는 노드만 담는다(없으면 항목 자체가 없음).
  * @property {{id: string, nodeId: string}[]} cameras
  * @property {{id: string, nodeId: string}[]} accessInterfaces
  * @property {{id: string, nodeId: string, sectorId: FacilitySectorId}[]} generators
@@ -251,7 +252,24 @@
  * @property {Evidence[]} evidence
  * @property {Record<FacilitySectorId, SectorAlertState>} sectorAlerts
  * @property {{threatId: string, nodeId: string}|null} combatTrigger 위협이 playerNodeId에 도착하면 채워진다.
+ * @property {{nodeId: string, bonus: 1|2|3}|null} activeConcealment 은엄폐 사용 중인 노드와 그 임시 Stealth 보너스 — 다른 노드로 이동하면 초기화된다.
+ * @property {string[]} revealedPatrolRouteSectorIds 통제실 해킹 레벨1+로 순찰경로가 영구 공개된 구역.
+ * @property {EncounterState|null} encounter 콜리전으로 열린, 아직 해소되지 않은 조우 판정.
  * @property {boolean} keyDiscovered 열쇠 대상 현장 기회를 파밍해 열쇠 탈출구 위치를 알아냈는지(§5.1.1). 한번 참이 되면 되돌아가지 않는다.
+ */
+
+/**
+ * §신규 조우 시스템(perception vs stealth): tier는 매 재판정마다 갱신된다.
+ * - 'advantage' (stealth > perception): 기습/무시/회피 모두 가능.
+ * - 'even' (stealth === perception): 회피만 가능(무시 불가) — 다른 모든 맵 액션은 막힌다.
+ * - 'disadvantage' (stealth < perception, 아직 행동권 있음): 행동 1회 허용, 그 행동 후 재판정.
+ * - 'forced' (disadvantage에서 행동 1회를 다 쓰고도 여전히 낮음): 전투만 가능, 다른 모든 맵
+ *   액션은 막힌다. 진입 시 항상 적 기습(beginEnemyFirst).
+ * @typedef {Object} EncounterState
+ * @property {string} threatId
+ * @property {string} nodeId
+ * @property {'advantage'|'even'|'disadvantage'|'forced'} tier
+ * @property {boolean} graceUsed disadvantage 진입 후 행동을 1회 소모했는지.
  */
 
 // ---- cards ----
@@ -435,6 +453,9 @@
  * @property {number} hp
  * @property {boolean} isMachine
  * @property {'normal'|'elite'|'boss'|'minion'} tier
+ * @property {number} perception §신규 조우 시스템 — 이 몬스터가 속한 위협 마커의 지각 산정에
+ *   쓰인다(§computeThreatPerception). tier별 고정값: normal -1 / elite 0 / boss 1 / minion -1 —
+ *   minion은 맵 위협 마커에 직접 배정되지 않아 사실상 미사용.
  * @property {(Move|{random: RandomMoveBranch})[]} sequence
  * @property {boolean} [loop] default true; false parks on the final move once reached
  * @property {number} [standingArmor]
@@ -481,20 +502,12 @@
  */
 
 /**
- * @typedef {Object} ReinforcementQueueEntry
- * @property {string} threatId
- * @property {number} eligibleAt
- * @property {number} addedCount
- * @property {number|null} nextAt
- */
-
-/**
  * @typedef {Object} CombatContext
  * @property {string} nodeId 이 전투가 벌어지는 시설맵 노드.
  * @property {string} [threatId] 전투를 유발한 위협 그룹 id (§9).
  * @property {number} ammoAtStart
- * @property {number[]} roundNoiseValues 이번 라운드에 사용된 카드/적 행동 소음값 — END_TURN마다 소진.
- * @property {ReinforcementQueueEntry[]} reinforcementQueue
+ * @property {number} noiseGauge 전투 소음 게이지(0~9) — 카드를 낼 때마다 즉시 채워지고, 10 도달 시 발생·리셋.
+ * @property {0|1|2|3} noiseIntensity 이번 전투에서 마지막으로 발생시킨 소음 강도(1→2→3, 3에서 유지).
  * @property {DisengageContext} disengage
  */
 

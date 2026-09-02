@@ -5,24 +5,32 @@ import { weightedPick } from './rng.js';
 import {
   moveToAdjacentNode, requestExtraction, basicRecon, openSpecialEdge, useOpportunity,
   useFieldEquipment, isAtOpenExit, refreshLocalObservations, hackCamera, hackAccessInterface, destroyCamera,
-  disableGenerator,
+  disableGenerator, advanceTime, useConcealment, hackControlRoom,
+  computeThreatPerception, computeEncounterTier, effectiveStealthWithConcealment,
 } from './runEngine.js';
 import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
-import { scheduleReinforcement } from './combatMapIntegration.js';
 import { computeFloorOverload, computeOverloadGainMultiplier, MAX_DURABILITY } from './equipmentEngine.js';
 import { rollRewardSlots } from './rewardEngine.js';
-import { addItem, createItem, addAmmo } from './inventoryEngine.js';
-import { pickThreatEncounter } from '../data/dropTables.js';
+import { addItem, createItem, addAmmo, removeItem } from './inventoryEngine.js';
 import { startCombat } from './combatReducer.js';
-import { getAllEquipmentIds } from './inventoryReducer.js';
+import { getAllEquipmentIds, equipItem, unequipItem, unequipImplant, unequipConsumable } from './inventoryReducer.js';
+import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
+
+/** 맵에서 장비를 교체할 때 건당 부과되는 시간 비용 — 정찰/파밍 등 다른 맵 액션과 같은 결로,
+ * 그동안 위협이 도착하면 아래 triggerCombatIfNeeded가 강제 전투로 전환한다. */
+export const MAP_EQUIP_TIME_COST = 50;
+/** 맵에서 회복류 소모품을 즉시 사용할 때 부과되는 시간 비용. */
+export const MAP_CONSUMABLE_TIME_COST = 30;
 
 /** @typedef {import('./types.js').GameSnapshot} GameSnapshot */
 
 /**
- * §5.1.2 step 8(가장 낮은 우선순위): 이번 행동 도중 위협이 내 노드로 들어오면 강제 전투로
- * 전환한다. moveToAdjacentNode뿐 아니라 정찰·파밍·특수 엣지 개방·현장 장비 사용·탈출 요청
- * 등 시간이 걸리는 모든 시설 액션에 공통으로 적용해야 한다 — 그렇지 않으면 "제자리에서
- * 정찰만 반복하면 옆에 위협이 와도 안전하다"는 구멍이 생긴다.
+ * §5.1.2 step 8(가장 낮은 우선순위) + §신규 조우 시스템: 이번 행동 도중 위협이 내 노드로
+ * 들어오면(또는 이미 같은 노드에 있는 채로 행동을 계속하면) perception(위협) vs 실효
+ * stealth(플레이어)를 재판정해 `run.encounter`를 세우거나 갱신한다 — 더 이상 콜리전이 즉시
+ * 전투를 여는 게 아니다. moveToAdjacentNode뿐 아니라 정찰·파밍·특수 엣지 개방·현장 장비
+ * 사용·탈출 요청·장비 교체·은엄폐 등 시간이 걸리는 모든 시설 액션에 공통으로 적용해야 한다
+ * — 그렇지 않으면 "제자리에서 정찰만 반복하면 옆에 위협이 와도 안전하다"는 구멍이 생긴다.
  * @param {GameSnapshot} snapshot 이미 facilityRunState/playerState가 갱신된 스냅샷
  * @returns {GameSnapshot}
  */
@@ -33,17 +41,37 @@ function triggerCombatIfNeeded(snapshot) {
   const threat = run.threats[trigger.threatId];
   if (!threat) return snapshot;
 
-  const encounter = pickThreatEncounter(snapshot.rngState, threat.sectorId, threat.size);
-  const withRng = {
-    ...snapshot, rngState: encounter.rngState, facilityRunState: { ...run, combatTrigger: null },
-  };
-  const nearby = Object.values(run.threats).filter(
-    (t) => t.id !== threat.id && t.mode === 'pursuit' && t.nodeId === trigger.nodeId,
-  );
-  const after = startCombat(withRng, encounter.monsterIds, undefined, { nodeId: trigger.nodeId, threatId: threat.id });
-  if (!after.combatContext) return after;
-  const reinforcementQueue = nearby.map((t) => scheduleReinforcement(t.id, run.time));
-  return { ...after, combatContext: { ...after.combatContext, reinforcementQueue } };
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const stealth = effectiveStealthWithConcealment(capabilities.stealth, run);
+  const perception = computeThreatPerception(threat);
+  const tier = computeEncounterTier(stealth, perception);
+  const clearedRun = { ...run, combatTrigger: null };
+
+  if (tier !== 'disadvantage') {
+    return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier, graceUsed: false } } };
+  }
+  // 아직 열세(disadvantage) — 직전 재판정도 열세였고 그때 이미 행동권 1회를 준 상태였다면
+  // (graceUsed: true) 이번엔 그 행동으로도 못 벗어난 것 -> 전투만 가능한 forced로 전환.
+  // 처음 열세에 들어선 경우(또는 그 전엔 우위/동률이었다가 방금 역전된 경우)는 행동 1회를
+  // 허용한다(graceUsed: false로 세팅).
+  const prior = run.encounter && run.encounter.threatId === trigger.threatId ? run.encounter : null;
+  const graceAlreadyGranted = prior?.tier === 'disadvantage' && !prior.graceUsed;
+  if (graceAlreadyGranted) {
+    return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier: 'forced', graceUsed: true } } };
+  }
+  return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier: 'disadvantage', graceUsed: false } } };
+}
+
+/**
+ * §신규 조우 시스템: 'even'(무시 불가, 회피만)과 'forced'(전투만) 동안은 조우 선택지 명령
+ * 이외의 시설맵 액션을 전부 막는다. 'advantage'(무시 가능)와 아직 행동권이 남은
+ * 'disadvantage'(행동 1회 허용)는 막지 않는다 — 그 행동 자체가 이 시스템이 요구하는 흐름이다.
+ * @param {GameSnapshot} snapshot
+ * @returns {boolean}
+ */
+function isBlockedByEncounter(snapshot) {
+  const tier = snapshot.facilityRunState?.encounter?.tier;
+  return tier === 'even' || tier === 'forced';
 }
 
 /**
@@ -56,6 +84,7 @@ function triggerCombatIfNeeded(snapshot) {
  */
 function withFacilityRunState(snapshot, fn) {
   if (snapshot.currentScreen !== 'map' || !snapshot.facilityRunState) return snapshot;
+  if (isBlockedByEncounter(snapshot)) return snapshot;
   const ps = snapshot.playerState;
   const synced = {
     ...snapshot.facilityRunState, overload: ps.overload,
@@ -71,6 +100,80 @@ function withFacilityRunState(snapshot, fn) {
   if (next.phase !== 'active') return { ...result, currentScreen: 'gameOver' };
   if (isAtOpenExit(next)) return { ...result, currentScreen: 'extractionComplete' };
   return triggerCombatIfNeeded(result);
+}
+
+/**
+ * 맵에서의 장비 교체 1건(장착/해제 각각)마다 MAP_EQUIP_TIME_COST를 부과한다 — 다른 시설맵
+ * 액션과 같은 결로, 그 시간 동안 위협이 도착하면 위 triggerCombatIfNeeded가 강제 전투로
+ * 전환한다("제자리에서 장비만 계속 바꾸면 안전하다"는 구멍을 막는다).
+ * @param {GameSnapshot} snapshot
+ * @param {(s: GameSnapshot) => GameSnapshot} applyEquip
+ * @returns {GameSnapshot}
+ */
+function withMapEquipTimeCost(snapshot, applyEquip) {
+  if (snapshot.currentScreen !== 'map') return applyEquip(snapshot);
+  if (isBlockedByEncounter(snapshot)) return snapshot;
+  const equipped = applyEquip(snapshot);
+  // 거부된 시도(파손 장비 재장착 등)는 실제로 아무것도 바뀌지 않은 것 — 시간을 물리지 않는다.
+  if (equipped === snapshot) return snapshot;
+  return withFacilityRunState(equipped, (run) => advanceTime(run, run.time + MAP_EQUIP_TIME_COST));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
+export function equipItemOnMapCommand(snapshot, itemId) {
+  return withMapEquipTimeCost(snapshot, (s) => equipItem(s, itemId));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
+export function unequipItemOnMapCommand(snapshot, itemId) {
+  return withMapEquipTimeCost(snapshot, (s) => unequipItem(s, itemId));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} equipmentId @returns {GameSnapshot} */
+export function unequipImplantOnMapCommand(snapshot, equipmentId) {
+  return withMapEquipTimeCost(snapshot, (s) => unequipImplant(s, equipmentId));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
+export function unequipConsumableOnMapCommand(snapshot, itemId) {
+  return withMapEquipTimeCost(snapshot, (s) => unequipConsumable(s, itemId));
+}
+
+/**
+ * §신규: 맵에서 회복류 소모품을 인벤토리/퀵슬롯 어디에 있든 즉시 사용한다(전투 중 규칙은
+ * 그대로 — 퀵슬롯만, 무료). "회복류"는 `mapTags.traits`에 'healing'이 있는 소모품만.
+ * @param {GameSnapshot} snapshot
+ * @param {string} itemId
+ * @returns {GameSnapshot}
+ */
+function applyMapConsumable(snapshot, itemId) {
+  const ps = snapshot.playerState;
+  const fromInventory = ps.inventory.items.find((i) => i.id === itemId && i.kind === 'consumable');
+  const slotIndex = ps.loadout.consumableSlots.findIndex((it) => it?.id === itemId);
+  const item = fromInventory || (slotIndex !== -1 ? ps.loadout.consumableSlots[slotIndex] : null);
+  if (!item) return snapshot;
+  const def = CONSUMABLE_DEFINITIONS[item.defId];
+  if (!def || def.effect.kind !== 'healPercent' || !def.mapTags.traits.includes('healing')) return snapshot;
+
+  const heal = Math.round(ps.maxHp * def.effect.amount);
+  const hp = Math.min(ps.maxHp, ps.hp + heal);
+  let inventory = ps.inventory;
+  let loadout = ps.loadout;
+  if (fromInventory) {
+    inventory = removeItem(inventory, itemId);
+  } else {
+    loadout = { ...loadout, consumableSlots: loadout.consumableSlots.map((it, i) => (i === slotIndex ? null : it)) };
+  }
+  return { ...snapshot, playerState: { ...ps, hp, inventory, loadout } };
+}
+
+/** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
+export function useMapConsumableCommand(snapshot, itemId) {
+  if (snapshot.currentScreen !== 'map') return snapshot;
+  if (isBlockedByEncounter(snapshot)) return snapshot;
+  const applied = applyMapConsumable(snapshot, itemId);
+  if (applied === snapshot) return snapshot;
+  return withFacilityRunState(applied, (run) => advanceTime(run, run.time + MAP_CONSUMABLE_TIME_COST));
 }
 
 /**
@@ -96,6 +199,17 @@ export function requestExtractionCommand(snapshot, exitId) {
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function basicReconCommand(snapshot) {
   return withFacilityRunState(snapshot, (run) => basicRecon(run));
+}
+
+/** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
+export function useConcealmentCommand(snapshot) {
+  return withFacilityRunState(snapshot, (run) => useConcealment(run));
+}
+
+/** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
+export function hackControlRoomCommand(snapshot) {
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => hackControlRoom(run, capabilities.hacking));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} cameraId @returns {GameSnapshot} */
@@ -177,4 +291,71 @@ export function useFieldEquipmentCommand(snapshot, instanceId, targetId) {
   const entry = active.find((e) => e.instanceId === instanceId);
   if (!entry) return snapshot;
   return withFacilityRunState(snapshot, (run) => useFieldEquipment(run, instanceId, entry.contract.fieldAction, targetId));
+}
+
+// ---- §신규 조우 시스템: 판정 결과에 대한 플레이어 선택 ----
+
+/**
+ * 기습 — tier 'advantage' 전용. 적 전원에게 스턴을 걸고(§전투) 전투를 시작한다(플레이어 선공은
+ * 그대로 유지, 스턴 자체가 "적 첫 턴 무력화" 효과를 만든다).
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function encounterAmbushCommand(snapshot) {
+  const run = snapshot.facilityRunState;
+  const encounter = run?.encounter;
+  if (!encounter || encounter.tier !== 'advantage') return snapshot;
+  const threat = run.threats[encounter.threatId];
+  if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  return startCombat(cleared, threat.monsterIds, undefined, { nodeId: encounter.nodeId, threatId: threat.id, ambush: 'player' });
+}
+
+/**
+ * 무시 — tier 'advantage' 전용('even'/'disadvantage'/'forced'에서는 무시 불가). 전투 없이 선택지만
+ * 닫는다 — 위협은 그대로 그 노드에 있으므로, 다음 행동에서 다시 재판정된다(계속 우위면 계속 무시 가능).
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function encounterIgnoreCommand(snapshot) {
+  const run = snapshot.facilityRunState;
+  const encounter = run?.encounter;
+  if (!encounter || encounter.tier !== 'advantage') return snapshot;
+  return { ...snapshot, facilityRunState: { ...run, encounter: null } };
+}
+
+/**
+ * 회피 — tier 'advantage'/'even' 전용, 선택 즉시 확정 성공. 위협을 patrol로 되돌리고 추적을
+ * 지운다. 노드 자체는 그대로라 다음 행동에서 재콜리전이 뜰 수 있지만(그 자리에 계속 머물면),
+ * 보통은 곧바로 다른 노드로 이동해 완전히 따돌리는 흐름을 기대한다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function encounterEvadeCommand(snapshot) {
+  const run = snapshot.facilityRunState;
+  const encounter = run?.encounter;
+  if (!encounter || (encounter.tier !== 'advantage' && encounter.tier !== 'even')) return snapshot;
+  const threat = run.threats[encounter.threatId];
+  if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  const threats = {
+    ...run.threats,
+    [encounter.threatId]: { ...threat, mode: 'patrol', pursuitStrength: 0, lastKnownPlayerNodeId: null, target: null },
+  };
+  return { ...snapshot, facilityRunState: { ...run, threats, encounter: null } };
+}
+
+/**
+ * 전투 — tier 'forced' 전용(열세에서 행동 1회를 다 쓰고도 여전히 열세). 진입 시 항상 적 기습
+ * (beginEnemyFirst, 적 선공 1턴).
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function encounterFightCommand(snapshot) {
+  const run = snapshot.facilityRunState;
+  const encounter = run?.encounter;
+  if (!encounter || encounter.tier !== 'forced') return snapshot;
+  const threat = run.threats[encounter.threatId];
+  if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  return startCombat(cleared, threat.monsterIds, undefined, { nodeId: encounter.nodeId, threatId: threat.id, ambush: 'enemy' });
 }
