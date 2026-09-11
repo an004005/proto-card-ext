@@ -209,12 +209,23 @@ export function finalizeIfCombatEnded(snapshot) {
   const threat = context?.threatId && snapshot.facilityRunState ? snapshot.facilityRunState.threats[context.threatId] : null;
   const tier = threat && threat.size >= 4 ? 'elite' : 'normal';
 
-  // 승리한 위협 그룹은 더 이상 순찰/추적하지 않는다 — 격퇴 처리.
+  // 승리한 위협 그룹은 더 이상 순찰/추적하지 않는다 — 격퇴 처리. 대신 그 자리에 시체가
+  // 남는다(§4단계, D13): 다른 위협이 밟으면 신고되어 구역 경계도가 오르고 그 지점으로 조사가
+  // 몰린다. 치우려면 시간을 써야 하므로 "지금 이기고 나중에 값을 치르는 선택"이 된다.
   let facilityRunState = snapshot.facilityRunState;
   if (facilityRunState && context && context.threatId) {
     const threats = { ...facilityRunState.threats };
     delete threats[context.threatId];
-    facilityRunState = { ...facilityRunState, threats };
+    const nodeId = context.nodeId || facilityRunState.playerNodeId;
+    const corpses = nodeId
+      ? [...facilityRunState.corpses, {
+        id: `corpse_${context.threatId}_${facilityRunState.time}`,
+        nodeId,
+        sectorId: /** @type {import('./types.js').FacilitySectorId} */ (nodeId.split('_')[0]),
+        createdAt: facilityRunState.time,
+      }]
+      : facilityRunState.corpses;
+    facilityRunState = { ...facilityRunState, threats, corpses };
   }
 
   const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, inventory, loadout: decayResult.loadout };

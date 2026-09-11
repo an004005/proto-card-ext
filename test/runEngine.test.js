@@ -6,13 +6,18 @@ import {
   openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment, isAtOpenExit,
   hackCamera, hackAccessInterface, destroyCamera, cameraHackRange, disableGenerator,
   useConcealment, effectiveStealthWithConcealment, refreshActiveRecon, hackControlRoom,
+  isOnFloorPlan, isNodeCharted,
   getSectorLandmarkArrowTarget,
+  acquireContractGoods, destroyContractTarget, acquireContractIntel, transmitContractIntel,
 } from '../src/engine/runEngine.js';
+import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
-  OVERLOAD_MELTDOWN, BASIC_RECON_TIME, FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
+  OVERLOAD_MELTDOWN, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
+  TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_SPEED_MULTIPLIER, LOCKDOWN_EXIT_CLOSE_WINDOW,
+  ADJACENT_SECTOR_IDS, REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
 
@@ -162,6 +167,80 @@ test('noise events expire after their duration and only reach threats within hop
   assert.equal(expired.noiseEvents.length, 0, 'noise event should have expired by t=101');
 });
 
+// D16/D17: 도면은 처음부터 보이고 내용물만 감춘다. 비인가 통로는 도면에 없는 유일한 예외다.
+test('the floor plan is charted from the start; only unauthorized passages stay off it', () => {
+  const state = makeRun(1);
+  const offPlan = state.graph.nodes.filter((n) => !isOnFloorPlan(n));
+  assert.ok(offPlan.length > 0, 'fixture seed should contain an unauthorized level');
+  // 비인가층은 폐기물 처리장에만 있고, 비인가 통로는 전부 거기 속한다.
+  assert.deepEqual([...new Set(offPlan.map((n) => n.sectorId))], ['waste']);
+  for (const node of state.graph.nodes.filter((n) => n.type === 'crawlway')) {
+    assert.equal(isOnFloorPlan(node), false, `${node.id} is an unauthorized passage and should be off the plan`);
+  }
+  for (const node of state.graph.nodes) {
+    assert.equal(isNodeCharted(state, node), isOnFloorPlan(node) || state.visitedNodeIds.includes(node.id));
+  }
+  // 도면에 없는 노드에 매달린 방도 함께 감춰야 연결선 없이 떠 있는 방이 생기지 않는다.
+  const offPlanIds = new Set(offPlan.map((n) => n.id));
+  for (const edge of state.graph.edges) {
+    if (edge.features.length > 0) continue;
+    const from = state.graph.nodes.find((n) => n.id === edge.from);
+    const to = state.graph.nodes.find((n) => n.id === edge.to);
+    if (offPlanIds.has(edge.from) || offPlanIds.has(edge.to)) continue;
+    assert.ok(isOnFloorPlan(from) && isOnFloorPlan(to));
+  }
+  // 지나가 보면 도면에 없던 통로도 지도에 남는다.
+  assert.ok(isNodeCharted({ ...state, visitedNodeIds: [...state.visitedNodeIds, offPlan[0].id] }, offPlan[0]));
+});
+
+test('the run can start with the landmarks already revealed, and never with threats revealed (D17)', () => {
+  const { graph } = generateFacilityGraph(1);
+  const hidden = createRunState(graph, 1);
+  assert.deepEqual(hidden.observations, {}, 'by default nothing is revealed up front');
+
+  const revealed = createRunState(graph, 1, { revealLandmarks: true });
+  assert.equal(Object.keys(revealed.observations).length, graph.landmarks.length);
+  for (const landmark of graph.landmarks) {
+    assert.ok(revealed.observations[landmark.nodeId], `landmark ${landmark.id} should be revealed`);
+    assert.equal(revealed.observations[landmark.nodeId].hasThreat, false, '난이도는 위협 위치를 절대 공개하지 않는다');
+  }
+});
+
+
+// 잠긴 문은 소리를 막지 않지만 사람은 막는다. 탑 승강기가 이 둘을 갈라 보기에 딱 좋다 —
+// 1층과 꼭대기는 승강기로 1홉이지만, 승강기를 열기 전에는 계단으로 층을 다 밟아야 한다.
+test('a locked edge carries sound but not footsteps: the threat hears through it and walks around', () => {
+  const base = makeRun(1);
+  const elevator = base.graph.edges.find((e) => e.requiredCapability !== undefined);
+  assert.ok(elevator, 'fixture seed should contain the tower elevator');
+  const towerCorridors = base.graph.nodes
+    .filter((n) => n.sectorId === 'comms' && n.type === 'corridor')
+    .sort((a, b) => b.y - a.y);
+  const bottom = towerCorridors[0];
+  const top = towerCorridors[towerCorridors.length - 1];
+  assert.deepEqual([elevator.from, elevator.to].sort(), [bottom.id, top.id].sort());
+
+  // 꼭대기에 위협 하나만 두고, 순찰 경로는 제자리로 만든다 — 움직였다면 소음 때문이다.
+  const listener = Object.values(base.threats)[0];
+  const state = {
+    ...base,
+    playerNodeId: bottom.id,
+    threats: { [listener.id]: { ...listener, nodeId: top.id, patrolRoute: [top.id], patrolIndex: 0 } },
+  };
+
+  // 세기 1은 1홉까지만 들린다. 승강기 너머 1층 소음이 들려야 하고(들리는 거리), 그래도 위협은
+  // 승강기를 타지 못하고 계단으로 한 층만 내려와야 한다(가는 거리).
+  const heard = advanceTime(reportNoise(state, bottom.id, 1, 50), 101);
+  const moved = heard.threats[listener.id];
+  assert.equal(moved.target.kind, 'noise', 'the threat should have heard the noise through the locked elevator');
+  assert.equal(moved.nodeId, towerCorridors[towerCorridors.length - 2].id, 'the threat should take the stairs one floor down');
+
+  // 승강기를 열면 위협에게도 열린다 — 지름길을 얻는 대신 층 격리를 스스로 깬다.
+  const opened = { ...state, openedEdgeIds: [elevator.id] };
+  const rode = advanceTime(reportNoise(opened, bottom.id, 1, 50), 101);
+  assert.equal(rode.threats[listener.id].nodeId, bottom.id, 'once the elevator is open the threat rides it');
+});
+
 test('moveToAdjacentNode requires an edge, costs the traversed edge\'s own (geometry-derived) timeCost, and tracks visited nodes', () => {
   let state = makeRun(21);
   const adjacency = buildAdjacency(state.graph.edges);
@@ -225,7 +304,7 @@ test('direct hacking reaches exactly Hacking-level hops, and a hacked interface 
     },
   };
   assert.deepEqual([1, 2, 3, 4].map(cameraHackRange), [1, 2, 3, 4]);
-  assert.throws(() => hackCamera(state, 'camera_test', 0), /Hacking 1/);
+  assert.throws(() => hackCamera(state, 'camera_test', -2), /out of range/); // 하한에서는 사거리 자체가 닫힌다
   assert.throws(() => hackCamera(state, 'camera_test', 1), /out of range/); // Hacking 1은 1홉까지만, 카메라는 2홉
   const hacked = hackCamera(state, 'camera_test', 2);
   assert.equal(hacked.activeRecon.source, 'camera');
@@ -245,7 +324,12 @@ test('camera destruction is a local, loud Force action and permanently stops cam
     ...state,
     graph: { ...state.graph, cameras: [{ id: 'camera_test', nodeId: state.playerNodeId }] },
   };
-  assert.throws(() => destroyCamera(state, 'camera_test', 0), /Force 1/);
+  assert.throws(() => destroyCamera(state, 'camera_test', -2), /force/);
+  // Force 0은 막히지 않는다 — 더 오래 걸리고 더 시끄럽다(D8 층계).
+  const strained = destroyCamera(state, 'camera_test', 0);
+  assert.ok(strained.time - state.time > 100, 'Force가 모자라면 오래 걸린다');
+  assert.ok(strained.noiseEvents[strained.noiseEvents.length - 1].intensity > CAMERA_FORCE_NOISE, '그리고 더 시끄럽다');
+
   const destroyed = destroyCamera(state, 'camera_test', 1);
   assert.ok(destroyed.disabledCameraIds.includes('camera_test'));
   assert.equal(destroyed.time, state.time + 100);
@@ -299,7 +383,7 @@ test('sector alert rises by exactly 1 per resolved event, not per investigating 
   assert.equal(state.sectorAlerts[sectorId].level, after);
 });
 
-test('sector alert decays by 1 per 1000 elapsed time, floored at 0, independently per sector', () => {
+test('sector alert never decays with time — only a control room can bring it down (ADR-0073)', () => {
   let state = makeRun(4);
   state = { ...state, playerNodeId: 'nowhere' };
   state = advanceTime(state, 50);
@@ -310,18 +394,13 @@ test('sector alert decays by 1 per 1000 elapsed time, floored at 0, independentl
   const escalated = state.sectorAlerts[sectorId].level;
   assert.ok(escalated >= 1);
 
-  state = advanceTime(state, 999);
-  assert.equal(state.sectorAlerts[sectorId].level, escalated, 'no decay yet just before 1000');
-
-  state = advanceTime(state, 1000);
-  assert.equal(state.sectorAlerts[sectorId].level, escalated - 1, 'decays by exactly 1 at time 1000');
-
-  // resolvedEventIds history is untouched by decay (no re-escalation from the same past event).
+  // 저절로 회복되는 페널티는 결정을 만들지 않는다 — 아무리 조용히 오래 있어도 내려가지 않는다.
+  state = advanceTime(state, 4000);
+  assert.equal(state.sectorAlerts[sectorId].level, escalated, 'alert holds across thousands of time points');
   assert.equal(state.sectorAlerts[sectorId].resolvedEventIds.length, 1);
 
-  // a sector already at 0 stays at 0 (never goes negative).
+  // 조용한 구역은 애초에 오르지 않았으므로 0 그대로다.
   const quietSectorId = Object.keys(state.sectorAlerts).find((id) => id !== sectorId);
-  state = advanceTime(state, 2000);
   assert.equal(state.sectorAlerts[quietSectorId].level, 0);
 });
 
@@ -349,8 +428,49 @@ test('openSpecialEdge requires effective capability >=1 and the matching feature
   let state = makeRun(1);
   const blockedEdge = state.graph.edges.find((e) => e.features.includes('blocked'));
   assert.throws(() => openSpecialEdge(state, blockedEdge.id, 'force', 0, 'normal'));
-  const electronicEdge = state.graph.edges.find((e) => e.features.includes('electronic') && !e.features.includes('blocked'));
-  if (electronicEdge) assert.throws(() => openSpecialEdge(state, electronicEdge.id, 'force', 4, 'normal'));
+  // 전자는 자물쇠의 종류라 항상 blocked와 함께 온다 — 물리 자물쇠(blocked 단독)는 Hacking으로
+  // 열리지 않고, 전자식 자물쇠는 Force와 Hacking 둘 다로 열린다.
+  const physicalLock = state.graph.edges.find((e) => e.features.includes('blocked') && !e.features.includes('electronic'));
+  assert.ok(physicalLock, 'fixture seed should contain a physical lock');
+  const atLock = { ...state, playerNodeId: physicalLock.from };
+  assert.throws(() => openSpecialEdge(atLock, physicalLock.id, 'hacking', 4, 'normal'), /electronic/);
+  assert.equal(state.graph.edges.filter((e) => e.features.includes('electronic') && !e.features.includes('blocked')).length, 0);
+});
+
+// 승강기처럼 배치 원형이 구조적으로 두는 통로는 요구치가 1보다 높다. 요구치는 접근 수단을
+// 가리지 않으므로 Force와 Hacking 둘 다 같은 값이 필요하다.
+test('an edge with requiredCapability rejects lower capability on both Force and Hacking, and opens at the required level either way', () => {
+  const base = makeRun(1);
+  const elevator = base.graph.edges.find((e) => e.requiredCapability !== undefined);
+  assert.ok(elevator, 'fixture seed should contain the tower elevator');
+  assert.equal(elevator.requiredCapability, TOWER_ELEVATOR_REQUIREMENT);
+  const state = { ...base, playerNodeId: elevator.from };
+
+  for (const kind of /** @type {const} */ (['force', 'hacking'])) {
+    // 층계(D8) 이후 "못 간다"는 요구치보다 3 이상 낮을 때뿐이다. 그 사이 값은 대가를 치르고 열린다.
+    for (let capability = -2; capability <= TOWER_ELEVATOR_REQUIREMENT - 3; capability++) {
+      assert.throws(
+        () => openSpecialEdge(state, elevator.id, kind, capability, 'normal'),
+        /too low/,
+        `${kind} ${capability} should not reach the elevator`,
+      );
+    }
+    const opened = openSpecialEdge(state, elevator.id, kind, TOWER_ELEVATOR_REQUIREMENT, 'normal');
+    assert.ok(opened.openedEdgeIds.includes(elevator.id), `${kind} ${TOWER_ELEVATOR_REQUIREMENT} should open the elevator`);
+  }
+});
+
+test('standing in a hall costs stealth, and the penalty stacks with concealment', () => {
+  const state = makeRun(1);
+  const hall = state.graph.nodes.find((n) => n.type === 'hall');
+  const corridor = state.graph.nodes.find((n) => n.type === 'corridor');
+  assert.ok(hall && corridor, 'fixture seed should contain a hall and a corridor');
+
+  assert.equal(effectiveStealthWithConcealment(3, { ...state, playerNodeId: corridor.id }), 3);
+  assert.equal(effectiveStealthWithConcealment(3, { ...state, playerNodeId: hall.id }), 3 - HALL_STEALTH_PENALTY);
+
+  const concealed = { ...state, playerNodeId: hall.id, activeConcealment: { nodeId: hall.id, bonus: 2 } };
+  assert.equal(effectiveStealthWithConcealment(3, concealed), 3 + 2 - HALL_STEALTH_PENALTY);
 });
 
 test('basicRecon always succeeds, costs 80/0-noise, and records threat presence for current+adjacent nodes', () => {
@@ -366,21 +486,39 @@ test('basicRecon always succeeds, costs 80/0-noise, and records threat presence 
   }
 });
 
-test('useOpportunity decrements usesRemaining by one per farm, costs FARM_TIME, reports the pre-rolled keyEligible flag, and can be farmed multiple times until exhausted', () => {
+test('useOpportunity decrements usesRemaining by one per farm, costs its own grade time, reports the pre-rolled keyEligible flag, and can be farmed multiple times until exhausted', () => {
   let state = makeRun(1);
-  const opportunity = state.graph.opportunities.find((o) => o.usesRemaining > 0);
-  assert.ok(opportunity, 'fixture seed should have at least one opportunity');
+  const opportunity = state.graph.opportunities.find((o) => o.usesRemaining > 0 && o.grade === 'supply');
+  assert.ok(opportunity, 'fixture seed should have at least one supply opportunity');
   state = { ...state, playerNodeId: opportunity.nodeId };
   const before = state.time;
   const result = useOpportunity(state, opportunity.id, 'normal');
   assert.equal(result.keyGranted, opportunity.keyEligible);
-  assert.equal(result.state.time, before + FARM_TIME);
+  assert.equal(result.state.time, before + SUPPLY_FARM_TIME);
   assert.equal(result.state.graph.opportunities.find((o) => o.id === opportunity.id).usesRemaining, opportunity.usesRemaining - 1);
 
   let s = result.state;
   for (let i = 1; i < opportunity.usesRemaining; i++) s = useOpportunity(s, opportunity.id, 'normal').state;
   assert.equal(s.graph.opportunities.find((o) => o.id === opportunity.id).usesRemaining, 0);
   assert.throws(() => useOpportunity(s, opportunity.id, 'normal'));
+});
+
+// D10: 확보 대상은 길고 시끄럽다 — 그 대가가 "저기까지 갈 만한가"를 묻는 장치다.
+test('a prize opportunity costs more time than a supply one, and its tier raises the cost further', () => {
+  const state = makeRun(1);
+  const supply = state.graph.opportunities.find((o) => o.grade === 'supply' && o.usesRemaining > 0);
+  const prize = state.graph.opportunities.find((o) => o.grade === 'prize' && o.usesRemaining > 0);
+  assert.ok(prize, 'fixture seed should have at least one prize opportunity');
+  assert.ok(prize.tier && prize.axis, '확보 대상은 등급과 역할축을 함께 갖는다');
+
+  const farm = (opp) => {
+    const at = { ...state, playerNodeId: opp.nodeId };
+    return useOpportunity(at, opp.id, 'normal').state.time - state.time;
+  };
+  assert.equal(farm(supply), SUPPLY_FARM_TIME);
+  assert.equal(farm(prize), PRIZE_FARM_TIME[prize.tier]);
+  assert.ok(farm(prize) > farm(supply), '확보 대상이 보급품보다 오래 걸린다');
+  assert.ok(PRIZE_FARM_TIME.elite > PRIZE_FARM_TIME.normal, '등급이 높을수록 더 오래 걸린다');
 });
 
 test('module_spatial snapshot_scan reveals threat presence within its range and respects cooldown', () => {
@@ -472,7 +610,8 @@ test('battery generators can be hacked directly or through a hacked same-sector 
   assert.throws(() => disableGenerator({ ...state, playerNodeId: localInterface.nodeId, disabledGeneratorIds: [] }, generator.id, 'force', 2));
   const forced = disableGenerator({ ...state, playerNodeId: generator.nodeId, disabledGeneratorIds: [] }, generator.id, 'force', 2);
   assert.ok(forced.disabledGeneratorIds.includes(generator.id));
-  assert.equal(forced.time, state.time + 100);
+  // 요구치 1에 Force 2 — 여유(surplus)라 표준 100보다 빨리 끝난다(D8: 윗칸은 비용 감소만).
+  assert.equal(forced.time, state.time + 75);
 });
 
 test('useConcealment applies its node\'s fixed bonus, costs CONCEALMENT_ACTION_TIME_COST, and only affects the node it was used at', () => {
@@ -520,7 +659,11 @@ test('hackControlRoom requires standing at the sector landmark and Hacking 1+', 
 
   const landmark = graph.landmarks[0];
   const atLandmark = { ...state, playerNodeId: landmark.nodeId };
-  assert.throws(() => hackControlRoom(atLandmark, 0), /Hacking/);
+  assert.throws(() => hackControlRoom(atLandmark, -2), /hacking/);
+  // Hacking 0은 들어가긴 한다 — 다만 1단계(순찰 경로 공개)까지만 얻고 시간과 과부화를 더 낸다.
+  const strained = hackControlRoom(atLandmark, 0);
+  assert.ok(strained.revealedPatrolRouteSectorIds.includes(landmark.sectorId));
+  assert.ok(strained.time - state.time > CONTROL_ROOM_HACK_TIME, 'Hacking이 모자라면 오래 걸린다');
 });
 
 test('hackControlRoom level 1 reveals the sector\'s patrol routes permanently, and costs CONTROL_ROOM_HACK_TIME', () => {
@@ -535,12 +678,22 @@ test('hackControlRoom level 1 reveals the sector\'s patrol routes permanently, a
   assert.equal(next.sectorAlerts[landmark.sectorId].level, state.sectorAlerts[landmark.sectorId].level);
 });
 
-test('hackControlRoom level 2 also decreases this sector\'s alert by (hacking - 1), floored at 0, and level 3 includes both plus a global patrol reset', () => {
+test('hackControlRoom level 2 lowers this sector alert by (hacking - 1), and level 3 also lowers both adjacent sectors by 1 (D12)', () => {
   const { graph } = generateFacilityGraph(2);
   const landmark = graph.landmarks[0];
+  const neighbors = ADJACENT_SECTOR_IDS[landmark.sectorId];
   let state = { ...createRunState(graph, 2), playerNodeId: landmark.nodeId };
-  state = { ...state, sectorAlerts: { ...state.sectorAlerts, [landmark.sectorId]: { level: 3, resolvedEventIds: [] } } };
-  // also put every threat into pursuit to prove level 3 resets them all, not just this sector's.
+  const raised = { level: 3, resolvedEventIds: [] };
+  state = {
+    ...state,
+    sectorAlerts: {
+      ...state.sectorAlerts,
+      [landmark.sectorId]: raised,
+      [neighbors[0]]: { ...raised },
+      [neighbors[1]]: { level: 0, resolvedEventIds: [] },
+    },
+  };
+  // 예전 3단계는 맵 전체 위협을 patrol로 되돌렸다 — 그 효과가 사라졌는지도 같이 본다.
   const threats = {};
   for (const [id, t] of Object.entries(state.threats)) threats[id] = { ...t, mode: 'pursuit', pursuitStrength: 3, lastKnownPlayerNodeId: 'somewhere' };
   state = { ...state, threats };
@@ -548,11 +701,16 @@ test('hackControlRoom level 2 also decreases this sector\'s alert by (hacking - 
   const level2 = hackControlRoom(state, 2);
   assert.equal(level2.sectorAlerts[landmark.sectorId].level, 2); // 3 - (2-1) = 2
   assert.deepEqual(level2.revealedPatrolRouteSectorIds, [landmark.sectorId]); // level 1 effect included
-  assert.ok(Object.values(level2.threats).every((t) => t.mode === 'pursuit'), 'level 2 must not reset threat modes');
+  assert.equal(level2.sectorAlerts[neighbors[0]].level, 3, '2단계는 인접 구역을 건드리지 않는다');
 
   const level3 = hackControlRoom(state, 3);
   assert.equal(level3.sectorAlerts[landmark.sectorId].level, 1); // 3 - (3-1) = 1
-  assert.ok(Object.values(level3.threats).every((t) => t.mode === 'patrol' && t.pursuitStrength === 0 && t.lastKnownPlayerNodeId === null), 'level 3 must reset every threat in the run, not just this sector');
+  assert.equal(level3.sectorAlerts[neighbors[0]].level, 2, '인접 구역은 1만 내려간다');
+  assert.equal(level3.sectorAlerts[neighbors[1]].level, 0, '이미 0인 인접 구역은 음수로 가지 않는다');
+  assert.ok(
+    Object.values(level3.threats).every((t) => t.mode === 'pursuit'),
+    '맵 전체 patrol 전환은 D12에서 삭제됐다 — 3단계가 위협 상태를 건드리면 안 된다',
+  );
 });
 
 test('getSectorLandmarkArrowTarget points at the current sector\'s landmark until it has been observed, and is null without the implant', () => {
@@ -566,4 +724,94 @@ test('getSectorLandmarkArrowTarget points at the current sector\'s landmark unti
 
   const observed = { ...state, observations: { ...state.observations, [landmark.nodeId]: { observedAt: 0, hasThreat: false } } };
   assert.equal(getSectorLandmarkArrowTarget(observed, true), null, 'landmark already observed -> arrow gone');
+});
+
+// ---- 계약(§3단계, D3·D4·D21·D22) ----
+
+function withContract(seed, contractId) {
+  const contract = CONTRACT_DEFS.find((c) => c.id === contractId);
+  const { graph } = generateFacilityGraph(seed);
+  return createRunState(graph, seed, { contract });
+}
+
+test('acquireContractGoods requires being at the objective and Stealth or Mobility 1+, then sets acquired + lockdown + accelerates exit B', () => {
+  const state = withContract(1, 'sample_retrieval');
+  const landmark = state.graph.landmarks.find((l) => l.sectorId === 'labs');
+  assert.notEqual(landmark.nodeId, state.playerNodeId, 'fixture should not start at the objective');
+
+  assert.throws(() => acquireContractGoods(state, 1, 1), /objective/, 'wrong node should be rejected');
+
+  const at = { ...state, playerNodeId: landmark.nodeId };
+  assert.throws(() => acquireContractGoods(at, -2, -2), /stealth|mobility/);
+  // 0/0은 막히지 않는다 — 둘 중 높은 쪽(여기선 동률이라 Stealth)의 통화로 값을 치른다.
+  const strained = acquireContractGoods(at, 0, 0);
+  assert.equal(strained.contract.status, 'acquired');
+  assert.ok(strained.evidence.some((e) => e.nodeId === landmark.nodeId && e.tier === 2), 'Stealth가 모자라면 강한 흔적이 남는다');
+
+  const acquired = acquireContractGoods(at, 1, 0);
+  assert.equal(acquired.contract.status, 'acquired');
+  assert.equal(acquired.contract.acquiredAt, state.time);
+  assert.ok(acquired.lockdown, 'lockdown should activate on acquisition');
+  assert.equal(acquired.lockdown.startedAt, state.time);
+  assert.equal(acquired.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, state.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+
+  assert.throws(() => acquireContractGoods(acquired, 1, 1), /no retrieval contract/, 'already-acquired contract cannot be acquired again');
+});
+
+test('destroyContractTarget requires Force 1+ and completes the contract in one step, activating lockdown', () => {
+  const state = withContract(1, 'generator_shutdown');
+  const landmark = state.graph.landmarks.find((l) => l.sectorId === 'power');
+  const at = { ...state, playerNodeId: landmark.nodeId };
+
+  assert.throws(() => destroyContractTarget(at, -2), /force/);
+
+  const done = destroyContractTarget(at, 1);
+  assert.equal(done.contract.status, 'completed');
+  assert.equal(done.contract.completedAt, state.time);
+  assert.ok(done.lockdown);
+  assert.equal(done.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, state.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+});
+
+test('intel contracts need a two-step acquire-then-transmit at any landmark, and only the acquire step activates lockdown', () => {
+  const state = withContract(1, 'record_review');
+  const landmark = state.graph.landmarks.find((l) => l.sectorId === 'entrance');
+  const at = { ...state, playerNodeId: landmark.nodeId };
+
+  assert.throws(() => transmitContractIntel(at, 1), /no acquired intel/, 'cannot transmit before acquiring');
+  assert.throws(() => acquireContractIntel(at, -2), /hacking/);
+
+  const acquired = acquireContractIntel(at, 1);
+  assert.equal(acquired.contract.status, 'acquired');
+  assert.ok(acquired.lockdown);
+  const lockedAt = acquired.lockdown.startedAt;
+
+  const otherLandmark = acquired.graph.landmarks.find((l) => l.sectorId !== 'entrance');
+  assert.throws(
+    () => acquireContractIntel({ ...acquired, playerNodeId: otherLandmark.nodeId }, 1),
+    /no intel contract to acquire/,
+    'already-acquired contract cannot be acquired again',
+  );
+
+  const transmitted = transmitContractIntel({ ...acquired, playerNodeId: otherLandmark.nodeId }, 1);
+  assert.equal(transmitted.contract.status, 'completed');
+  assert.equal(transmitted.lockdown.startedAt, lockedAt, 'transmit must not re-trigger or move the lockdown clock');
+});
+
+// D22: 신규 위협 스폰 시스템이 없어 "증원 가속"을 기존 위협 전원의 이동 간격 단축으로
+// 구현했다(사용자 확정). resolveMoveInterval은 비공개라 advanceTime으로 실제 재스케줄
+// 결과를 비교해 관찰 가능한 성질로 확인한다.
+test('lockdown shortens every threat\'s move interval by LOCKDOWN_THREAT_SPEED_MULTIPLIER', () => {
+  const base = makeRun(1);
+  const threatId = Object.keys(base.threats)[0];
+  assert.equal(base.threats[threatId].nextMoveAt, THREAT_MOVE_INTERVAL.patrol);
+
+  const past = THREAT_MOVE_INTERVAL.patrol + 20;
+  const normal = advanceTime(base, past);
+  const locked = advanceTime({ ...base, lockdown: { startedAt: 0 } }, past);
+
+  const normalInterval = normal.threats[threatId].nextMoveAt - THREAT_MOVE_INTERVAL.patrol;
+  const lockedInterval = locked.threats[threatId].nextMoveAt - THREAT_MOVE_INTERVAL.patrol;
+  assert.equal(normalInterval, THREAT_MOVE_INTERVAL.patrol);
+  assert.equal(lockedInterval, Math.round(THREAT_MOVE_INTERVAL.patrol * LOCKDOWN_THREAT_SPEED_MULTIPLIER));
+  assert.ok(lockedInterval < normalInterval, 'locked-down threats should reschedule sooner');
 });

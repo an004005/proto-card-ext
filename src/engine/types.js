@@ -9,8 +9,8 @@
 /**
  * @typedef {Object} Item
  * @property {string} id
- * @property {'junk'|'currency'|'equipment'|'ammo'|'consumable'} kind
- * @property {number} [value] junk/currency only
+ * @property {'junk'|'currency'|'equipment'|'ammo'|'consumable'|'contractGoods'} kind
+ * @property {number} [value] junk/currency/contractGoods only
  * @property {string} [equipmentId] equipment only
  * @property {number} [durability] equipment only — 0-MAX_DURABILITY, set uniformly on creation
  *   (see equipmentEngine.js). Only meaningful for weapon/top/bottom/module (decays via their
@@ -18,6 +18,7 @@
  *   since they have no cardList (excluded from the durability system).
  * @property {number} [amount] ammo only (1-10 per stack)
  * @property {string} [defId] consumable only — 1 slot = 1 unit, no stacking
+ * @property {string} [contractId] contractGoods only — which contract this unit counts toward.
  */
 
 /**
@@ -55,7 +56,7 @@
  * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
  */
 
-// ---- facility graph (240-node extraction map, docs/extraction-map-implementation-spec.md) ----
+// ---- facility graph (206-node extraction map, docs/extraction-map-implementation-spec.md) ----
 // These types describe the generated graph shape only (facilityGraph.js). The broader RunState
 // from the spec (time, threats' live mode/alert, exits' request lifecycle, etc.) is added in a
 // later phase once the time/threat engine lands.
@@ -63,9 +64,29 @@
 /** @typedef {'entrance'|'labs'|'hangar'|'security'|'power'|'waste'|'comms'|'residential'} FacilitySectorId */
 
 /**
+ * 노드 유형 (D18). 유형은 세 축을 정한다 — 은엄폐와 시야, 현장 기회의 밀도와 등급, 그리고 그
+ * 유형에만 있는 고유 행동. 축이 고정되어 있어 새 유형을 봐도 무엇을 확인해야 할지 안다.
+ * 현재 구현은 앞의 두 축까지 반영한다(facilityLayout.js NODE_TYPE_* 가중치).
+ *
+ * - `corridor` 복도: 지나가는 곳. 은엄폐도 기회도 없다.
+ * - `office` 사무·작업실: 보급품이 많은 평범한 방.
+ * - `hall` 대공간: 시야가 트여 은엄폐가 없고 실효 Stealth가 깎인다.
+ * - `vault` 봉인 격실: 닫혀 있고 값어치가 크다.
+ * - `utility` 설비실: 발전기·배전반·서버가 놓이는 곳.
+ * - `watch` 감시 지점: 멀리 보기 위한 자리.
+ * - `refuge` 은신처: 몸을 숨기고 쉴 수 있다.
+ * - `crawlway` 비인가 통로: 도면에 없는 길.
+ * @typedef {'corridor'|'office'|'hall'|'vault'|'utility'|'watch'|'refuge'|'crawlway'} FacilityNodeType
+ */
+
+/**
  * @typedef {Object} FacilityNode
  * @property {string} id
  * @property {FacilitySectorId} sectorId
+ * @property {FacilityNodeType} type
+ * @property {boolean} [isGateway]
+ * @property {boolean} [offPlan] 도면에 없는 노드. 비인가 통로와 거기 매달린 방이다(ADR-0072).
+ *   직접 지나가거나 관측하기 전에는 지도에 뜨지 않는다. 인접 구역으로 넘어가는 관문. 구역 출입구라 도면에 그려져 있다.
  * @property {number} x 전역 기하학적 배치 좌표 (facilityLayout.js SECTOR_RING_RADIUS 기준) — 엣지
  *   시간 비용과 지도 렌더링 위치 계산에 쓰인다.
  * @property {number} y
@@ -81,6 +102,8 @@
  * @property {boolean} bidirectional
  * @property {number} timeCost Mobility 0 기준 base 시간 비용.
  * @property {SpecialEdgeFeature[]} features 빈 배열 = 일반 복도.
+ * @property {number} [requiredCapability] 이 엣지를 여는 데 필요한 Capability 수치. 없으면 1.
+ *   통신·관제탑 승강기처럼 배치 원형이 구조적으로 두는 통로가 더 높은 값을 갖는다.
  */
 
 /**
@@ -106,6 +129,13 @@
  * @property {boolean} keyEligible 맵 생성 시 고정된 1% 판정 결과 (§5.1.1).
  * @property {number} usesRemaining 맵 생성 시 고정된 1~3회(OPPORTUNITY_USES_WEIGHTS) — 0이 되면
  *   더 이상 파밍할 수 없다. 더 이상 "1회용"이 기본이 아니다.
+ * @property {'supply'|'prize'} grade 보급품은 즉시 획득이고, 확보 대상은 후보 3개 중 하나를
+ *   고른다(§5단계, D10). 구역당 소수만 확보 대상이다.
+ * @property {'normal'|'elite'} [tier] 확보 대상 전용 등급. 정찰로 미리 보이며 높을수록 파밍
+ *   시간과 소음이 크다(D11).
+ * @property {'combat'|'infiltration'|'resource'} [axis] 확보 대상 전용 역할축. 지점마다 독립적으로
+ *   굴리므로 한 구역의 확보 대상이 전부 같은 축일 수도 있다. 정찰로 보이는 "종류"가 이것이고,
+ *   파밍하면 이 축 안에서 후보 3개가 나온다(D11).
  */
 
 /**
@@ -256,6 +286,57 @@
  * @property {string[]} revealedPatrolRouteSectorIds 통제실 해킹 레벨1+로 순찰경로가 영구 공개된 구역.
  * @property {EncounterState|null} encounter 콜리전으로 열린, 아직 해소되지 않은 조우 판정.
  * @property {boolean} keyDiscovered 열쇠 대상 현장 기회를 파밍해 열쇠 탈출구 위치를 알아냈는지(§5.1.1). 한번 참이 되면 되돌아가지 않는다.
+ * @property {ContractRuntimeState|null} contract 수락된 계약의 진행 상태(§3단계, D3·D4·D21).
+ * @property {{startedAt: number}|null} lockdown 계약 목표 확보 순간 켜지는 봉쇄(D22) — 위협 이동이 빨라지고 출구 B가 조기 폐쇄된다.
+ * @property {Corpse[]} corpses 전투에서 이긴 노드에 남은 시체(§4단계, D13). 위협이 밟으면 신고된다.
+ * @property {Record<string, {nextAt: number, alertSeen: 0|1|2|3}>} reinforcements 구역별 다음 증원 예정
+ *   시각과 마지막으로 관찰한 경계 레벨(D14) — 경계가 오르면 다음 교대를 앞당긴다.
+ * @property {{sectorId: string, expiresAt: number}[]} powerCuts 전원이 끊긴 구역과 복구 시각(D12) — 그동안 경계도가 오르지 않는다.
+ * @property {FarmChoice|null} pendingFarmChoice 확보 대상을 파밍한 뒤 아직 고르지 않은 후보
+ * @property {number} pendingHpLoss Capability 층계(D8)가 물린 HP 대가 중 아직 playerState에
+ *   반영되지 않은 몫. HP는 facilityRunState 바깥이라 여기 쌓아두고 facilityReducer가 정산한다.
+ * @property {number} pendingDurabilityLoss 같은 이유로 쌓아두는 장비 내구도 대가.
+ *   3개(§5단계, D11). 고르기 전에는 아무것도 인벤토리에 들어오지 않는다.
+ */
+
+/**
+ * @typedef {Object} FarmChoice
+ * @property {string} opportunityId
+ * @property {'normal'|'elite'} tier
+ * @property {'combat'|'infiltration'|'resource'} axis 이 지점의 역할축 — 후보 3개가 전부 이 축이다.
+ * @property {FarmChoiceOption[]} options 같은 축 안의 후보 3개.
+ */
+
+/**
+ * @typedef {Object} FarmChoiceOption
+ * @property {'equipment'|'consumable'|'ammo'|'currency'} kind
+ * @property {string} [equipmentId]
+ * @property {string} [defId]
+ * @property {number} [value]
+ * @property {number} [amount]
+ */
+
+/**
+ * @typedef {Object} Corpse
+ * @property {string} id
+ * @property {string} nodeId
+ * @property {FacilitySectorId} sectorId
+ * @property {number} createdAt
+ */
+
+/**
+ * @typedef {Object} ContractRuntimeState
+ * @property {string} id
+ * @property {import('../data/contracts.js').ContractType} type
+ * @property {FacilitySectorId} sectorId 목표부가 있는 구역 — LANDMARKS_BY_SECTOR[sectorId]가 목표부다.
+ * @property {string} name
+ * @property {number} [goodsSlots] retrieval only.
+ * @property {number} [goodsValuePerSlot] retrieval only.
+ * @property {number} [completionRewardValue] destroy/intel only.
+ * @property {number} penaltyValue
+ * @property {'accepted'|'acquired'|'completed'} status
+ * @property {number|null} acquiredAt
+ * @property {number|null} completedAt
  */
 
 /**
@@ -522,6 +603,11 @@
  * @property {?CombatSummary} combatSummary post-combat durability report, shown once on the
  *   reward screen then cleared by CONFIRM_REWARDS
  * @property {RngState} rngState
+ * @property {import('../data/contracts.js').ContractDef[]|null} offeredContracts 'contract' 화면에서
+ *   고르는 중인 계약 3장. 수락 즉시 activeContract로 옮겨지고 이 필드는 비워진다.
+ * @property {(import('../data/contracts.js').ContractDef & {status: 'accepted'})|null} activeContract
+ *   수락됐지만 아직 confirmLoadout으로 facilityRunState.contract에 옮겨지지 않은 계약. 'contract'/'loadout'
+ *   화면 동안만 쓰인다 — confirmLoadout 이후로는 facilityRunState.contract가 유일한 소스다.
  */
 
 /**

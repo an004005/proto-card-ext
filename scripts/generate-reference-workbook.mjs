@@ -189,7 +189,7 @@ function buildWorkbook() {
     ['장비', '드롭 내구도', `${LOOT_DURABILITY_MIN}~${LOOT_DURABILITY_MAX}`, '장비 드롭 생성 범위', 'src/engine/rewardEngine.js'],
     ['장비', '카드 사용 내구도 감소 확률', `${DURABILITY_DECAY_CHANCE * 100}%`, '장비 소속 카드 사용마다 판정, 전투 종료 후 적용', 'src/engine/combatEngine.js'],
     ['인벤토리', '탄약 더미 크기', AMMO_STACK_SIZE, '한 인벤토리 칸에 저장하는 최대 탄약', 'src/engine/inventoryEngine.js'],
-    ['맵', '총 노드', FACILITY.TOTAL_NODES, `${FACILITY.SECTOR_IDS.length}구역 × ${FACILITY.NODES_PER_SECTOR}노드`, 'src/data/facilityLayout.js'],
+    ['맵', '총 노드', FACILITY.TOTAL_NODES, `${FACILITY.SECTOR_IDS.length}구역, 구역별 ${FACILITY.SECTOR_IDS.map((id) => FACILITY.SECTOR_LAYOUTS[id].nodeCount).join('/')}노드`, 'src/data/facilityLayout.js'],
     ['맵', '월드 틱', FACILITY.WORLD_TICK_INTERVAL, '시간 포인트마다 위협과 지속 상태 갱신', 'src/data/facilityLayout.js'],
     ['맵', '시설 붕괴', FACILITY.RUN_COLLAPSE_TIME, '도달 시 런 종료', 'src/data/facilityLayout.js'],
     ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '이후 새 개방 요청 불가', 'src/data/facilityLayout.js'],

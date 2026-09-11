@@ -8,6 +8,7 @@
 // 정리). Dependency direction is one-way: inventoryReducer <- rewardReducer <- combatReducer <-
 // facilityReducer, and loadoutReducer depends only on inventoryReducer + runEngine.js — no cycles.
 import { newRun, setLoadoutSlot, confirmLoadout, autoEquipLoadout } from './loadoutReducer.js';
+import { acceptContractCommand } from './contractReducer.js';
 import {
   moveToNode, requestExtractionCommand, basicReconCommand, openSpecialEdgeCommand,
   useOpportunityCommand, useFieldEquipmentCommand, hackCameraCommand, hackAccessInterfaceCommand, destroyCameraCommand, disableGeneratorCommand,
@@ -15,6 +16,9 @@ import {
   useConcealmentCommand, hackControlRoomCommand,
   encounterAmbushCommand, encounterIgnoreCommand, encounterEvadeCommand, encounterFightCommand,
   useMapConsumableCommand,
+  acquireContractGoodsCommand, destroyContractTargetCommand, acquireContractIntelCommand, transmitContractIntelCommand,
+  disposeCorpseCommand, cleanTracesCommand, cutPowerCommand, broadcastFalseTargetCommand,
+  selectFarmRewardCommand,
 } from './facilityReducer.js';
 import {
   playCardCommand, endTurnCommand, useConsumable, beginDisengageCommand, cancelDisengageCommand,
@@ -40,6 +44,7 @@ export { getDeckEntries };
 export function gameReducer(snapshot, command) {
   switch (command.type) {
     case 'NEW_RUN': return newRun(command.seed);
+    case 'ACCEPT_CONTRACT': return acceptContractCommand(snapshot, command.contractId);
     case 'SET_LOADOUT_SLOT': return setLoadoutSlot(snapshot, command.slotType, command.id);
     case 'CONFIRM_LOADOUT': return confirmLoadout(snapshot);
     case 'AUTO_EQUIP_LOADOUT': return autoEquipLoadout(snapshot);
@@ -48,6 +53,15 @@ export function gameReducer(snapshot, command) {
     case 'BASIC_RECON': return basicReconCommand(snapshot);
     case 'USE_CONCEALMENT': return useConcealmentCommand(snapshot);
     case 'HACK_CONTROL_ROOM': return hackControlRoomCommand(snapshot);
+    case 'ACQUIRE_CONTRACT_GOODS': return acquireContractGoodsCommand(snapshot);
+    case 'DESTROY_CONTRACT_TARGET': return destroyContractTargetCommand(snapshot);
+    case 'ACQUIRE_CONTRACT_INTEL': return acquireContractIntelCommand(snapshot);
+    case 'TRANSMIT_CONTRACT_INTEL': return transmitContractIntelCommand(snapshot);
+    case 'SELECT_FARM_REWARD': return selectFarmRewardCommand(snapshot, command.optionIndex);
+    case 'DISPOSE_CORPSE': return disposeCorpseCommand(snapshot);
+    case 'CLEAN_TRACES': return cleanTracesCommand(snapshot);
+    case 'CUT_POWER': return cutPowerCommand(snapshot);
+    case 'BROADCAST_FALSE_TARGET': return broadcastFalseTargetCommand(snapshot, command.targetSectorId);
     case 'ENCOUNTER_AMBUSH': return encounterAmbushCommand(snapshot);
     case 'ENCOUNTER_IGNORE': return encounterIgnoreCommand(snapshot);
     case 'ENCOUNTER_EVADE': return encounterEvadeCommand(snapshot);

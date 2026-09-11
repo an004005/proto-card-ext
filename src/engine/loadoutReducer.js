@@ -4,6 +4,7 @@
 import { createRngState, pick } from './rng.js';
 import { generateFacilityGraph } from './facilityGraph.js';
 import { createRunState, refreshLocalObservations } from './runEngine.js';
+import { offerContracts } from './contractReducer.js';
 import {
   computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus, computeOverloadGainMultiplier, MAX_DURABILITY,
 } from './equipmentEngine.js';
@@ -70,8 +71,10 @@ function buildStartingWarehouse(loadout) {
 /** @param {number} seed @returns {GameSnapshot} */
 export function newRun(seed) {
   const loadout = defaultLoadout();
+  const rngState = createRngState(seed);
+  const offered = offerContracts(rngState);
   return {
-    currentScreen: 'loadout',
+    currentScreen: 'contract',
     playerState: {
       hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, overload: 0,
       loadout,
@@ -83,7 +86,9 @@ export function newRun(seed) {
     combatContext: null,
     pendingReward: null,
     combatSummary: null,
-    rngState: createRngState(seed),
+    rngState: offered.rngState,
+    offeredContracts: offered.contracts,
+    activeContract: null,
   };
 }
 
@@ -128,12 +133,16 @@ export function confirmLoadout(snapshot) {
   const playerState = { ...snapshot.playerState, hp: maxHp, maxHp, overload: floor, inventory };
   const seed = snapshot.rngState;
   const { graph, rngState } = generateFacilityGraph(seed);
+  const contract = snapshot.activeContract;
   const facilityRunState = refreshLocalObservations(createRunState(graph, seed, {
     overloadFloor: floor, overloadGainMultiplier: computeOverloadGainMultiplier(loadout),
+    contract, revealLandmarkSectorIds: contract ? [contract.sectorId] : [],
   }));
   return {
     ...snapshot, playerState, facilityRunState, rngState,
     currentScreen: 'map',
+    // 계약 진행 상태는 이제 facilityRunState.contract가 유일한 소스다 — 죽은 스냅샷 필드를 남기지 않는다.
+    activeContract: null,
   };
 }
 

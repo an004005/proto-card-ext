@@ -397,6 +397,12 @@ export const CARD_DEFINITIONS = {
     effects: [{ kind: 'removeInventoryItem' }],
     description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸.',
   },
+  contract_goods_item: {
+    id: 'contract_goods_item', name: '계약 물품', type: 'burden', attackKind: null,
+    unplayable: true, cost: 1, exhausts: true, scalesWithStage: false, overloadGain: 0,
+    effects: [{ kind: 'removeInventoryItem' }],
+    description: '평소 사용 불가. 과적(짐) 상태일 때만 1코로 사용해 영구 소멸 — 버리면 회수 계약이 실패한다.',
+  },
 
   // ---- 몬스터 삽입 상태이상 카드 (전투 한정) ----
   sticky_status_card: {
@@ -488,4 +494,5 @@ export const CARD_DEFINITIONS = {
 /** 인벤토리 아이템 kind -> 그 아이템이 과적(짐) 상태일 때 덱에 들어가는 status 카드 defId. */
 export const BURDEN_CARD_DEF_BY_KIND = {
   junk: 'junk_item', currency: 'currency_item', equipment: 'equipment_item', ammo: 'ammo_item', consumable: 'consumable_item',
+  contractGoods: 'contract_goods_item',
 };

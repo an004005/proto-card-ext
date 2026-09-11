@@ -1,10 +1,12 @@
 import { html } from '../lib.js';
 import { snapshotSignal } from '../state/runState.js';
-import { computeInventoryScore, startNewRun } from './runEndHelpers.js';
+import { computeInventoryScore, computeContractOutcome, startNewRun } from './runEndHelpers.js';
 
 export function ExtractionCompleteScreen() {
-  const ps = snapshotSignal.value.playerState;
-  const score = computeInventoryScore(ps.inventory);
+  const snapshot = snapshotSignal.value;
+  const ps = snapshot.playerState;
+  const outcome = computeContractOutcome(snapshot.facilityRunState);
+  const score = computeInventoryScore(ps.inventory) + (outcome?.scoreDelta ?? 0);
 
   return html`
     <div style=${{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 'var(--space-4)', background: 'var(--color-accent)', color: 'var(--color-bg)' }}>
@@ -15,6 +17,12 @@ export function ExtractionCompleteScreen() {
         <span>최종 과부화 <strong>${ps.overload}</strong>/100</span>
         <span>회수 점수 <strong>${score}</strong>크레드</span>
       </div>
+      ${outcome ? html`
+        <p style=${{ fontSize: '12px', opacity: 0.85, margin: 0 }}>
+          계약 「${outcome.contract.name}」 ${outcome.completed ? '완료' : '미완수'} —
+          ${outcome.completed ? `보상 +${outcome.scoreDelta}` : `위약 ${outcome.scoreDelta}`}크레드
+        </p>
+      ` : null}
       <button class="btn btn-secondary" style=${{ padding: '12px 40px', background: 'var(--color-bg)', borderColor: 'var(--color-bg)' }} onClick=${startNewRun}>새 런 시작</button>
     </div>
   `;

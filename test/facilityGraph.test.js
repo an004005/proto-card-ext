@@ -3,11 +3,16 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph, computeWeightedDistance } from '../src/engine/facilityGraph.js';
 import { countEdgeDisjointPaths, reachableSet } from '../src/engine/graphUtils.js';
 import {
-  SECTOR_IDS, NODES_PER_SECTOR, TOTAL_NODES, THREAT_COUNT_BY_SECTOR, EXIT_DISTANCE_RANGES,
+  SECTOR_IDS, SECTOR_LAYOUTS, TOTAL_NODES, THREAT_COUNT_BY_SECTOR, EXIT_DISTANCE_RANGES,
+  ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR, TOWER_ELEVATOR_REQUIREMENT, NODE_MIN_SEPARATION,
+  SECTOR_NODE_RADIUS,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
   LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SECTOR_ADJACENCY,
+  LANDMARK_CANDIDATE_MIN, LANDMARK_CANDIDATE_MAX,
 } from '../src/data/facilityLayout.js';
+import { generateSectorLayout } from '../src/engine/layoutArchetypes.js';
+import { createRngState } from '../src/engine/rng.js';
 
 const ADJACENT_SECTOR_KEYS = new Set(SECTOR_ADJACENCY.map(([a, b]) => [a, b].sort().join('|')));
 
@@ -38,7 +43,7 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
     const bySector = {};
     for (const node of graph.nodes) (bySector[node.sectorId] ||= []).push(node);
     for (const sectorId of SECTOR_IDS) {
-      assert.equal(bySector[sectorId]?.length, NODES_PER_SECTOR, `seed ${seed}: ${sectorId} node count`);
+      assert.equal(bySector[sectorId]?.length, SECTOR_LAYOUTS[sectorId].nodeCount, `seed ${seed}: ${sectorId} node count`);
     }
 
     const threatsBySector = {};
@@ -57,8 +62,10 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
     const crossSector = specialEdges.filter((e) => sectorOf(e.from) !== sectorOf(e.to));
     const adjacentCross = crossSector.filter((e) => ADJACENT_SECTOR_KEYS.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
     const longRange = crossSector.filter((e) => !ADJACENT_SECTOR_KEYS.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
-    const withinTotalMin = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MIN;
-    const withinTotalMax = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MAX;
+    // 배치 원형이 구조적으로 두는 특수 엣지(통신·관제탑 승강기)는 무작위 배치와 별개로 항상 있다.
+    const architecturalTotal = Object.values(ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR).reduce((a, b) => a + b, 0);
+    const withinTotalMin = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MIN + architecturalTotal;
+    const withinTotalMax = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MAX + architecturalTotal;
     const crossTotalMin = SECTOR_IDS.length * CROSS_SECTOR_SPECIAL_EDGES_MIN;
     const crossTotalMax = SECTOR_IDS.length * CROSS_SECTOR_SPECIAL_EDGES_MAX;
     assert.ok(withinSector.length >= withinTotalMin && withinSector.length <= withinTotalMax, `seed ${seed}: within-sector special edge total ${withinSector.length}`);
@@ -74,8 +81,9 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
     }
     for (const sectorId of SECTOR_IDS) {
       const count = withinBySector[sectorId] || 0;
+      const architectural = ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR[sectorId] || 0;
       assert.ok(
-        count >= SPECIAL_EDGES_PER_SECTOR_MIN && count <= SPECIAL_EDGES_PER_SECTOR_MAX,
+        count >= SPECIAL_EDGES_PER_SECTOR_MIN + architectural && count <= SPECIAL_EDGES_PER_SECTOR_MAX + architectural,
         `seed ${seed}: ${sectorId} within-sector special edge count ${count}`,
       );
     }
@@ -208,5 +216,217 @@ test('concealment values are within 1-3, absent (0) nodes are omitted, and gener
     }
     const again = generateFacilityGraph(seed);
     assert.deepEqual(again.graph.concealmentByNodeId, graph.concealmentByNodeId);
+  }
+});
+
+// ---- 평면도 생성 (D6·D18·D20) ----
+
+test('every node carries a type and each sector shows its archetype signature', () => {
+  const NODE_TYPES = new Set(['corridor', 'office', 'hall', 'vault', 'utility', 'watch', 'refuge', 'crawlway']);
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    for (const node of graph.nodes) {
+      assert.ok(NODE_TYPES.has(node.type), `seed ${seed}: ${node.id} has unknown type ${node.type}`);
+    }
+    const typesBySector = {};
+    for (const node of graph.nodes) (typesBySector[node.sectorId] ||= new Set()).add(node.type);
+
+    // 서명 유형: 그 구역에서 가장 무거운 방 유형은 반드시 한 번은 나온다(attachRooms가 보장).
+    for (const sectorId of SECTOR_IDS) {
+      const layout = SECTOR_LAYOUTS[sectorId];
+      const signature = layout.roomTypes.reduce((best, item) => (item.weight > best.weight ? item : best), layout.roomTypes[0]).value;
+      assert.ok(typesBySector[sectorId].has(signature), `seed ${seed}: ${sectorId} is missing its signature type ${signature}`);
+    }
+    // 대공간은 격납고에만, 비인가 통로는 폐기물에만 있다.
+    assert.deepEqual(new Set(graph.nodes.filter((n) => n.type === 'hall').map((n) => n.sectorId)), new Set(['hangar']));
+    assert.deepEqual(new Set(graph.nodes.filter((n) => n.type === 'crawlway').map((n) => n.sectorId)), new Set(['waste']));
+  }
+});
+
+test('sectors are joined only by gateways, two per sector, on ring-adjacent pairs', () => {
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const typeById = new Map(graph.nodes.map((n) => [n.id, n]));
+
+    const gatewaysBySector = {};
+    for (const node of graph.nodes) if (node.isGateway) gatewaysBySector[node.sectorId] = (gatewaysBySector[node.sectorId] || 0) + 1;
+    for (const sectorId of SECTOR_IDS) {
+      assert.equal(gatewaysBySector[sectorId], 2, `seed ${seed}: ${sectorId} should have exactly two gateways`);
+    }
+
+    // 일반 엣지 중 구역을 넘는 것은 관문뿐이고, 관문은 링에서 인접한 구역만 잇는다.
+    for (const edge of graph.edges) {
+      if (edge.features.length > 0) continue; // 특수 엣지는 별도 규칙(§4.2)을 따른다
+      const from = typeById.get(edge.from);
+      const to = typeById.get(edge.to);
+      if (from.sectorId === to.sectorId) continue;
+      assert.ok(from.isGateway && to.isGateway, `seed ${seed}: ${edge.id} crosses sectors without gateways`);
+      assert.ok(ADJACENT_SECTOR_KEYS.has([from.sectorId, to.sectorId].sort().join('|')), `seed ${seed}: ${edge.id} links non-adjacent sectors`);
+    }
+  }
+});
+
+test('concealment follows node type — corridors and halls never offer any', () => {
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const typeById = new Map(graph.nodes.map((n) => [n.id, n.type]));
+    for (const [nodeId, value] of Object.entries(graph.concealmentByNodeId)) {
+      const type = typeById.get(nodeId);
+      assert.ok(value >= 1 && value <= 3, `seed ${seed}: ${nodeId} concealment out of range`);
+      assert.ok(type !== 'corridor' && type !== 'hall', `seed ${seed}: ${nodeId} is a ${type} and should have no concealment`);
+    }
+    // 은신처는 거의 항상 은엄폐를 가진다(가중치 90%) — 한 판에 하나도 없으면 유형이 안 먹은 것이다.
+    const refuges = graph.nodes.filter((n) => n.type === 'refuge');
+    if (refuges.length >= 5) {
+      assert.ok(refuges.some((n) => graph.concealmentByNodeId[n.id]), `seed ${seed}: no refuge got concealment`);
+    }
+  }
+});
+
+test('nodes inside a sector never overlap', () => {
+  // 로컬 정규화 좌표에서의 최소 간격이 전역 좌표로는 SECTOR_NODE_RADIUS배가 된다. 밀어내기가
+  // 매 패스 끝에 다시 정규화되면서 조금씩 되감기므로 목표치에 극소량(월드 0.5 미만) 못 미치는
+  // 쌍이 남는다 — 화면에서는 구분되지 않는 차이라 그만큼을 허용한다.
+  const minWorldDistance = NODE_MIN_SEPARATION * SECTOR_NODE_RADIUS;
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const bySector = {};
+    for (const node of graph.nodes) (bySector[node.sectorId] ||= []).push(node);
+    for (const sectorId of SECTOR_IDS) {
+      const nodes = bySector[sectorId];
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const d = Math.hypot(nodes[i].x - nodes[j].x, nodes[i].y - nodes[j].y);
+          assert.ok(d >= minWorldDistance - 0.5, `seed ${seed}: ${nodes[i].id} and ${nodes[j].id} are ${d.toFixed(1)} apart`);
+        }
+      }
+    }
+  }
+});
+
+// D16: 표지 노드의 위치 규칙은 배치 원형마다 고정이다. 도면만 보고 후보를 두세 방으로 좁힐 수
+// 있어야 하고(너무 많으면 안 좁혀지고), 하나뿐이면 정찰할 이유가 없다.
+test('the landmark always sits on one of the archetype-fixed candidate rooms', () => {
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    for (const landmark of graph.landmarks) {
+      const node = byId.get(landmark.nodeId);
+      const layout = SECTOR_LAYOUTS[landmark.sectorId];
+      const sectorNodes = graph.nodes.filter((n) => n.sectorId === landmark.sectorId);
+      const cy = sectorNodes.reduce((sum, n) => sum + n.y, 0) / sectorNodes.length;
+      // 원형별 규칙을 좌표로 다시 확인한다 — 생성기의 내부 구조가 아니라 도면에서 읽히는 성질을 본다.
+      if (layout.archetype === 'tower') {
+        // 최상층: 구역의 위쪽 절반에 있다.
+        assert.ok(node.y < cy, `seed ${seed}: ${landmark.sectorId} landmark is not near the top of the tower`);
+      } else if (layout.archetype === 'radial') {
+        // 중심부: 회랑이 모이는 허브에 붙은 방이다. 정규화와 밀어내기로 좌표가 밀리므로 순위로
+        // 본다 — 바깥 고리에는 절대 놓이지 않는다는 것이 확인하려는 성질이다.
+        const cx = sectorNodes.reduce((sum, n) => sum + n.x, 0) / sectorNodes.length;
+        const ranked = sectorNodes
+          .map((n) => ({ id: n.id, d: Math.hypot(n.x - cx, n.y - cy) }))
+          .sort((a, b) => a.d - b.d)
+          .slice(0, Math.ceil(sectorNodes.length / 2))
+          .map((c) => c.id);
+        assert.ok(ranked.includes(node.id), `seed ${seed}: ${landmark.sectorId} landmark is not in the hub`);
+      }
+      // 어떤 원형에서도 표지는 복도가 아니라 방이다.
+      assert.notEqual(node.type, 'corridor', `seed ${seed}: ${landmark.sectorId} landmark sits in a corridor`);
+      // 비인가 통로는 도면에 없으므로 표지가 놓이지 않는다.
+      assert.notEqual(node.type, 'crawlway', `seed ${seed}: ${landmark.sectorId} landmark sits off the floor plan`);
+    }
+  }
+});
+
+test('every sector offers 2-4 landmark candidates — enough to narrow down, not enough to be certain', () => {
+  for (let seed = 0; seed < 20; seed++) {
+    for (const sectorId of SECTOR_IDS) {
+      const layout = generateSectorLayout(createRngState(seed), sectorId);
+      assert.ok(
+        layout.landmarkIndices.length >= LANDMARK_CANDIDATE_MIN && layout.landmarkIndices.length <= LANDMARK_CANDIDATE_MAX,
+        `seed ${seed}: ${sectorId} offers ${layout.landmarkIndices.length} landmark candidates`,
+      );
+    }
+  }
+});
+
+// 탑 제약은 세 군데(관문 연결, 구역 간·원거리 특수 엣지, 구역 안 특수 엣지)에서 각각 지켜야
+// 성립한다. 새 종류의 엣지가 하나 추가되면 조용히 깨지므로 바깥에서 관찰 가능한 성질로 못박는다.
+test('the comms tower only touches other sectors through its ground-floor lobby', () => {
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const inTower = new Set(graph.nodes.filter((n) => n.sectorId === 'comms').map((n) => n.id));
+    // 로비 = 1층 복도(층 사슬의 아래 끝)와 거기 일반 엣지로 붙은 방.
+    const corridors = graph.nodes.filter((n) => n.sectorId === 'comms' && n.type === 'corridor');
+    const ground = corridors.reduce((best, n) => (n.y > best.y ? n : best), corridors[0]);
+    const lobby = new Set([ground.id]);
+    for (const edge of graph.edges) {
+      if (edge.features.length > 0) continue;
+      if (edge.from === ground.id && inTower.has(edge.to)) lobby.add(edge.to);
+      if (edge.to === ground.id && inTower.has(edge.from)) lobby.add(edge.from);
+    }
+    for (const edge of graph.edges) {
+      const fromInside = inTower.has(edge.from);
+      if (fromInside === inTower.has(edge.to)) continue;
+      const endpoint = fromInside ? edge.from : edge.to;
+      assert.ok(lobby.has(endpoint), `seed ${seed}: ${edge.id} leaves the tower from ${endpoint}, which is not the lobby`);
+    }
+  }
+});
+
+test('inside the comms tower nothing crosses a floor except the stairs and the elevator', () => {
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const inTower = new Set(graph.nodes.filter((n) => n.sectorId === 'comms').map((n) => n.id));
+    const corridorIds = new Set(graph.nodes.filter((n) => n.sectorId === 'comms' && n.type === 'corridor').map((n) => n.id));
+    // 층 번호를 그래프에서 되짚는다: 복도는 y 순서가 곧 층이고, 방은 자기를 매단 복도의 층이다.
+    const floors = [...corridorIds]
+      .map((id) => graph.nodes.find((n) => n.id === id))
+      .sort((a, b) => b.y - a.y);
+    /** @type {Map<string, number>} */
+    const floorOf = new Map(floors.map((n, i) => [n.id, i]));
+    for (const edge of graph.edges) {
+      if (edge.features.length > 0) continue;
+      if (!inTower.has(edge.from) || !inTower.has(edge.to)) continue;
+      const room = corridorIds.has(edge.from) ? edge.to : edge.from;
+      const host = corridorIds.has(edge.from) ? edge.from : edge.to;
+      if (corridorIds.has(room)) continue;
+      assert.ok(!floorOf.has(room), `seed ${seed}: ${room} hangs off more than one corridor`);
+      floorOf.set(room, floorOf.get(host));
+    }
+    const elevator = graph.edges.find((e) => e.requiredCapability !== undefined);
+    for (const edge of graph.edges) {
+      if (!inTower.has(edge.from) || !inTower.has(edge.to)) continue;
+      if (edge === elevator) continue;
+      const gap = Math.abs(floorOf.get(edge.from) - floorOf.get(edge.to));
+      assert.ok(gap <= 1, `seed ${seed}: ${edge.id} skips ${gap} floors`);
+      if (gap === 1) {
+        assert.ok(
+          corridorIds.has(edge.from) && corridorIds.has(edge.to),
+          `seed ${seed}: ${edge.id} crosses a floor without being the stairs`,
+        );
+      }
+    }
+  }
+});
+
+test('the comms tower is a straight column with a locked elevator from bottom to top', () => {
+  for (let seed = 0; seed < 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const corridors = graph.nodes.filter((n) => n.sectorId === 'comms' && n.type === 'corridor');
+    // 곧은 기둥이라 복도의 x 편차가 층 간격보다 훨씬 작다.
+    const xs = corridors.map((n) => n.x);
+    const ys = corridors.map((n) => n.y);
+    const spreadX = Math.max(...xs) - Math.min(...xs);
+    const spreadY = Math.max(...ys) - Math.min(...ys);
+    assert.ok(spreadX < spreadY * 0.2, `seed ${seed}: tower corridors are not a straight column (x ${spreadX.toFixed(0)} vs y ${spreadY.toFixed(0)})`);
+
+    const bottom = corridors.reduce((best, n) => (n.y > best.y ? n : best), corridors[0]);
+    const top = corridors.reduce((best, n) => (n.y < best.y ? n : best), corridors[0]);
+    const elevator = graph.edges.find((e) => (e.from === bottom.id && e.to === top.id) || (e.from === top.id && e.to === bottom.id));
+    assert.ok(elevator, `seed ${seed}: no elevator between the tower's bottom and top`);
+    assert.ok(elevator.features.includes('blocked'), `seed ${seed}: the elevator should be locked until opened`);
+    assert.ok(elevator.features.includes('electronic'), `seed ${seed}: the elevator should also open with Hacking`);
+    assert.equal(elevator.requiredCapability, TOWER_ELEVATOR_REQUIREMENT, `seed ${seed}: elevator requirement`);
   }
 });

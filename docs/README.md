@@ -4,14 +4,16 @@
 
 ## 현재 구현
 
-1. [게임 개요](./game-overview.md)
-2. [게임 규칙](./game-rules.md)
-3. [전투 상세](./combat-reference.md)
-4. [맵 구현 명세](./extraction-map-implementation-spec.md)
-5. [용어](./terminology.md)
-6. [장비 Capability 계약](./map-equipment-capability-mapping.md)
-7. [카드·소모품·몬스터 맵 태그 계약](./card-map-tag-mapping.md)
-8. [코드 추출 데이터 엑셀](./card-extraction-reference.xlsx)
+1. [팀원을 위한 게임 소개](./team-game-guide.md)
+2. [게임의 불변 핵심과 가변 요소](./game-core-and-variables.md)
+3. [게임 개요](./game-overview.md)
+4. [게임 규칙](./game-rules.md)
+5. [전투 상세](./combat-reference.md)
+6. [맵 구현 명세](./extraction-map-implementation-spec.md)
+7. [용어](./terminology.md)
+8. [장비 Capability 계약](./map-equipment-capability-mapping.md)
+9. [카드·소모품·몬스터 맵 태그 계약](./card-map-tag-mapping.md)
+10. [코드 추출 데이터 엑셀](./card-extraction-reference.xlsx)
 
 현재 규칙과 콘텐츠의 최우선 근거는 `src/`와 `test/`다. 엑셀은 `npm run docs:reference`로 코드에서 생성한다.
 

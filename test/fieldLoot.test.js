@@ -1,0 +1,151 @@
+// §5단계 확보 대상 파밍(D10·D11): 후보 3개가 전부 같은 역할축에서 나오고 서로 다른지, 그리고
+// 같은 시드가 같은 결과를 내는지가 이 모듈의 계약이다. 축 분류는 MAP_EQUIPMENT_CAPABILITIES에서
+// 파생돼야 하므로 후보를 그 원본 데이터로 되짚어 검증한다.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { rollFieldLootOptions, axisOfEquipment, listEquipmentByAxis } from '../src/engine/fieldLoot.js';
+import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
+import { getAllEquipmentIds } from '../src/engine/inventoryReducer.js';
+import { createRngState } from '../src/engine/rng.js';
+import { PRIZE_OPTION_COUNT } from '../src/data/facilityLayout.js';
+import { REWARD_AMMO_MIN, REWARD_AMMO_MAX, REWARD_CURRENCY_VALUE_RANGE } from '../src/data/rewardTables.js';
+import { CONSUMABLE_DROP_WEIGHTS } from '../src/data/dropTables.js';
+
+const AXES = ['combat', 'infiltration', 'resource'];
+const SEEDS = [1, 2, 7, 42, 99, 1234, 20260911];
+
+/** 후보 하나를 동일성 비교용 문자열로 — 값이 달라도 같은 장비/소모품이면 같은 선택지다. */
+function keyOf(option) {
+  if (option.kind === 'equipment') return `equipment:${option.equipmentId}`;
+  if (option.kind === 'consumable') return `consumable:${option.defId}`;
+  return option.kind;
+}
+
+test('같은 시드는 완전히 같은 결과를 낸다 (Math.random 미사용 확인)', () => {
+  for (const axis of AXES) {
+    for (const tier of ['normal', 'elite']) {
+      const a = rollFieldLootOptions(axis, tier, createRngState(1234));
+      const b = rollFieldLootOptions(axis, tier, createRngState(1234));
+      assert.deepEqual(a, b, `${axis}/${tier}이 결정론적이어야 한다`);
+      assert.equal(typeof a.rngState, 'number');
+      assert.notEqual(a.rngState, createRngState(1234), 'rng를 실제로 소비해야 한다');
+    }
+  }
+});
+
+test('시드가 다르면 결과도 갈린다 — 상수를 반환하고 있지 않다', () => {
+  const rolls = SEEDS.map((s) => JSON.stringify(rollFieldLootOptions('combat', 'normal', createRngState(s)).options));
+  assert.ok(new Set(rolls).size > 1, '시드마다 같은 후보만 나오면 롤이 아니다');
+});
+
+test('후보는 항상 3개이고 서로 다르다', () => {
+  for (const axis of AXES) {
+    for (const seed of SEEDS) {
+      const { options } = rollFieldLootOptions(axis, 'normal', createRngState(seed));
+      assert.equal(options.length, PRIZE_OPTION_COUNT, `${axis}/seed ${seed} 후보 수`);
+      const keys = options.map(keyOf);
+      assert.equal(new Set(keys).size, keys.length, `${axis}/seed ${seed} 중복 후보: ${keys.join(', ')}`);
+    }
+  }
+});
+
+test('combat 축 후보는 Capability 순이득도 fieldAction도 없는 순수 전투 장비다', () => {
+  for (const seed of SEEDS) {
+    const { options } = rollFieldLootOptions('combat', 'elite', createRngState(seed));
+    for (const option of options) {
+      assert.equal(option.kind, 'equipment');
+      const contract = MAP_EQUIPMENT_CAPABILITIES[option.equipmentId];
+      assert.ok(contract, `${option.equipmentId}는 Capability 계약이 있어야 한다`);
+      assert.equal(contract.fieldAction, null, `${option.equipmentId}에 현장 도구가 있으면 침투 축이다`);
+      const net = Object.values(contract.capabilityModifiers).reduce((sum, v) => sum + v, 0);
+      assert.ok(net <= 0, `${option.equipmentId} 순합 ${net} — 순이득이 있으면 침투 축이다`);
+    }
+  }
+});
+
+test('infiltration 축 후보는 Capability 순이득이나 fieldAction을 가진 장비다', () => {
+  for (const seed of SEEDS) {
+    const { options } = rollFieldLootOptions('infiltration', 'elite', createRngState(seed));
+    for (const option of options) {
+      assert.equal(option.kind, 'equipment');
+      const contract = MAP_EQUIPMENT_CAPABILITIES[option.equipmentId];
+      if (!contract) {
+        // 테이블 밖에서 구현된 정찰 도구(implant7 지도)만 예외로 허용한다.
+        assert.equal(option.equipmentId, 'implant7');
+        continue;
+      }
+      const net = Object.values(contract.capabilityModifiers).reduce((sum, v) => sum + v, 0);
+      assert.ok(contract.fieldAction !== null || net > 0, `${option.equipmentId}는 침투에 기여하지 않는다`);
+    }
+  }
+});
+
+test('resource 축 후보는 탄약·소모품·재화뿐이고 값이 tier 범위 안이다', () => {
+  const consumableIds = new Set(CONSUMABLE_DROP_WEIGHTS.map((w) => w.value));
+  for (const tier of ['normal', 'elite']) {
+    for (const seed of SEEDS) {
+      const { options } = rollFieldLootOptions('resource', tier, createRngState(seed));
+      for (const option of options) {
+        assert.ok(['ammo', 'consumable', 'currency'].includes(option.kind), `예상 밖 kind: ${option.kind}`);
+        if (option.kind === 'ammo') {
+          assert.ok(option.amount >= REWARD_AMMO_MIN && option.amount <= REWARD_AMMO_MAX, `탄약 ${option.amount}`);
+        } else if (option.kind === 'currency') {
+          const range = REWARD_CURRENCY_VALUE_RANGE[tier];
+          assert.ok(option.value >= range.min && option.value <= range.max, `${tier} 재화 ${option.value}`);
+        } else {
+          assert.ok(consumableIds.has(option.defId), `알 수 없는 소모품 ${option.defId}`);
+        }
+      }
+    }
+  }
+});
+
+test('elite는 normal보다 재화 상한이 높다 — tier가 값어치에 반영된다', () => {
+  assert.ok(REWARD_CURRENCY_VALUE_RANGE.elite.max > REWARD_CURRENCY_VALUE_RANGE.normal.max);
+  const eliteValues = SEEDS.flatMap((s) => rollFieldLootOptions('resource', 'elite', createRngState(s)).options)
+    .filter((o) => o.kind === 'currency').map((o) => o.value);
+  assert.ok(eliteValues.length > 0, 'elite 롤에 재화가 한 번은 나와야 한다');
+  assert.ok(Math.max(...eliteValues) > REWARD_CURRENCY_VALUE_RANGE.normal.max, 'elite에서 normal 상한을 넘는 값이 나온다');
+});
+
+test('axisOfEquipment가 실제 장비 데이터를 순합 기준으로 분류한다', () => {
+  // 한쪽을 주고 한쪽을 뺏는 장비(순합 0)는 경로의 대가를 줄이지 못하므로 전투 축이다.
+  assert.equal(axisOfEquipment('shotgun'), 'combat');          // force +1 / stealth -1
+  assert.equal(axisOfEquipment('rocket_launcher'), 'combat');  // force +1 / stealth -1
+  assert.equal(axisOfEquipment('sniper_rifle'), 'combat');     // perception +1 / mobility -1
+  assert.equal(axisOfEquipment('heavy_top'), 'combat');
+  assert.equal(axisOfEquipment('heavy_bottom'), 'combat');
+  assert.equal(axisOfEquipment('rifle'), 'combat');            // 수정치 없음
+  assert.equal(axisOfEquipment('module_neural'), 'combat');
+
+  assert.equal(axisOfEquipment('katana'), 'infiltration');            // 순합 +2
+  assert.equal(axisOfEquipment('tactical_bottom'), 'infiltration');   // 순합 +2
+  assert.equal(axisOfEquipment('module_sandevistan'), 'infiltration');// 순합 +3
+  assert.equal(axisOfEquipment('implant2'), 'infiltration');          // perception +1
+  // 순합은 -1이지만 현장 도구를 주므로 침투 축이다.
+  assert.equal(axisOfEquipment('module_forcefield'), 'infiltration');
+  // 테이블 밖에서 구현된 정찰 도구 예외.
+  assert.equal(axisOfEquipment('implant7'), 'infiltration');
+  // 존재하지 않는 장비는 침투 근거가 없으므로 전투 축으로 떨어진다.
+  assert.equal(axisOfEquipment('no_such_equipment'), 'combat');
+});
+
+test('두 장비 축이 카탈로그를 빠짐없이 겹치지 않게 가른다', () => {
+  const all = getAllEquipmentIds();
+  const combat = listEquipmentByAxis('combat');
+  const infiltration = listEquipmentByAxis('infiltration');
+  assert.equal(combat.length + infiltration.length, all.length);
+  assert.equal(new Set([...combat, ...infiltration]).size, all.length);
+  // 후보 3개를 축 안에서 채우려면 각 축에 최소 PRIZE_OPTION_COUNT종이 있어야 한다.
+  assert.ok(combat.length >= PRIZE_OPTION_COUNT, `combat ${combat.length}종`);
+  assert.ok(infiltration.length >= PRIZE_OPTION_COUNT, `infiltration ${infiltration.length}종`);
+});
+
+test('입력 rngState를 변형하지 않고 새 상태를 반환한다', () => {
+  const seed = createRngState(77);
+  const first = rollFieldLootOptions('infiltration', 'normal', seed);
+  const again = rollFieldLootOptions('infiltration', 'normal', seed);
+  assert.deepEqual(first, again, '같은 state 값을 두 번 넣으면 같은 결과여야 한다');
+  const chained = rollFieldLootOptions('infiltration', 'normal', first.rngState);
+  assert.notEqual(chained.rngState, first.rngState, '이어 굴리면 상태가 진행된다');
+});

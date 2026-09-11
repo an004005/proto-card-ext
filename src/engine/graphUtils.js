@@ -19,6 +19,21 @@ export function buildAdjacency(edges) {
 }
 
 /**
+ * 여는 절차 없이 지나갈 수 있는 엣지인가. 차단(물리 잠금)과 전자(전자 잠금)는 둘 다 잠금이며,
+ * 태그는 무엇으로 여는지를 정할 뿐이다 — 차단은 Force, 전자는 Hacking. 잠긴 문은 소리는
+ * 통과시키지만 사람은 통과시키지 않는다. 무엇이 "지나갈 수 있는 길"인지는 플레이어와 위협이
+ * 같은 기준을 써야 하므로(runEngine의 isEdgeTraversable) 판정을 여기 한 곳에 둔다. 생성
+ * 단계처럼 아직 아무것도 열리지 않은 시점에서는 openedEdgeIds 없이 부른다.
+ * @param {{id: string, features: string[]}} edge
+ * @param {string[]} [openedEdgeIds]
+ */
+export function isEdgeUnlocked(edge, openedEdgeIds = []) {
+  const locked = edge.features.includes('blocked') || edge.features.includes('electronic');
+  if (!locked) return true;
+  return openedEdgeIds.includes(edge.id);
+}
+
+/**
  * BFS hop-count distances from `fromId` over undirected edges.
  * @param {{from: string, to: string}[]} edges
  * @param {string} fromId

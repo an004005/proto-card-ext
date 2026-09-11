@@ -1,0 +1,117 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { gameReducer } from '../src/engine/gameReducer.js';
+import { offerContracts, computeContractOutcome } from '../src/engine/contractReducer.js';
+import { createRngState } from '../src/engine/rng.js';
+import { CONTRACT_DEFS } from '../src/data/contracts.js';
+
+/** offerContracts는 언제나 [retrieval, destroy, intel] 순서로 하나씩 뽑는다(구현 순서 그대로). */
+function startLoadoutWithType(seed, type) {
+  const offered = gameReducer(null, { type: 'NEW_RUN', seed });
+  const contract = offered.offeredContracts.find((c) => c.type === type);
+  return gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
+}
+
+test('offerContracts returns exactly one of each type and is deterministic for the same seed', () => {
+  for (let seed = 0; seed < 10; seed++) {
+    const a = offerContracts(createRngState(seed));
+    const b = offerContracts(createRngState(seed));
+    assert.deepEqual(a.contracts, b.contracts);
+    assert.equal(a.contracts.length, 3);
+    assert.deepEqual(a.contracts.map((c) => c.type).sort(), ['destroy', 'intel', 'retrieval']);
+    for (const c of a.contracts) assert.ok(CONTRACT_DEFS.includes(c));
+  }
+});
+
+test('ACCEPT_CONTRACT pays the prepayment currency immediately and moves to the loadout screen', () => {
+  const offered = gameReducer(null, { type: 'NEW_RUN', seed: 3 });
+  const contract = offered.offeredContracts[0];
+  const s = gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
+  assert.equal(s.currentScreen, 'loadout');
+  assert.equal(s.activeContract.id, contract.id);
+  assert.equal(s.activeContract.status, 'accepted');
+  const currencyItems = s.playerState.inventory.items.filter((i) => i.kind === 'currency');
+  assert.equal(currencyItems.length, 1);
+  assert.equal(currencyItems[0].value, contract.prepaymentCurrency);
+  // 아직 제안 목록에 없는 id로는 수락되지 않는다(no-op).
+  assert.equal(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: 'not_offered' }), offered);
+});
+
+test('CONFIRM_LOADOUT seeds facilityRunState.contract from the accepted contract and pre-reveals its objective landmark', () => {
+  let s = startLoadoutWithType(3, 'destroy');
+  const contractId = s.activeContract.id;
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  assert.equal(s.facilityRunState.contract.id, contractId);
+  assert.equal(s.facilityRunState.contract.status, 'accepted');
+  // activeContract는 confirmLoadout 이후 스냅샷에서 지워진다 — facilityRunState.contract가 유일한 소스.
+  assert.equal(s.activeContract, null);
+
+  const landmark = s.facilityRunState.graph.landmarks.find((l) => l.sectorId === s.facilityRunState.contract.sectorId);
+  assert.ok(s.facilityRunState.observations[landmark.nodeId], '사전 정보로 목표부 랜드마크가 미리 공개돼 있어야 한다');
+});
+
+test('a retrieval contract completes only if the player is still carrying the goods when they extract', () => {
+  let s = startLoadoutWithType(3, 'retrieval');
+  const contract = s.activeContract;
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const run = s.facilityRunState;
+  const landmark = run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
+
+  // 확보(ACQUIRE_CONTRACT_GOODS)는 Stealth/Mobility 1+가 필요한데 기본 로드아웃은 아무것도
+  // 장착하지 않아 둘 다 0이다 — 그 게이팅은 runEngine.test.js에서 이미 확인했으므로, 여기서는
+  // 확보 이후 상태(계약 acquired + 물건이 인벤토리에 있는 상태)를 직접 만들어 완료/실패 판정
+  // 자체에 집중한다.
+  s = {
+    ...s,
+    facilityRunState: { ...run, playerNodeId: landmark.nodeId, contract: { ...contract, status: 'acquired', acquiredAt: run.time } },
+    playerState: {
+      ...s.playerState,
+      inventory: Array.from({ length: contract.goodsSlots }).reduce(
+        (inv) => ({ ...inv, items: [...inv.items, { id: `goods-${inv.items.length}`, kind: 'contractGoods', contractId: contract.id, value: contract.goodsValuePerSlot }] }),
+        s.playerState.inventory,
+      ),
+    },
+  };
+  const goodsCount = s.playerState.inventory.items.filter((i) => i.kind === 'contractGoods' && i.contractId === contract.id).length;
+  assert.equal(goodsCount, contract.goodsSlots);
+
+  // 이웃 노드에 출구를 강제로 열어 두고(다른 탈출 테스트와 같은 패턴) 밟으면 완료된다.
+  const neighborId = run.graph.edges.find((e) => e.from === landmark.nodeId)?.to
+    || run.graph.edges.find((e) => e.to === landmark.nodeId)?.from;
+  const opened = {
+    ...s,
+    facilityRunState: {
+      ...s.facilityRunState,
+      exits: { ...s.facilityRunState.exits, A: { ...s.facilityRunState.exits.A, nodeId: neighborId, status: 'open', openEndsAt: s.facilityRunState.time + 1000 } },
+    },
+  };
+  const extracted = gameReducer(opened, { type: 'MOVE_TO_NODE', nodeId: neighborId });
+  assert.equal(extracted.currentScreen, 'extractionComplete');
+  assert.equal(extracted.facilityRunState.contract.status, 'completed');
+
+  // 반대로 확보한 물건을 전부 버린 뒤 같은 시나리오를 밟으면: 탈출은 성공(생존)하지만 계약은 실패로 남는다.
+  const discarded = {
+    ...opened,
+    playerState: {
+      ...opened.playerState,
+      inventory: { ...opened.playerState.inventory, items: opened.playerState.inventory.items.filter((i) => i.kind !== 'contractGoods') },
+    },
+  };
+  const extractedWithoutGoods = gameReducer(discarded, { type: 'MOVE_TO_NODE', nodeId: neighborId });
+  assert.equal(extractedWithoutGoods.currentScreen, 'extractionComplete', '미완수 탈출도 생존 성공으로 처리한다(불변 핵심 6번)');
+  assert.equal(extractedWithoutGoods.facilityRunState.contract.status, 'acquired', '물건 없이 탈출하면 계약은 완료되지 않는다');
+});
+
+test('computeContractOutcome gives a positive delta on completion and a negative one (the penalty) otherwise', () => {
+  assert.equal(computeContractOutcome(null), null);
+  assert.equal(computeContractOutcome({ contract: null }), null);
+
+  const destroyDef = CONTRACT_DEFS.find((c) => c.type === 'destroy');
+  const completed = computeContractOutcome({ contract: { ...destroyDef, status: 'completed' } });
+  assert.equal(completed.completed, true);
+  assert.equal(completed.scoreDelta, destroyDef.completionRewardValue);
+
+  const failed = computeContractOutcome({ contract: { ...destroyDef, status: 'accepted' } });
+  assert.equal(failed.completed, false);
+  assert.equal(failed.scoreDelta, -destroyDef.penaltyValue);
+});

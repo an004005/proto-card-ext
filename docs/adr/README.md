@@ -10,10 +10,21 @@
 
 현재 구현의 권위는 `src/` 코드와 `test/`에 있다. [맵 구현 명세](../extraction-map-implementation-spec.md), [장비 계약](../map-equipment-capability-mapping.md), [맵 태그 계약](../card-map-tag-mapping.md), 자동 생성 엑셀은 현재 코드를 설명하는 참조 자료다. active ADR도 현재 코드와 충돌하면 구현 근거로 사용하지 않는다.
 
+## 제안 상태 ADR
+
+아직 구현되지 않은 결정이다. 현재 동작의 근거로 사용하지 않는다. 상세는
+[맵 재설계 확정 사항](../proposals/map-redesign-decisions.md)에 있다.
+
+| ADR | 내용 |
+|---|---|
+| 0074 난이도는 정보만 | 계약 난이도는 정보 공개 수준과 보상만 바꾼다. 계약 자체는 구현됨, 난이도 선택(쉬움/보통/어려움)은 미구현 |
+
 ## 비활성·수정 ADR
 
 | ADR | 상태 | 현재 참조 |
 |---|---|---|
+| 0009 탐사 안개 | superseded | ADR-0072 |
+| 0033 탐사 안개 확장 | superseded | ADR-0072 |
 | 0001 숨은 탈출 지점 | superseded | ADR-0025 |
 | 0002 재방문과 이동 시간 1 | amended | ADR-0068, 구현 명세 §6.2 |
 | 0003 기본 행동 10·매 틱 적 이동 | amended | ADR-0068, 구현 명세 §5, §9 |

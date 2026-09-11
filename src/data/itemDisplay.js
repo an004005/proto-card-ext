@@ -5,6 +5,7 @@ import { MODULE_DEFINITIONS } from './modules.js';
 import { IMPLANT_DEFINITIONS } from './implants.js';
 import { CONSUMABLE_DEFINITIONS } from './consumables.js';
 import { MAX_DURABILITY } from '../engine/equipmentEngine.js';
+import { CONTRACT_DEFS } from './contracts.js';
 
 /** @typedef {import('../engine/types.js').Item} Item */
 
@@ -29,6 +30,10 @@ export function describeItem(item) {
   if (item.kind === 'junk') return { name: '잡템', sub: `환금 가치 ${item.value}cr`, color: 'var(--color-neutral-500)' };
   if (item.kind === 'currency') return { name: '환금템', sub: `가치 ${item.value}cr`, color: 'var(--color-accent-2-700)' };
   if (item.kind === 'ammo') return { name: '탄약 더미', sub: `${item.amount}발`, color: 'var(--color-accent-2-700)' };
+  if (item.kind === 'contractGoods') {
+    const contract = CONTRACT_DEFS.find((c) => c.id === item.contractId);
+    return { name: contract?.name || '계약 물품', sub: `계약 회수품 · 가치 ${item.value}cr`, color: 'var(--color-accent-2-700)' };
+  }
   if (item.kind === 'consumable') return { name: CONSUMABLE_DEFINITIONS[item.defId ?? '']?.name || item.defId || '', sub: '미장착 소모품', color: 'var(--color-neutral-700)' };
 
   // 임플란트는 §신규 내구도 시스템 대상이 아니므로(카드가 없어 닳지 않음) 내구도를 표시하지 않는다.

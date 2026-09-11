@@ -7,7 +7,7 @@ import { CONSUMABLE_DEFINITIONS } from '../src/data/consumables.js';
 import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
 
 const NOT_EXECUTABLE = new Set([
-  'junk_item', 'currency_item', 'equipment_item', 'ammo_item', 'consumable_item',
+  'junk_item', 'currency_item', 'equipment_item', 'ammo_item', 'consumable_item', 'contract_goods_item',
   'infected_status_card', 'wound_status_card', 'dizziness_status_card', 'mucus_status_card', 'offering_status_card',
 ]);
 

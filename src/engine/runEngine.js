@@ -11,24 +11,31 @@
 // command surface is added once real field actions exist.
 
 import { createRngState, pick } from './rng.js';
-import { bfsHopDistances, buildAdjacency } from './graphUtils.js';
+import { bfsHopDistances, buildAdjacency, isEdgeUnlocked } from './graphUtils.js';
 import { gainOverload, reduceOverload } from './overloadEngine.js';
 import { effectiveForRequirement } from './capabilityEngine.js';
+import { capabilityStep, resolveCapabilityCost } from './capabilityCosts.js';
 import { pickThreatEncounter } from '../data/dropTables.js';
+import { rollFieldLootOptions } from './fieldLoot.js';
 import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 import {
   RUN_COLLAPSE_TIME, WORLD_TICK_INTERVAL, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
-  SECTOR_ALERT_MIN_ENEMY_ALERT, SECTOR_ALERT_DECAY_INTERVAL, NOISE_HOP_RANGE, SECTOR_IDS,
-  APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME, FARM_TIME,
-  FARM_NOISE, FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
+  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS,
+  APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME,
+  SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
+  FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN,
   CAMERA_STEALTH_THRESHOLD, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME, CAMERA_HACK_OVERLOAD,
   CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
   MOBILITY_MOVE_TIME_MULTIPLIER,
   GENERATOR_HACK_TIME, GENERATOR_HACK_OVERLOAD, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
-  CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME, CONTROL_ROOM_HACK_OVERLOAD,
+  CONCEALMENT_ACTION_TIME_COST, HALL_STEALTH_PENALTY, CONTROL_ROOM_HACK_TIME, CONTROL_ROOM_HACK_OVERLOAD,
+  CONTRACT_ACQUIRE_TIME, CONTRACT_ACQUIRE_OVERLOAD, CONTRACT_DESTROY_TIME, CONTRACT_DESTROY_OVERLOAD,
+  CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD, LOCKDOWN_THREAT_SPEED_MULTIPLIER, LOCKDOWN_EXIT_CLOSE_WINDOW,
+  CORPSE_DISPOSAL_TIME, DISCOVERY_NOISE_INTENSITY,
+  EVIDENCE_TIER_RAISING_ALERT, REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_MULTIPLIER, ADJACENT_SECTOR_IDS,
 } from '../data/facilityLayout.js';
 
 // 모듈 레벨 카운터는 같은 프로세스에서 같은 seed로 여러 번 플레이하면(예: 헤드리스 테스트가
@@ -107,7 +114,28 @@ export function createRunState(graph, seed, overloadConfig = {}) {
   const sectorAlerts = {};
   for (const sectorId of SECTOR_IDS) sectorAlerts[sectorId] = { level: 0, resolvedEventIds: [] };
 
+  // D17: 런 시작 시점의 정보 공개. 계약 난이도가 정하는 값이고(3단계에서 계약이 이 자리를
+  // 채운다), 구현은 관측 집합에 미리 넣어 두는 것뿐이라 정찰·지도 임플란트와 같은 경로를 쓴다.
+  // 위협·카메라·은엄폐·비인가 통로는 어떤 난이도에서도 공개하지 않으므로 hasThreat은 false다.
+  /** @type {Record<string, {observedAt: number, hasThreat: boolean}>} */
+  const observations = {};
+  if (overloadConfig.revealLandmarks) {
+    for (const landmark of graph.landmarks) observations[landmark.nodeId] = { observedAt: 0, hasThreat: false };
+  }
+  // 계약의 "사전 정보" 선불 — 계약 목표부 랜드마크만 미리 공개한다. revealLandmarks(전체
+  // 공개, D17 난이도용)와는 별도 옵션이라 둘이 같이 켜져도 서로 덮어쓰지 않는다.
+  for (const sectorId of overloadConfig.revealLandmarkSectorIds || []) {
+    const landmark = graph.landmarks.find((l) => l.sectorId === sectorId);
+    if (landmark) observations[landmark.nodeId] = { observedAt: 0, hasThreat: false };
+  }
+
   const overloadFloor = overloadConfig.overloadFloor ?? 0;
+  // 계약(§3단계). 수락된 계약을 넘겨받아 진행 상태를 이 런에 심는다 — 여기서부터는
+  // facilityRunState.contract가 유일한 소스이고, 로드아웃 단계의 GameSnapshot.activeContract는
+  // 더 이상 참조하지 않는다.
+  const contract = overloadConfig.contract
+    ? { ...overloadConfig.contract, status: 'accepted', acquiredAt: null, completedAt: null }
+    : null;
   return {
     graph,
     time: 0,
@@ -119,7 +147,7 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     overload: overloadFloor,
     overloadFloor,
     overloadGainMultiplier: overloadConfig.overloadGainMultiplier ?? 1,
-    observations: {},
+    observations,
     fieldCooldowns: {},
     activeBarriers: [],
     hackedCameras: [],
@@ -140,6 +168,15 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     activeConcealment: null,
     revealedPatrolRouteSectorIds: [],
     encounter: null,
+    contract,
+    lockdown: null,
+    corpses: [],
+    pendingFarmChoice: null,
+    pendingHpLoss: 0,
+    pendingDurabilityLoss: 0,
+    // 구역마다 독립된 교대 시계. 통제실을 장악하면 그 구역의 다음 시각이 보인다(D14).
+    reinforcements: Object.fromEntries(SECTOR_IDS.map((id) => [id, { nextAt: REINFORCEMENT_INTERVAL, alertSeen: 0 }])),
+    powerCuts: [],
   };
 }
 
@@ -202,6 +239,25 @@ export function getSectorLandmarkArrowTarget(run, hasMapImplant) {
   const landmark = run.graph.landmarks.find((l) => l.sectorId === playerNode.sectorId);
   if (!landmark || run.observations[landmark.nodeId]) return null;
   return landmark;
+}
+
+/**
+ * 도면에 그려진 노드인가. 비인가 통로는 도면에 없다 — 폐기물 처리장의 정체성이라 어떤 난이도
+ * 에서도 미리 공개하지 않는다(D16). 나머지 노드와 그 사이의 통로는 처음부터 전부 보인다.
+ * 감추는 것은 구조가 아니라 그 안에 무엇이 있는지다.
+ * @param {import('./types.js').FacilityNode} node
+ */
+export function isOnFloorPlan(node) {
+  return !node.offPlan;
+}
+
+/**
+ * 지도에 이 노드가 나타나는가. 도면에 있거나, 직접 가 봤거나, 관측한 적이 있으면 보인다.
+ * @param {import('./types.js').FacilityRunState} run
+ * @param {import('./types.js').FacilityNode} node
+ */
+export function isNodeCharted(run, node) {
+  return isOnFloorPlan(node) || run.visitedNodeIds.includes(node.id) || !!run.observations[node.id];
 }
 
 /** Refresh the nodes watched by an active manual or hacked-camera recon session. */
@@ -364,9 +420,17 @@ function sectorMinAlert(state, sectorId) {
  * @param {import('./types.js').FacilitySectorId} sectorId
  * @param {string} eventId
  */
+function sectorOfNode(nodeId) {
+  return /** @type {import('./types.js').FacilitySectorId} */ (nodeId.split('_')[0]);
+}
+
+/** @param {import('./types.js').FacilityRunState} state @param {import('./types.js').FacilitySectorId} sectorId @param {string} eventId */
 function escalateSectorAlert(state, sectorId, eventId) {
   const current = state.sectorAlerts[sectorId];
   if (current.resolvedEventIds.includes(eventId)) return state.sectorAlerts;
+  // 전원 차단(D12) 중인 구역은 경계가 오르지 않는다. 기록도 남기지 않으므로 복구된 뒤에
+  // 같은 원인이 다시 발견되면 그때는 오른다 — "막는" 것이 아니라 "멈추는" 것이다.
+  if (state.powerCuts.some((cut) => cut.sectorId === sectorId && cut.expiresAt > state.time)) return state.sectorAlerts;
   return {
     ...state.sectorAlerts,
     [sectorId]: { level: /** @type {0|1|2|3} */ (Math.min(3, current.level + 1)), resolvedEventIds: [...current.resolvedEventIds, eventId] },
@@ -380,9 +444,8 @@ function escalateSectorAlert(state, sectorId, eventId) {
  * @returns {import('./types.js').FacilityEdge[]}
  */
 function edgesForThreatMovement(state) {
-  if (state.activeBarriers.length === 0) return state.graph.edges;
   const barrierIds = new Set(state.activeBarriers.map((b) => b.edgeId));
-  return state.graph.edges.filter((e) => !barrierIds.has(e.id));
+  return state.graph.edges.filter((e) => !barrierIds.has(e.id) && isEdgeUnlocked(e, state.openedEdgeIds));
 }
 
 /**
@@ -397,7 +460,11 @@ function selectThreatTarget(state, threat) {
     return { kind: 'player', nodeId: threat.lastKnownPlayerNodeId };
   }
 
+  // 두 가지 거리를 쓴다. 갈 수 있는 거리는 잠긴 문에 막히지만, 들리는 거리는 막히지 않는다 —
+  // 문 너머 소리는 들린다. 그래서 소음이 "들렸는가"는 전체 그래프로, 들은 뒤 "얼마나 가까운
+  // 소리인가"는 실제로 걸어갈 수 있는 그래프로 잰다.
   const hopsFromThreat = bfsHopDistances(edgesForThreatMovement(state), threat.nodeId);
+  const audibleHops = bfsHopDistances(state.graph.edges, threat.nodeId);
 
   /** @type {{exitId: 'A'|'B', nodeId: string, createdAt: number, hops: number}[]} */
   const activeSignals = [];
@@ -420,10 +487,10 @@ function selectThreatTarget(state, threat) {
   const considerSources = (events, kind) => {
     for (const event of events) {
       if (state.time >= event.expiresAt) continue;
+      const heard = audibleHops.get(event.sourceNodeId);
+      if (heard === undefined || heard > NOISE_HOP_RANGE[event.intensity]) continue;
       const hops = hopsFromThreat.get(event.sourceNodeId);
       if (hops === undefined) continue;
-      const range = NOISE_HOP_RANGE[event.intensity];
-      if (hops > range) continue;
       candidates.push({ kind, eventId: event.id, nodeId: event.sourceNodeId, score: event.intensity - hops, createdAt: event.createdAt });
     }
   };
@@ -461,14 +528,145 @@ function stepToward(edges, fromNodeId, toNodeId, rngState) {
 }
 
 /**
+ * 위협이 방금 밟은 노드에서 시체와 흔적을 발견한다(§4단계, D12·D13). 발견한 것은 신고되어
+ * 사라지고, 그 지점에 조사 소음이 생겨 다른 마커가 몰린다.
+ *
+ * 흔적은 tier로 가른다. 이동마다 쌓이는 약한 흔적까지 경계도를 올리면 경계도가 즉시 최대로
+ * 가버리므로, 약한 흔적은 위협을 끌어들이기만 하고 강한 흔적(Stealth -2 이하로 남긴 것)만
+ * 경계도를 올린다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} nodeId
+ * @param {import('./types.js').FacilitySectorId} sectorId
+ * @returns {import('./types.js').FacilityRunState}
+ */
+function discoverAtNode(state, nodeId, sectorId) {
+  const corpse = state.corpses.find((c) => c.nodeId === nodeId);
+  const traces = state.evidence.filter((e) => e.nodeId === nodeId);
+  if (!corpse && traces.length === 0) return state;
+
+  let next = state;
+  let raisesAlert = false;
+
+  if (corpse) {
+    next = { ...next, corpses: next.corpses.filter((c) => c.id !== corpse.id) };
+    raisesAlert = true;
+  }
+  if (traces.length > 0) {
+    const traceIds = new Set(traces.map((t) => t.id));
+    next = { ...next, evidence: next.evidence.filter((e) => !traceIds.has(e.id)) };
+    if (traces.some((t) => t.tier >= EVIDENCE_TIER_RAISING_ALERT)) raisesAlert = true;
+  }
+
+  if (raisesAlert) {
+    const eventId = corpse ? corpse.id : `trace_${nodeId}_${next.time}`;
+    next = { ...next, sectorAlerts: escalateSectorAlert(next, sectorId, eventId) };
+  }
+
+  // 발견 지점으로 조사가 몰린다 — 소음 사건을 재사용한다(D13 "그 지점으로 조사가 몰린다").
+  // 단, 이 소음은 경계도를 올리지 않는다. 올리면 발견 하나가 두 번 값을 치른다 — 약한 흔적은
+  // 경계도를 올리지 않기로 했는데도 유인된 위협이 허탕을 치면서 결국 올려버려, 실측에서 여덟
+  // 구역 중 다섯이 최대치로 갔다. 그 구역의 처리 완료 목록에 미리 넣어 막는다.
+  next = reportNoise(next, nodeId, DISCOVERY_NOISE_INTENSITY, next.time);
+  const planted = next.noiseEvents[next.noiseEvents.length - 1];
+  const alert = next.sectorAlerts[sectorId];
+  return {
+    ...next,
+    sectorAlerts: {
+      ...next.sectorAlerts,
+      [sectorId]: { ...alert, resolvedEventIds: [...alert.resolvedEventIds, planted.id] },
+    },
+  };
+}
+
+/**
+ * 증원(D14) — 그 구역 로스터(graph.threats)에서 전투로 비워진 자리 하나를 다시 채운다.
+ * 정원을 넘지 않으므로 "그냥 리스폰"이고, 맵 청소는 원천적으로 불가능해지되 무한 증식도 하지
+ * 않는다. 관문에서 나오므로 등 뒤에서 생기지 않는다 — 플레이어에게서 먼 관문을 고른다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').FacilitySectorId} sectorId
+ * @returns {import('./types.js').FacilityRunState}
+ */
+function spawnReinforcement(state, sectorId) {
+  const empty = state.graph.threats.find((roster) => roster.sectorId === sectorId && !state.threats[roster.id]);
+  if (!empty) return state;
+
+  // 플레이어가 서 있는 관문에는 내보내지 않는다 — 스폰과 동시에 전투가 열리면 "등 뒤에서
+  // 생기지 않는다"가 깨진다. 관문이 둘 다 막히면 이번 교대는 건너뛴다.
+  const gateways = state.graph.nodes.filter((n) => n.sectorId === sectorId && n.isGateway && n.id !== state.playerNodeId);
+  if (gateways.length === 0) return state;
+  const playerHops = state.playerNodeId ? bfsHopDistances(edgesForThreatMovement(state), state.playerNodeId) : null;
+  const origin = gateways.reduce((best, node) => {
+    if (!playerHops) return best;
+    return (playerHops.get(node.id) ?? Infinity) > (playerHops.get(best.id) ?? Infinity) ? node : best;
+  }, gateways[0]);
+
+  const rolled = pickThreatEncounter(state.rngState, sectorId, empty.size);
+  return {
+    ...state,
+    rngState: rolled.rngState,
+    threats: {
+      ...state.threats,
+      [empty.id]: {
+        id: empty.id,
+        sectorId,
+        size: empty.size,
+        monsterIds: rolled.monsterIds,
+        patrolRoute: empty.patrolRoute,
+        patrolIndex: 0,
+        // 출발점에 놓고 순찰 경로를 그대로 주면 stepToward가 알아서 순찰 구역까지 걸어간다.
+        nodeId: origin.id,
+        mode: 'patrol',
+        alert: 0,
+        nextMoveAt: state.time + THREAT_MOVE_INTERVAL.patrol,
+        lastKnownPlayerNodeId: null,
+        pursuitStrength: 0,
+        target: null,
+        investigationMemory: null,
+      },
+    },
+  };
+}
+
+/**
+ * 구역별 증원 시계(D14). 경계도가 오른 구역은 다음 교대를 현재 시각으로 당긴다 — 경계도
+ * 상승이 곧 증원이라는 D14의 계기를, 정원을 넘기지 않으면서 지킨다. 경계도가 올랐는지는
+ * sectorAlerts.resolvedEventIds의 길이로 관찰한다(카메라·소음·시체·흔적 어느 경로로 올랐든
+ * 여기 한 곳에서 잡힌다).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} tickTime
+ * @returns {import('./types.js').FacilityRunState}
+ */
+function tickReinforcements(state, tickTime) {
+  let next = state;
+  for (const sectorId of SECTOR_IDS) {
+    const clock = next.reinforcements[sectorId];
+    // 경계 "레벨"을 본다. resolvedEventIds의 길이는 처리 완료로 미리 등록해 둔 사건(발견 소음,
+    // 심어둔 미끼)까지 세어버려서, 실제로 경계가 오르지 않았는데도 증원을 앞당긴다.
+    const level = next.sectorAlerts[sectorId].level;
+    let nextAt = clock.nextAt;
+    if (level > (clock.alertSeen || 0)) nextAt = Math.min(nextAt, tickTime);
+    if (tickTime >= nextAt) {
+      next = spawnReinforcement(next, /** @type {import('./types.js').FacilitySectorId} */ (sectorId));
+      // 봉쇄 중에는 교대 주기가 짧아진다(D22) — 목표를 확보한 뒤의 마지막 장이 실제로 조여든다.
+      const interval = next.lockdown
+        ? Math.round(REINFORCEMENT_INTERVAL * REINFORCEMENT_LOCKDOWN_MULTIPLIER)
+        : REINFORCEMENT_INTERVAL;
+      nextAt = tickTime + interval;
+    }
+    next = { ...next, reinforcements: { ...next.reinforcements, [sectorId]: { nextAt, alertSeen: level } } };
+  }
+  return next;
+}
+
+/**
  * §5.2 step 2-3 for one threat: pick a target, and — only if `nextMoveAt` is due — take one step
- * toward it, rescheduling the next move per its mode/sector-alert interval. Returns the pieces
- * that changed rather than mutating `state`, so the caller can thread rngState/sectorAlerts
- * across all threats in a tick explicitly.
+ * toward it, rescheduling the next move per its mode/sector-alert interval. 바뀐 상태를 통째로
+ * 돌려주므로(threat만 따로) 호출부가 rngState·경계도·시체·흔적 같은 부수효과를 한꺼번에
+ * 이어받는다 — 부수효과가 늘 때마다 반환 튜플을 넓히지 않아도 된다.
  * @param {import('./types.js').FacilityRunState} state
  * @param {import('./types.js').ThreatRuntimeState} threat
  * @param {number} tickTime
- * @returns {{threat: import('./types.js').ThreatRuntimeState, rngState: import('./rng.js').RngState, sectorAlerts: Record<string, import('./types.js').SectorAlertState>}}
+ * @returns {{threat: import('./types.js').ThreatRuntimeState, state: import('./types.js').FacilityRunState}}
  */
 function updateThreat(state, threat, tickTime) {
   const target = selectThreatTarget(state, threat);
@@ -486,7 +684,7 @@ function updateThreat(state, threat, tickTime) {
   }
   next.alert = /** @type {0|1|2|3} */ (Math.max(sectorMinAlert(state, next.sectorId), next.alert));
 
-  if (tickTime < next.nextMoveAt) return { threat: next, rngState: state.rngState, sectorAlerts: state.sectorAlerts };
+  if (tickTime < next.nextMoveAt) return { threat: next, state };
 
   const stepped = stepToward(edgesForThreatMovement(state), next.nodeId, target.nodeId, state.rngState);
   next.nodeId = stepped.nodeId;
@@ -494,14 +692,21 @@ function updateThreat(state, threat, tickTime) {
   const interval = resolveMoveInterval(state, next);
   next.nextMoveAt = tickTime + interval;
 
-  let sectorAlerts = state.sectorAlerts;
+  let nextState = { ...state, rngState: stepped.rngState };
+  // 발견은 도착이 아니라 이동 직후에 판정한다 — 도착 판정은 목표에 닿았을 때만 돌아서,
+  // 순찰 중 지나가다 시체·흔적을 밟는 경우를 놓친다(D13).
+  // 발견은 **밟은 노드가 속한 구역**에 보고한다. 위협의 본적(threat.sectorId)을 쓰면 옆 구역에서
+  // 주운 시체가 자기 구역 경계도를 올리고, 정작 시체가 있던 구역에는 이중계산 방지 등록이 안 돼
+  // 조사하러 온 그 구역 위협이 허탕치며 또 올린다 — 시체 하나가 두 구역을 올린다(ADR-0073 위반).
+  nextState = discoverAtNode(nextState, next.nodeId, sectorOfNode(next.nodeId));
+
   if (next.nodeId === target.nodeId) {
-    const resolved = resolveArrival(state, next, target);
+    const resolved = resolveArrival(nextState, next, target);
     next = resolved.threat;
-    sectorAlerts = resolved.sectorAlerts;
+    nextState = resolved.state;
   }
 
-  return { threat: next, rngState: stepped.rngState, sectorAlerts };
+  return { threat: next, state: nextState };
 }
 
 /**
@@ -510,30 +715,34 @@ function updateThreat(state, threat, tickTime) {
  */
 function resolveMoveInterval(state, threat) {
   const alertLevel = state.sectorAlerts[threat.sectorId].level;
-  if ((threat.mode === 'investigate' || threat.mode === 'alert') && SECTOR_ALERT_INVESTIGATE_INTERVAL[alertLevel]) {
-    return SECTOR_ALERT_INVESTIGATE_INTERVAL[alertLevel];
-  }
-  return THREAT_MOVE_INTERVAL[threat.mode];
+  const base = (threat.mode === 'investigate' || threat.mode === 'alert') && SECTOR_ALERT_INVESTIGATE_INTERVAL[alertLevel]
+    ? SECTOR_ALERT_INVESTIGATE_INTERVAL[alertLevel]
+    : THREAT_MOVE_INTERVAL[threat.mode];
+  // 봉쇄(D22) — 계약 목표를 확보한 뒤로는 전 구역 위협이 더 빨리 움직인다. 신규 위협을
+  // 스폰하는 시스템이 없어 "증원 가속"을 기존 위협 전원의 이동 간격 단축으로 대체했다.
+  return state.lockdown ? Math.round(base * LOCKDOWN_THREAT_SPEED_MULTIPLIER) : base;
 }
 
 /**
  * @param {import('./types.js').FacilityRunState} state
  * @param {import('./types.js').ThreatRuntimeState} threat
  * @param {import('./types.js').ThreatTarget} target
- * @returns {{threat: import('./types.js').ThreatRuntimeState, sectorAlerts: Record<string, import('./types.js').SectorAlertState>}}
+ * @returns {{threat: import('./types.js').ThreatRuntimeState, state: import('./types.js').FacilityRunState}}
  */
 function resolveArrival(state, threat, target) {
   if (target.kind === 'patrol') {
-    return { threat: { ...threat, patrolIndex: (threat.patrolIndex + 1) % threat.patrolRoute.length }, sectorAlerts: state.sectorAlerts };
+    return { threat: { ...threat, patrolIndex: (threat.patrolIndex + 1) % threat.patrolRoute.length }, state };
   }
   if (target.kind === 'exitSignal') {
-    return { threat: { ...threat, mode: 'exit_guard' }, sectorAlerts: state.sectorAlerts };
+    return { threat: { ...threat, mode: 'exit_guard' }, state };
   }
   if (target.kind === 'noise' || target.kind === 'falseTarget') {
     // Arrived at the source but the player isn't actually there (a real sighting would have
     // short-circuited to reportSighting/pursuit before this runs) -> §7.4 escalate once.
+    // 허탕도 그 자리가 속한 구역에 보고한다 — 소음을 심을 때 처리 완료 목록에 등록하는 구역과
+    // 같아야 이중계산 방지가 실제로 걸린다.
     const sectorAlerts = state.playerNodeId !== threat.nodeId
-      ? escalateSectorAlert(state, threat.sectorId, target.eventId)
+      ? escalateSectorAlert(state, sectorOfNode(threat.nodeId), target.eventId)
       : state.sectorAlerts;
     return {
       threat: {
@@ -541,7 +750,7 @@ function resolveArrival(state, threat, target) {
         mode: 'patrol',
         investigationMemory: { eventId: target.eventId, nodeId: target.nodeId, expiresAt: state.time + INVESTIGATION_MEMORY_DURATION },
       },
-      sectorAlerts,
+      state: { ...state, sectorAlerts },
     };
   }
   if (target.kind === 'player') {
@@ -551,9 +760,9 @@ function resolveArrival(state, threat, target) {
     const threatOut = nextStrength === 0
       ? { ...threat, mode: /** @type {const} */ ('patrol'), pursuitStrength: /** @type {const} */ (0), lastKnownPlayerNodeId: null }
       : { ...threat, pursuitStrength: nextStrength };
-    return { threat: threatOut, sectorAlerts: state.sectorAlerts };
+    return { threat: threatOut, state };
   }
-  return { threat, sectorAlerts: state.sectorAlerts };
+  return { threat, state };
 }
 
 /**
@@ -568,27 +777,23 @@ function worldTick(state, tickTime) {
   // through workingState) but not their moves within this same tick — §5.2 doesn't require
   // ordering between markers, only that each picks a target and moves at most once per tick.
   let workingState = state;
-  if (tickTime > 0 && tickTime % SECTOR_ALERT_DECAY_INTERVAL === 0) {
-    const decayedAlerts = {};
-    for (const sectorId of SECTOR_IDS) {
-      const current = workingState.sectorAlerts[sectorId];
-      decayedAlerts[sectorId] = { ...current, level: /** @type {0|1|2|3} */ (Math.max(0, current.level - 1)) };
-    }
-    workingState = { ...workingState, sectorAlerts: decayedAlerts };
-  }
   for (const threat of Object.values(state.threats)) {
-    const { threat: updated, rngState, sectorAlerts } = updateThreat(workingState, threat, tickTime);
+    const { threat: updated, state: afterThreat } = updateThreat(workingState, threat, tickTime);
     nextThreats[threat.id] = updated;
-    workingState = { ...workingState, rngState, sectorAlerts, threats: { ...workingState.threats, [threat.id]: updated } };
+    workingState = { ...afterThreat, threats: { ...afterThreat.threats, [threat.id]: updated } };
   }
+
+  // 증원(D14)은 위협 이동이 끝난 뒤에 판정한다 — 이번 틱에 발견된 시체·흔적이 올린 경계도가
+  // 곧바로 다음 교대를 당길 수 있어야 "내 행동의 직접 결과"라는 성격이 유지된다.
+  workingState = tickReinforcements({ ...workingState, threats: nextThreats }, tickTime);
 
   let combatTrigger = state.combatTrigger;
   if (state.playerNodeId) {
-    const collided = Object.values(nextThreats).find((t) => t.nodeId === state.playerNodeId);
+    const collided = Object.values(workingState.threats).find((t) => t.nodeId === state.playerNodeId);
     if (collided) combatTrigger = { threatId: collided.id, nodeId: collided.nodeId };
   }
 
-  return refreshActiveRecon({ ...workingState, time: tickTime, threats: nextThreats, combatTrigger });
+  return refreshActiveRecon({ ...workingState, time: tickTime, combatTrigger });
 }
 
 /**
@@ -627,12 +832,15 @@ function applyTimerBoundary(state, t) {
   const falseTargets = state.falseTargets.filter((e) => e.expiresAt !== t);
   const activeBarriers = state.activeBarriers.filter((b) => b.expiresAt !== t);
   const hackedCameras = state.hackedCameras.filter((camera) => camera.expiresAt > t);
+  // 만료된 전원 차단도 함께 걷어낸다 — 남겨두면 escalateSectorAlert가 매 경계 상승마다
+  // 런 내내 쌓인 목록을 전부 훑는다.
+  const powerCuts = state.powerCuts.filter((cut) => cut.expiresAt > t);
   const activeRecon = state.activeRecon?.expiresAt != null && state.activeRecon.expiresAt <= t
     ? null
     : state.activeRecon;
 
   return refreshActiveRecon({
-    ...state, time: t, exits, noiseEvents, falseTargets, activeBarriers, hackedCameras, activeRecon,
+    ...state, time: t, exits, noiseEvents, falseTargets, activeBarriers, hackedCameras, powerCuts, activeRecon,
   });
 }
 
@@ -669,7 +877,7 @@ export function advanceTime(state, targetTime) {
  */
 function isEdgeTraversable(state, edge, fromId, effectiveMobility = 0) {
   if (edge.features.includes('oneWay') && edge.from !== fromId) return false;
-  if (edge.features.includes('blocked') && !state.openedEdgeIds.includes(edge.id)) return false;
+  if (!isEdgeUnlocked(edge, state.openedEdgeIds)) return false;
   if (edge.features.includes('highGround') && effectiveForRequirement(effectiveMobility) < 3) return false;
   return true;
 }
@@ -695,7 +903,9 @@ function cameraIsHacked(state, cameraId) {
 function applyCameraDetection(state, nodeId, effectiveStealth) {
   const camera = state.graph.cameras.find((entry) => entry.nodeId === nodeId && !cameraIsHacked(state, entry.id));
   if (!camera || effectiveStealth >= CAMERA_STEALTH_THRESHOLD) return state;
-  const hops = bfsHopDistances(state.graph.edges, nodeId);
+  // 경보를 듣고 실제로 달려올 수 있는 위협만 추격에 들어간다 — 잠긴 문 너머는 반경 안이어도
+  // 오지 못한다.
+  const hops = bfsHopDistances(edgesForThreatMovement(state), nodeId);
   const threats = { ...state.threats };
   for (const threat of Object.values(state.threats)) {
     const hop = hops.get(threat.nodeId);
@@ -706,11 +916,12 @@ function applyCameraDetection(state, nodeId, effectiveStealth) {
       target: { kind: 'player', nodeId },
     };
   }
-  return {
-    ...state,
-    threats,
-    lastCameraDetection: { cameraId: camera.id, nodeId, detectedAt: state.time },
-  };
+  // 카메라에 걸리는 것도 경계도가 오르는 원인이다(§4단계) — 예전에는 주변 위협을 추격으로
+  // 바꾸기만 해서 "왜 경계도가 올랐는지" 말할 수 있는 원인이 소음 하나뿐이었다.
+  const sectorId = /** @type {import('./types.js').FacilitySectorId} */ (nodeId.split('_')[0]);
+  const detectionId = `camera_${camera.id}_${state.time}`;
+  const withThreats = { ...state, threats, lastCameraDetection: { cameraId: camera.id, nodeId, detectedAt: state.time } };
+  return { ...withThreats, sectorAlerts: escalateSectorAlert(withThreats, sectorId, detectionId) };
 }
 
 /**
@@ -740,7 +951,9 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
   const visitedNodeIds = state.visitedNodeIds.includes(destinationNodeId)
     ? state.visitedNodeIds
     : [...state.visitedNodeIds, destinationNodeId];
-  let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null, activeConcealment: null, encounter: null };
+  // 자리를 뜨면 고르지 않은 확보 대상 후보는 사라진다 — 파밍한 자리에서 결정하지 않으면
+  // 가져갈 수 없다. 열린 채로 남겨두면 4단계의 "떠난 조우가 남아 소프트락"과 같은 모양이 된다.
+  let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null, activeConcealment: null, encounter: null, pendingFarmChoice: null };
   moved = applyCameraDetection(moved, destinationNodeId, effectiveStealth);
   const stealthIndex = Math.max(-2, Math.min(4, effectiveStealth)) + 2;
   const movementNoise = [3, 2, 1, 0, 0, 0, 0][stealthIndex];
@@ -767,6 +980,59 @@ function applyApproachMode(baseTime, baseNoise, mode) {
 }
 
 /**
+ * Capability 층계(§5단계, D8)의 대가 중 시설 상태 안에서 처리할 수 있는 것을 전부 적용하고
+ * 시간을 진행한다.
+ *
+ * HP와 장비 내구도는 `playerState`에 있어 여기서 건드릴 수 없다. 그래서 상태에 청구서만 쌓아
+ * 두고(`pendingHpLoss`/`pendingDurabilityLoss`), facilityReducer의 공통 래퍼가 overload를
+ * 되돌릴 때 함께 정산한다 — 대가를 치르는 자리가 행동마다 흩어지면 빠뜨린 곳이 생긴다.
+ *
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./capabilityCosts.js').CapabilityCost} cost
+ * @param {string} [atNodeId] 소음·흔적이 남는 자리. 생략하면 플레이어의 현재 노드.
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function applyCapabilityCost(state, cost, atNodeId) {
+  const nodeId = atNodeId || state.playerNodeId;
+  let next = state;
+  if (cost.overload) next = applyOverloadDelta(next, cost.overload);
+  if (cost.hpCost) next = { ...next, pendingHpLoss: (next.pendingHpLoss || 0) + cost.hpCost };
+  if (cost.durabilityLoss) next = { ...next, pendingDurabilityLoss: (next.pendingDurabilityLoss || 0) + cost.durabilityLoss };
+  if (nodeId) {
+    // Stealth 부족의 통화는 4단계의 흔적·경계도 파이프라인을 그대로 쓴다 — 강한 흔적만 경계도를
+    // 올리기로 해둔 것이(discoverAtNode) 여기서 값을 한다. severe는 발견을 기다리지 않고 그
+    // 자리에서 바로 경계도를 올린다: 그렇게 티 나게 실패했으면 이미 들킨 것이다.
+    const sectorId = /** @type {import('./types.js').FacilitySectorId} */ (nodeId.split('_')[0]);
+    if (cost.leavesStrongTrace) {
+      next = { ...next, evidence: [...next.evidence, { id: idForNewEntry(state, next.evidence, 'evidence'), nodeId, tier: 2, createdBySectorId: sectorId }] };
+    }
+    if (cost.raisesAlert) {
+      next = { ...next, sectorAlerts: escalateSectorAlert(next, sectorId, `botch_${nodeId}_${next.time}`) };
+    }
+  }
+  next = advanceTime(next, state.time + cost.timeCost);
+  // 소음은 작업이 끝나는 순간에 낸다. 시작 시각에 내면 작업이 NOISE_DURATION보다 길 때 소음이
+  // 자기 행동 안에서 만료돼 아무도 듣지 못한다 — 층계가 시간을 늘릴수록 시끄러운 실패가 오히려
+  // 조용해지는 뒤집힌 결과가 된다(cutPower에서 먼저 잡았던 것과 같은 함정).
+  if (nodeId && cost.noise > 0) next = reportNoise(next, nodeId, /** @type {1|2|3} */ (cost.noise), next.time);
+  return next;
+}
+
+/**
+ * 층계 판정에서 불가가 나오면 던진다 — 던지는 문구는 행동마다 달라야 UI가 이유를 말할 수 있다.
+ * @param {import('./capabilityCosts.js').CapabilityKind} kind
+ * @param {number} effectiveValue
+ * @param {number} required
+ * @param {import('./capabilityCosts.js').CapabilityCostBase} base
+ * @returns {import('./capabilityCosts.js').CapabilityCost}
+ */
+export function requireCapability(kind, effectiveValue, required, base) {
+  const cost = resolveCapabilityCost(kind, effectiveValue, required, base);
+  if (cost.step === 'impossible') throw new Error(`${kind} too low (needs ${required}, have ${effectiveValue})`);
+  return cost;
+}
+
+/**
  * §6.3 tier-1 Force/Hacking approach to open a 'blocked' or 'electronic' special edge. MVP scope:
  * only tier 1 ("약한 잠금·잔해" / "현재 노드 잠금·단말") is modeled — bigger tiers (barricades,
  * structural collapse, remote device chains) are future work. `capabilityKind` picks which of the
@@ -788,25 +1054,37 @@ export function openSpecialEdge(state, edgeId, capabilityKind, effectiveCapabili
   if (state.openedEdgeIds.includes(edgeId)) return state;
   const requiredFeature = capabilityKind === 'force' ? 'blocked' : 'electronic';
   if (!edge.features.includes(requiredFeature)) throw new Error(`edge ${edgeId} has no '${requiredFeature}' approach`);
-  if (effectiveForRequirement(effectiveCapability) < 1) throw new Error(`${capabilityKind} too low to attempt edge ${edgeId}`);
+  // 전원 차단(D12)의 대가 — 전원이 없으면 전자식 자물쇠에는 잡을 제어가 없다. 문을 뜯는
+  // Force는 여전히 되므로, 해킹 빌드가 스스로 통로를 닫는 선택이 된다.
+  if (capabilityKind === 'hacking') {
+    const sectorId = playerNodeId.split('_')[0];
+    if (state.powerCuts.some((cut) => cut.sectorId === sectorId && cut.expiresAt > state.time)) {
+      throw new Error(`power is cut in ${sectorId} — electronic locks cannot be hacked`);
+    }
+  }
+  // 대부분의 특수 엣지는 Capability 1이면 열 수 있지만, 배치 원형이 구조적으로 두는 통로는
+  // 더 높은 값을 요구한다(통신·관제탑 승강기는 3). 요구치는 접근 수단을 가리지 않는다 —
+  // 위에서 고른 태그로 여는 이상 Force든 Hacking이든 같은 값이 필요하다.
+  const requiredLevel = edge.requiredCapability ?? 1;
 
   const baseTime = capabilityKind === 'force' ? FORCE_TIER1_TIME : HACKING_TIER1_TIME;
   const baseNoise = capabilityKind === 'force' ? FORCE_BASE_NOISE : HACKING_BASE_NOISE;
   const { time, noise } = applyApproachMode(baseTime, baseNoise, mode);
+  const overloadGain = capabilityKind === 'hacking'
+    ? Math.max(0, HACKING_TIER1_OVERLOAD_GAIN + (mode === 'rush' ? RUSH_OVERLOAD_GAIN : 0) - (mode === 'safe' ? 3 : 0))
+    : 0;
+  // 모자란 채로도 시도할 수 있고, 대신 그 Capability의 통화로 값을 치른다(D8). 요구치보다 3
+  // 이상 낮을 때만 예전처럼 아예 막힌다.
+  const cost = requireCapability(capabilityKind, effectiveCapability, requiredLevel, { time, noise, overload: overloadGain });
 
   let next = { ...state, openedEdgeIds: [...state.openedEdgeIds, edgeId] };
-  if (capabilityKind === 'hacking') {
-    const overloadGain = HACKING_TIER1_OVERLOAD_GAIN + (mode === 'rush' ? RUSH_OVERLOAD_GAIN : 0) - (mode === 'safe' ? 3 : 0);
-    next = applyOverloadDelta(next, Math.max(0, overloadGain));
-  } else if (mode !== 'safe') {
+  if (capabilityKind !== 'hacking' && mode !== 'safe') {
     // §6.3 "Force... 기본 소음 2와 흔적을 남기며" — safe Force downgrades strong evidence to
     // normal but never removes it entirely (§6.1); MVP always leaves a normal trace unless safe.
     const tier = /** @type {1|2} */ (mode === 'rush' ? 2 : 1);
-    next = { ...next, evidence: [...next.evidence, { id: idForNewEntry(state, next.evidence, 'evidence'), nodeId: playerNodeId, tier, createdBySectorId: edge.from.split('_')[0] }] };
+    next = { ...next, evidence: [...next.evidence, { id: idForNewEntry(state, next.evidence, 'evidence'), nodeId: playerNodeId, tier, createdBySectorId: sectorOfNode(playerNodeId) }] };
   }
-  if (noise > 0) next = reportNoise(next, playerNodeId, /** @type {1|2|3} */ (noise), state.time);
-
-  return advanceTime(next, state.time + time);
+  return applyCapabilityCost(next, cost, playerNodeId);
 }
 
 /**
@@ -844,14 +1122,19 @@ export function useConcealment(state) {
 }
 
 /**
+ * 현재 노드에서의 실효 Stealth. 은엄폐를 사용 중이면 그만큼 오르고, 대공간(D7 격납고: 개방
+ * 공간이라 Stealth가 불리)에 서 있으면 HALL_STEALTH_PENALTY만큼 깎인다. 대공간에는 은엄폐가
+ * 배치되지 않으므로(NODE_TYPE_CONCEALMENT_WEIGHTS) 두 보정이 서로 상쇄되는 일은 없다.
  * @param {number} baseEffectiveStealth
  * @param {import('./types.js').FacilityRunState} state
  * @returns {number}
  */
 export function effectiveStealthWithConcealment(baseEffectiveStealth, state) {
+  const node = state.graph.nodes.find((n) => n.id === state.playerNodeId);
+  const terrain = node && node.type === 'hall' ? -HALL_STEALTH_PENALTY : 0;
   const active = state.activeConcealment;
-  if (!active || active.nodeId !== state.playerNodeId) return baseEffectiveStealth;
-  return baseEffectiveStealth + active.bonus;
+  const concealment = active && active.nodeId === state.playerNodeId ? active.bonus : 0;
+  return baseEffectiveStealth + concealment + terrain;
 }
 
 /** Effective Hacking -> direct hacking range in graph hops. */
@@ -861,7 +1144,7 @@ export function cameraHackRange(effectiveHacking) {
 
 /** Whether a hacking target is reachable directly, or through the hacked interface at this node. */
 function canReachHackingTarget(state, targetNodeId, effectiveHacking) {
-  if (effectiveForRequirement(effectiveHacking) < 1) return false;
+  if (capabilityStep(effectiveHacking) === 'impossible') return false;
   const playerNode = state.graph.nodes.find((node) => node.id === state.playerNodeId);
   const targetNode = state.graph.nodes.find((node) => node.id === targetNodeId);
   if (!playerNode || !targetNode) return false;
@@ -875,14 +1158,13 @@ function canReachHackingTarget(state, targetNodeId, effectiveHacking) {
 /** Hack the access interface installed at the player's current node. */
 export function hackAccessInterface(state, interfaceId, effectiveHacking) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new Error('access interface hacking unavailable');
-  if (effectiveForRequirement(effectiveHacking) < 1) throw new Error('Hacking 1+ required');
   const accessInterface = state.graph.accessInterfaces.find((entry) => entry.id === interfaceId);
   if (!accessInterface) throw new Error(`unknown access interface ${interfaceId}`);
   if (accessInterface.nodeId !== state.playerNodeId) throw new Error('access interface must be hacked at its node');
   if ((state.hackedInterfaceIds || []).includes(interfaceId)) return state;
-  let next = applyOverloadDelta(state, CAMERA_HACK_OVERLOAD);
-  next = { ...next, hackedInterfaceIds: [...(next.hackedInterfaceIds || []), interfaceId] };
-  return advanceTime(next, state.time + CAMERA_HACK_TIME);
+  const cost = requireCapability('hacking', effectiveHacking, 1, { time: CAMERA_HACK_TIME, overload: CAMERA_HACK_OVERLOAD });
+  const next = { ...state, hackedInterfaceIds: [...(state.hackedInterfaceIds || []), interfaceId] };
+  return applyCapabilityCost(next, cost);
 }
 
 /** Hack a camera at the current/nearby node, or anywhere in this sector through a hacked interface. */
@@ -891,36 +1173,34 @@ export function hackCamera(state, cameraId, effectiveHacking) {
   const camera = state.graph.cameras.find((entry) => entry.id === cameraId);
   if (!camera) throw new Error(`unknown camera ${cameraId}`);
   if ((state.disabledCameraIds || []).includes(cameraId)) throw new Error('camera is already destroyed');
-  if (effectiveForRequirement(effectiveHacking) < 1) throw new Error('Hacking 1+ required');
   if (!canReachHackingTarget(state, camera.nodeId, effectiveHacking)) throw new Error(`camera ${cameraId} is out of range`);
 
-  const completesAt = state.time + CAMERA_HACK_TIME;
+  const cost = requireCapability('hacking', effectiveHacking, 1, { time: CAMERA_HACK_TIME, overload: CAMERA_HACK_OVERLOAD });
+  const completesAt = state.time + cost.timeCost;
   const expiresAt = completesAt + CAMERA_HACK_DURATION;
   const targetNodeIds = new Set([camera.nodeId]);
   for (const edge of state.graph.edges) {
     if (edge.from === camera.nodeId) targetNodeIds.add(edge.to);
     if (edge.to === camera.nodeId) targetNodeIds.add(edge.from);
   }
-  let next = applyOverloadDelta(state, CAMERA_HACK_OVERLOAD);
-  next = {
-    ...next,
-    hackedCameras: [...next.hackedCameras.filter((entry) => entry.cameraId !== cameraId), { cameraId, expiresAt }],
+  const next = {
+    ...state,
+    hackedCameras: [...state.hackedCameras.filter((entry) => entry.cameraId !== cameraId), { cameraId, expiresAt }],
     activeRecon: { source: 'camera', sourceNodeId: camera.nodeId, targetNodeIds: [...targetNodeIds], expiresAt },
   };
-  return advanceTime(refreshActiveRecon(next), completesAt);
+  return refreshActiveRecon(applyCapabilityCost(next, cost));
 }
 
 /** Permanently destroy a camera from its node. This is a loud Force action. */
 export function destroyCamera(state, cameraId, effectiveForce) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new Error('camera destruction unavailable');
-  if (effectiveForRequirement(effectiveForce) < 1) throw new Error('Force 1+ required');
   const camera = state.graph.cameras.find((entry) => entry.id === cameraId);
   if (!camera) throw new Error(`unknown camera ${cameraId}`);
   if (camera.nodeId !== state.playerNodeId) throw new Error('Force requires standing at the camera');
   if ((state.disabledCameraIds || []).includes(cameraId)) return state;
-  let next = reportNoise(state, state.playerNodeId, /** @type {1|2|3} */ (CAMERA_FORCE_NOISE), state.time);
-  next = { ...next, disabledCameraIds: [...(next.disabledCameraIds || []), cameraId] };
-  return advanceTime(next, state.time + CAMERA_FORCE_TIME);
+  const cost = requireCapability('force', effectiveForce, 1, { time: CAMERA_FORCE_TIME, noise: CAMERA_FORCE_NOISE });
+  const next = { ...state, disabledCameraIds: [...(state.disabledCameraIds || []), cameraId] };
+  return applyCapabilityCost(next, cost);
 }
 
 /** Disable a sector battery generator. Hacking follows the normal direct/interface access rule;
@@ -930,19 +1210,15 @@ export function disableGenerator(state, generatorId, capabilityKind, effectiveCa
   const generator = state.graph.generators?.find((entry) => entry.id === generatorId);
   if (!generator) throw new Error(`unknown generator ${generatorId}`);
   if (state.disabledGeneratorIds.includes(generatorId)) return state;
-  if (effectiveForRequirement(effectiveCapability) < 1) throw new Error(`${capabilityKind} 1+ required`);
-
-  let next = state;
+  const disabled = { ...state, disabledGeneratorIds: [...state.disabledGeneratorIds, generatorId] };
   if (capabilityKind === 'hacking') {
     if (!canReachHackingTarget(state, generator.nodeId, effectiveCapability)) throw new Error('generator is out of hacking range');
-    next = applyOverloadDelta(next, GENERATOR_HACK_OVERLOAD);
-    next = { ...next, disabledGeneratorIds: [...next.disabledGeneratorIds, generatorId] };
-    return advanceTime(next, state.time + GENERATOR_HACK_TIME);
+    const cost = requireCapability('hacking', effectiveCapability, 1, { time: GENERATOR_HACK_TIME, overload: GENERATOR_HACK_OVERLOAD });
+    return applyCapabilityCost(disabled, cost);
   }
   if (capabilityKind !== 'force' || state.playerNodeId !== generator.nodeId) throw new Error('Force requires standing at the generator');
-  next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (GENERATOR_FORCE_NOISE), state.time);
-  next = { ...next, disabledGeneratorIds: [...next.disabledGeneratorIds, generatorId] };
-  return advanceTime(next, state.time + GENERATOR_FORCE_TIME);
+  const cost = requireCapability('force', effectiveCapability, 1, { time: GENERATOR_FORCE_TIME, noise: GENERATOR_FORCE_NOISE });
+  return applyCapabilityCost(disabled, cost);
 }
 
 /**
@@ -960,10 +1236,12 @@ export function hackControlRoom(state, effectiveHacking) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new Error('control room hacking unavailable');
   const landmark = state.graph.landmarks.find((l) => l.nodeId === state.playerNodeId);
   if (!landmark) throw new Error('not at a sector control room');
-  const level = effectiveForRequirement(effectiveHacking);
-  if (level < 1) throw new Error('Hacking 1+ required');
+  const cost = requireCapability('hacking', effectiveHacking, 1, { time: CONTROL_ROOM_HACK_TIME, overload: CONTROL_ROOM_HACK_OVERLOAD });
+  // 모자란 채로 뚫고 들어가도 얻는 것은 1단계(순찰 경로 공개)까지다 — 상위 해제는 여전히 수치를
+  // 실제로 들고 와야 열린다. 대가만 치르면 전부 열린다면 Capability에 투자할 이유가 없어진다.
+  const level = Math.max(1, effectiveHacking);
 
-  let next = applyOverloadDelta(state, CONTROL_ROOM_HACK_OVERLOAD);
+  let next = state;
 
   const revealedPatrolRouteSectorIds = next.revealedPatrolRouteSectorIds.includes(landmark.sectorId)
     ? next.revealedPatrolRouteSectorIds
@@ -976,15 +1254,148 @@ export function hackControlRoom(state, effectiveHacking) {
     next = { ...next, sectorAlerts: { ...next.sectorAlerts, [landmark.sectorId]: { ...current, level: decreased } } };
   }
 
+  // D12: 예전의 "맵 전체 위협 patrol 전환"은 삭제했다 — 전 구역을 한 번에 되돌리는 버튼이라
+  // 다른 수습 수단이 존재할 이유를 없앴다. 대신 인접 구역까지 경계도를 낮춘다.
   if (level >= 3) {
-    const threats = {};
-    for (const [id, threat] of Object.entries(next.threats)) {
-      threats[id] = { ...threat, mode: 'patrol', pursuitStrength: 0, lastKnownPlayerNodeId: null, target: null };
+    const neighbors = ADJACENT_SECTOR_IDS[landmark.sectorId] || [];
+    let sectorAlerts = next.sectorAlerts;
+    for (const neighborId of neighbors) {
+      const neighbor = sectorAlerts[neighborId];
+      sectorAlerts = {
+        ...sectorAlerts,
+        [neighborId]: { ...neighbor, level: /** @type {0|1|2|3} */ (Math.max(0, neighbor.level - 1)) },
+      };
     }
-    next = { ...next, threats };
+    next = { ...next, sectorAlerts };
   }
 
-  return advanceTime(next, state.time + CONTROL_ROOM_HACK_TIME);
+  return applyCapabilityCost(next, cost);
+}
+
+/**
+ * 시체 처리(D13) — 전투에서 이긴 자리에 남은 시체를 없앤다. Capability 요구는 없고 시간만
+ * 든다. 기본은 그냥 두고 가는 것이고, 이 행동은 "지금 시간을 쓸지, 나중에 신고당할지"를
+ * 고르는 자리다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function disposeCorpse(state) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('corpse disposal unavailable');
+  const corpse = state.corpses.find((c) => c.nodeId === state.playerNodeId);
+  if (!corpse) throw new Error('no corpse at this node');
+  const next = { ...state, corpses: state.corpses.filter((c) => c.id !== corpse.id) };
+  return advanceTime(next, state.time + CORPSE_DISPOSAL_TIME);
+}
+
+/**
+ * 봉쇄(D22)를 켠다. 계약 목표를 확보한 세 액션(회수 확보·파괴·정보 확보)이 공유한다. 이미
+ * 봉쇄 중이면 아무것도 하지 않는다 — 정보 계약은 확보에서 한 번 켜진 뒤 송출까지 그대로
+ * 유지되어야 하므로 재기동하지 않는다.
+ * @param {import('./types.js').FacilityRunState} run
+ * @returns {import('./types.js').FacilityRunState}
+ */
+function activateLockdown(run) {
+  if (run.lockdown) return run;
+  const exits = { ...run.exits };
+  const exitB = /** @type {import('./types.js').StandardExitRuntimeState | undefined} */ (exits.B);
+  if (exitB && exitB.kind === 'standard') {
+    exits.B = { ...exitB, disabledAt: Math.min(exitB.disabledAt, run.time + LOCKDOWN_EXIT_CLOSE_WINDOW) };
+  }
+  return { ...run, lockdown: { startedAt: run.time }, exits: /** @type {any} */ (exits) };
+}
+
+/** @param {import('./types.js').FacilityRunState} run @returns {import('../data/contracts.js').ContractDef | undefined} */
+function contractLandmark(run) {
+  if (!run.contract) return undefined;
+  return run.graph.landmarks.find((l) => l.sectorId === run.contract.sectorId);
+}
+
+/**
+ * 회수 계약(D4·D21) 확보 — 목표부에서 물건을 집는다. Stealth 또는 Mobility 둘 중 하나만
+ * 있으면 된다(특수 엣지의 이중 태그와 같은 "둘 중 하나" 판정). 확보만으로는 완료가 아니다 —
+ * 이 물건을 들고 탈출해야 완료되며, 그 판정은 facilityReducer.js의 withFacilityRunState가
+ * 한다(인벤토리를 봐야 하는데 이 함수는 facilityRunState만 다루므로).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} effectiveStealth
+ * @param {number} effectiveMobility
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function acquireContractGoods(state, effectiveStealth, effectiveMobility) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('contract action unavailable');
+  const contract = state.contract;
+  if (!contract || contract.type !== 'retrieval' || contract.status !== 'accepted') {
+    throw new Error('no retrieval contract to acquire');
+  }
+  const landmark = contractLandmark(state);
+  if (!landmark || landmark.nodeId !== state.playerNodeId) throw new Error('not at the contract objective');
+  // 요구는 "조용히든 빠르게든 들고 나오는 것"이라 둘 중 높은 쪽으로 친다 — 그러면 대가도
+  // 실제로 쓴 수단의 통화로 나간다(Stealth면 흔적, Mobility면 HP).
+  const kind = effectiveMobility > effectiveStealth ? 'mobility' : 'stealth';
+  const cost = requireCapability(kind, Math.max(effectiveStealth, effectiveMobility), 1, { time: CONTRACT_ACQUIRE_TIME, overload: CONTRACT_ACQUIRE_OVERLOAD });
+  let next = { ...state, contract: { ...contract, status: 'acquired', acquiredAt: state.time } };
+  next = activateLockdown(next);
+  return applyCapabilityCost(next, cost);
+}
+
+/**
+ * 파괴 계약(D4·D21) — 목표부를 파괴한다. 확보와 완료가 동시다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} effectiveForce
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function destroyContractTarget(state, effectiveForce) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('contract action unavailable');
+  const contract = state.contract;
+  if (!contract || contract.type !== 'destroy' || contract.status !== 'accepted') {
+    throw new Error('no destroy contract to complete');
+  }
+  const landmark = contractLandmark(state);
+  if (!landmark || landmark.nodeId !== state.playerNodeId) throw new Error('not at the contract objective');
+  const cost = requireCapability('force', effectiveForce, 1, { time: CONTRACT_DESTROY_TIME, overload: CONTRACT_DESTROY_OVERLOAD });
+  let next = { ...state, contract: { ...contract, status: 'completed', acquiredAt: state.time, completedAt: state.time } };
+  next = activateLockdown(next);
+  return applyCapabilityCost(next, cost);
+}
+
+/**
+ * 정보 계약(D4·D21) 확보 — 목표부에서 데이터를 딴다. 완료하려면 이후 아무 랜드마크에서나
+ * transmitContractIntel을 해야 한다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} effectiveHacking
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function acquireContractIntel(state, effectiveHacking) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('contract action unavailable');
+  const contract = state.contract;
+  if (!contract || contract.type !== 'intel' || contract.status !== 'accepted') {
+    throw new Error('no intel contract to acquire');
+  }
+  const landmark = contractLandmark(state);
+  if (!landmark || landmark.nodeId !== state.playerNodeId) throw new Error('not at the contract objective');
+  const cost = requireCapability('hacking', effectiveHacking, 1, { time: CONTRACT_ACQUIRE_TIME, overload: CONTRACT_ACQUIRE_OVERLOAD });
+  let next = { ...state, contract: { ...contract, status: 'acquired', acquiredAt: state.time } };
+  next = activateLockdown(next);
+  return applyCapabilityCost(next, cost);
+}
+
+/**
+ * 정보 계약(D4·D21) 송출 — 확보한 데이터를 아무 구역 랜드마크에서나 내보내면 완료다(목표부일
+ * 필요 없다 — hackControlRoom과 같은 컬렉션이지만 자기 구역 제한이 없다).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} effectiveHacking
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function transmitContractIntel(state, effectiveHacking) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('contract action unavailable');
+  const contract = state.contract;
+  if (!contract || contract.type !== 'intel' || contract.status !== 'acquired') {
+    throw new Error('no acquired intel to transmit');
+  }
+  const atLandmark = state.graph.landmarks.some((l) => l.nodeId === state.playerNodeId);
+  if (!atLandmark) throw new Error('not at a sector control room');
+  const cost = requireCapability('hacking', effectiveHacking, 1, { time: CONTRACT_TRANSMIT_TIME, overload: CONTRACT_TRANSMIT_OVERLOAD });
+  const next = { ...state, contract: { ...contract, status: 'completed', completedAt: state.time } };
+  return applyCapabilityCost(next, cost);
 }
 
 /**
@@ -1004,14 +1415,53 @@ export function useOpportunity(state, opportunityId, mode) {
   if (!opportunity) throw new Error(`unknown opportunity ${opportunityId}`);
   if (opportunity.nodeId !== state.playerNodeId) throw new Error(`opportunity ${opportunityId} is not at the current node`);
   if (opportunity.usesRemaining <= 0) throw new Error(`opportunity ${opportunityId} already consumed`);
+  // 아직 고르지 않은 후보가 서 있는데 또 확보 대상을 파면 앞선 후보가 조용히 덮여, 이미 치른
+  // 시간과 소음이 아무 보상 없이 사라진다. 보급품은 후보를 세우지 않으므로 그대로 허용한다.
+  if (state.pendingFarmChoice && opportunity.grade === 'prize') throw new Error('pick the pending farm reward first');
 
-  const { time, noise } = applyApproachMode(FARM_TIME, FARM_NOISE, mode);
+  // 등급이 비용을 가른다(§5단계, D10). 보급품은 짧고 조용하게 즉시 끝나고, 확보 대상은 길고
+  // 시끄러우며 등급이 높을수록 더하다 — 그 대가가 "저기까지 갈 만한가"를 묻는 장치다.
+  const isPrize = opportunity.grade === 'prize';
+  const tier = opportunity.tier || 'normal';
+  const baseTime = isPrize ? PRIZE_FARM_TIME[tier] : SUPPLY_FARM_TIME;
+  const baseNoise = isPrize ? PRIZE_FARM_NOISE[tier] : SUPPLY_FARM_NOISE;
+
+  const { time, noise } = applyApproachMode(baseTime, baseNoise, mode);
   const graph = { ...state.graph, opportunities: state.graph.opportunities.map((o) => (o.id === opportunityId ? { ...o, usesRemaining: o.usesRemaining - 1 } : o)) };
   let next = { ...state, graph, keyDiscovered: state.keyDiscovered || opportunity.keyEligible };
   if (noise > 0 && state.playerNodeId) next = reportNoise(next, state.playerNodeId, /** @type {1|2|3} */ (noise), state.time);
   next = advanceTime(next, state.time + time);
+
+  // 확보 대상은 파밍했다고 바로 들어오지 않는다 — 같은 축의 후보 셋을 세워두고 플레이어가
+  // 고를 때까지 기다린다(D11). 보급품은 예전처럼 호출부가 즉시 지급한다.
+  // 매복이 열리면 고를 틈이 없다 — 후보를 세우지 않는다. 파밍의 대가가 실제로 물릴 수 있어야
+  // 강행 모드의 위험이 의미를 갖는다.
+  if (isPrize && !next.combatTrigger) {
+    const rolled = rollFieldLootOptions(opportunity.axis || 'resource', tier, next.rngState);
+    next = {
+      ...next,
+      rngState: rolled.rngState,
+      pendingFarmChoice: { opportunityId, tier, axis: opportunity.axis || 'resource', options: rolled.options },
+    };
+  }
+
   next = { ...next, lastActionResult: { kind: 'farm', nodeId: opportunity.nodeId, opportunityId, status: next.combatTrigger ? 'ambushed' : 'completed', completedAt: next.time } };
   return { state: next, keyGranted: opportunity.keyEligible };
+}
+
+/**
+ * 확보 대상의 후보 중 하나를 고른다(D11). 실제 아이템 지급은 인벤토리를 만지는 일이라
+ * facilityReducer의 커맨드가 하고, 여기서는 고른 것을 확정하고 대기 상태를 지운다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} optionIndex
+ * @returns {{state: import('./types.js').FacilityRunState, option: import('./types.js').FarmChoiceOption}}
+ */
+export function selectFarmReward(state, optionIndex) {
+  const pending = state.pendingFarmChoice;
+  if (!pending) throw new Error('no farm choice is pending');
+  const option = pending.options[optionIndex];
+  if (!option) throw new Error(`unknown farm option ${optionIndex}`);
+  return { state: { ...state, pendingFarmChoice: null }, option };
 }
 
 /**

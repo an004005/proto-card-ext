@@ -57,7 +57,7 @@ function shuffle(rngState, array) {
  * @param {RngState} rngState
  * @returns {{options: RewardOption[], state: RngState}}
  */
-function rollEquipmentOptions(allEquipmentIds, rngState) {
+export function rollEquipmentOptions(allEquipmentIds, rngState) {
   const shuffled = shuffle(rngState, allEquipmentIds);
   const options = shuffled.value.slice(0, REWARD_OPTIONS_PER_SLOT).map((id) => ({ kind: 'equipment', equipmentId: id }));
   return { options, state: shuffled.state };
@@ -67,7 +67,7 @@ function rollEquipmentOptions(allEquipmentIds, rngState) {
  * @param {RngState} rngState
  * @returns {{options: RewardOption[], state: RngState}}
  */
-function rollConsumableOptions(rngState) {
+export function rollConsumableOptions(rngState) {
   let rng = rngState;
   const options = [];
   const used = new Set();
@@ -91,7 +91,7 @@ function rollConsumableOptions(rngState) {
  * @param {RngState} rngState
  * @returns {{options: RewardOption[], state: RngState}}
  */
-function rollCurrencyOrJunkOptions(tier, itemWeights, itemKind, valueRange, rngState) {
+export function rollCurrencyOrJunkOptions(tier, itemWeights, itemKind, valueRange, rngState) {
   let rng = rngState;
   const range = valueRange[tier];
   const options = [];

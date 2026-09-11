@@ -1,7 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { TOTAL_NODES } from '../src/data/facilityLayout.js';
 import { gameReducer } from '../src/engine/gameReducer.js';
 import { isCardPlayable } from '../src/engine/combatEngine.js';
+
+// 계약 화면이 NEW_RUN과 로드아웃 사이에 낀다(§3단계) — 첫 제안 계약을 그대로 수락해 로드아웃
+// 화면까지 진행하는 헬퍼. 계약 자체를 검증하는 테스트는 이 헬퍼를 거치지 않고 NEW_RUN을
+// 직접 디스패치한다.
+function startLoadout(seed) {
+  const offered = gameReducer(null, { type: 'NEW_RUN', seed });
+  return gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: offered.offeredContracts[0].id });
+}
 
 function autoPlayCombat(snapshot, guardLimit = 100) {
   let s = snapshot;
@@ -62,8 +71,12 @@ function driveMapForward(s) {
   return s;
 }
 
+// 잠긴 엣지는 길로 치지 않는다 — 여기서 세면 MOVE_TO_NODE가 거부하는 경로를 따라가느라
+// 헬퍼가 제자리를 맴돈다.
 function neighborsOf(graph, nodeId) {
-  return graph.edges.filter((e) => e.from === nodeId || e.to === nodeId).map((e) => (e.from === nodeId ? e.to : e.from));
+  return graph.edges
+    .filter((e) => (e.from === nodeId || e.to === nodeId) && !e.features.includes('blocked'))
+    .map((e) => (e.from === nodeId ? e.to : e.from));
 }
 
 function bfsWithParents(graph, fromId) {
@@ -94,11 +107,14 @@ function firstHopToward(parent, fromId, toId) {
 
 // 위협을 향해 최단 경로로 걸어가 결정론적으로 combatTrigger를 유발한다 — 순수 랜덤워크는 짧은
 // guard 안에 위협과 마주친다는 보장이 없다(시설이 넓고 위협도 각자 순찰하므로).
-function moveTowardNearestThreat(s) {
+function moveTowardNearestThreat(s, skipThreatIds = new Set()) {
   if (s.facilityRunState?.encounter) return resolveEncounterOnce(s);
   const run = s.facilityRunState;
   const { parent, dist } = bfsWithParents(run.graph, run.playerNodeId);
-  const threatNodeIds = Object.values(run.threats).map((t) => t.nodeId).filter((id) => dist[id] !== undefined);
+  const threatNodeIds = Object.values(run.threats)
+    .filter((t) => !skipThreatIds.has(t.id))
+    .map((t) => t.nodeId)
+    .filter((id) => dist[id] !== undefined);
   if (threatNodeIds.length === 0) return driveMapForward(s);
   threatNodeIds.sort((a, b) => dist[a] - dist[b]);
   const target = threatNodeIds[0];
@@ -124,17 +140,27 @@ function confirmAllRewards(s) {
 // Drives the map screen forward (seeking the nearest threat) until combat starts or the run ends
 // (collapse/meltdown -> gameOver).
 function driveToNextCombatOrEnd(s, guardLimit = 60) {
+  // 동률 조우는 회피밖에 없고, 회피해도 위협은 그 자리에 남는다 — 같은 위협을 계속 쫓으면
+  // 조우와 회피를 무한히 반복한다. 한 번 회피한 위협은 목표에서 뺀다.
+  const evaded = new Set();
   let guard = 0;
   while (guard < guardLimit) {
-    if (s.currentScreen === 'map') s = moveTowardNearestThreat(s);
-    else break;
+    if (s.currentScreen !== 'map') break;
+    const encounter = s.facilityRunState?.encounter;
+    if (encounter && encounter.tier === 'even') evaded.add(encounter.threatId);
+    s = moveTowardNearestThreat(s, evaded);
     guard += 1;
   }
   return s;
 }
 
-test('NEW_RUN starts on the loadout screen with nothing equipped', () => {
-  const s = gameReducer(null, { type: 'NEW_RUN', seed: 1 });
+test('NEW_RUN offers 3 contracts (one per type); accepting one reaches the loadout screen with nothing equipped', () => {
+  const offered = gameReducer(null, { type: 'NEW_RUN', seed: 1 });
+  assert.equal(offered.currentScreen, 'contract');
+  assert.equal(offered.offeredContracts.length, 3);
+  assert.deepEqual(offered.offeredContracts.map((c) => c.type).sort(), ['destroy', 'intel', 'retrieval']);
+
+  const s = startLoadout(1);
   assert.equal(s.currentScreen, 'loadout');
   assert.deepEqual(s.playerState.loadout.weapons, []);
   assert.equal(s.playerState.loadout.top, null);
@@ -147,7 +173,7 @@ test('NEW_RUN starts on the loadout screen with nothing equipped', () => {
 // 문자열 토글만 하는 SET_LOADOUT_SLOT으로는 다룰 수 없다 — EQUIP_ITEM(_FROM_WAREHOUSE)/
 // UNEQUIP_ITEM으로 일원화됐고, SET_LOADOUT_SLOT은 여전히 defId 문자열인 임플란트 전용으로 축소.
 test('SET_LOADOUT_SLOT toggles implant slots (3-limit) and no-ops for non-implant slot types', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 1 });
+  let s = startLoadout(1);
   s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant1' }); // add
   assert.deepEqual(s.playerState.loadout.implantIds, ['implant1']);
   s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant1' }); // toggle off -> remove
@@ -164,7 +190,7 @@ test('SET_LOADOUT_SLOT toggles implant slots (3-limit) and no-ops for non-implan
 });
 
 test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seeds starting ammo, and generates the facility map', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 1 }); // default implants: 1,3,6 -> hp+7, floor 10+5+0=15 (implant6's cost is now +15% overload gain, not a floor)
+  let s = startLoadout(1); // default implants: 1,3,6 -> hp+7, floor 10+5+0=15 (implant6's cost is now +15% overload gain, not a floor)
   s = equipDefaultLoadout(s);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   assert.equal(s.currentScreen, 'map');
@@ -172,23 +198,24 @@ test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seed
   assert.equal(s.playerState.hp, 77);
   assert.equal(s.playerState.overload, 15);
   assert.equal(s.playerState.inventory.capacity, 15);
-  // 인벤토리는 완전히 빈 채로 시작 — 장착 안 한 farming-only 장비 18종(임플란트⑦ 지도가
-  // 창고 시작 풀에 추가됨), 시작 소모품 3개, 시작 탄약(8발, 1스택)까지 전부 창고(무제한,
+  // 인벤토리는 계약 선불 재화 1개만 갖고 시작한다 — 장착 안 한 farming-only 장비 18종(임플란트⑦
+  // 지도가 창고 시작 풀에 추가됨), 시작 소모품 3개, 시작 탄약(8발, 1스택)까지 전부 창고(무제한,
   // 과적 규칙 미적용)에 남아있다가 플레이어가 직접 인벤토리로 옮겨야 실제 런에 반영된다
   // (옮기지 않으면 탄약 0으로 출격).
   const items = s.playerState.inventory.items;
-  assert.equal(items.length, 0);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].kind, 'currency');
   const warehouseItems = s.playerState.warehouse.items;
   assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 18);
   assert.equal(warehouseItems.filter((i) => i.kind === 'consumable').length, 3);
   assert.deepEqual(warehouseItems.filter((i) => i.kind === 'ammo').map((i) => i.amount), [8]);
   assert.equal(warehouseItems.length, 22);
-  assert.equal(s.facilityRunState.graph.nodes.length, 240);
+  assert.equal(s.facilityRunState.graph.nodes.length, TOTAL_NODES);
   assert.equal(s.facilityRunState.playerNodeId, s.facilityRunState.graph.startNodeId);
 });
 
 test('moving into a threat triggers combat; winning it routes to the reward screen', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = equipDefaultLoadout(s);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = driveToNextCombatOrEnd(s);
@@ -200,7 +227,7 @@ test('moving into a threat triggers combat; winning it routes to the reward scre
 });
 
 test('CONFIRM_REWARDS applies picked options and returns to the map', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = equipDefaultLoadout(s);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = autoPlayCombat(driveToNextCombatOrEnd(s));
@@ -212,7 +239,7 @@ test('CONFIRM_REWARDS applies picked options and returns to the map', () => {
 });
 
 test('a full run can be played headlessly from NEW_RUN to either extractionComplete or gameOver', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 42 });
+  let s = startLoadout(42);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
 
   let guard = 0;
@@ -231,7 +258,7 @@ test('a full run can be played headlessly from NEW_RUN to either extractionCompl
 
 test('the same seed reproduces an identical run outcome (deterministic headless replay)', () => {
   function playSeed(seed) {
-    let s = gameReducer(null, { type: 'NEW_RUN', seed });
+    let s = startLoadout(seed);
     s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
     let guard = 0;
     while (s.currentScreen !== 'gameOver' && s.currentScreen !== 'extractionComplete' && guard < 400) {
@@ -249,7 +276,7 @@ test('the same seed reproduces an identical run outcome (deterministic headless 
 });
 
 test('PLAY_CARD with an invalid instanceId is a full no-op snapshot', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 6 });
+  let s = startLoadout(6);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = driveToNextCombatOrEnd(s);
   const before = s;
@@ -258,7 +285,7 @@ test('PLAY_CARD with an invalid instanceId is a full no-op snapshot', () => {
 });
 
 test('junk and currency items only enter the deck as status cards once they are burden (past capacity)', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   const capacity = s.playerState.inventory.capacity;
   const items = [{ id: 'item-junk', kind: 'junk', value: 5 }];
@@ -277,7 +304,7 @@ test('junk and currency items only enter the deck as status cards once they are 
 });
 
 test('EQUIP_ITEM/UNEQUIP_ITEM move gear (by instance itemId) between the loadout and the inventory, and are blocked mid-combat', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = {
     ...s,
@@ -300,7 +327,7 @@ test('EQUIP_ITEM/UNEQUIP_ITEM move gear (by instance itemId) between the loadout
   // "blocked mid-combat" only needs any combat snapshot with an equipped weapon — drive from a
   // fresh loadout-confirmed state rather than `s`, since MAP_EQUIP_TIME_COST above already
   // advanced facilityRunState.time/threat positions in a way that isn't relevant here.
-  let fresh = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let fresh = startLoadout(2);
   fresh = gameReducer(fresh, { type: 'CONFIRM_LOADOUT' });
   fresh = {
     ...fresh,
@@ -314,7 +341,7 @@ test('EQUIP_ITEM/UNEQUIP_ITEM move gear (by instance itemId) between the loadout
 });
 
 test('EQUIP_ITEM on the map costs MAP_EQUIP_TIME_COST (50) and is free/instant during loadout prep', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 3 });
+  let s = startLoadout(3);
   // Free/instant during loadout prep — no facilityRunState to advance yet.
   const rifle = s.playerState.warehouse.items.find((i) => i.equipmentId === 'rifle');
   s = gameReducer(s, { type: 'EQUIP_ITEM_FROM_WAREHOUSE', itemId: rifle.id });
@@ -335,7 +362,7 @@ test('EQUIP_ITEM on the map costs MAP_EQUIP_TIME_COST (50) and is free/instant d
 });
 
 test('EQUIP_ITEM refuses to (re-)equip a broken (durability 0) item', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = {
     ...s,
@@ -349,7 +376,7 @@ test('EQUIP_ITEM refuses to (re-)equip a broken (durability 0) item', () => {
 });
 
 test('BEGIN_DISENGAGE/RESOLVE_DISENGAGE lets the player retreat from combat back to the map without a reward', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = equipDefaultLoadout(s);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = driveToNextCombatOrEnd(s);
@@ -369,7 +396,7 @@ test('BEGIN_DISENGAGE/RESOLVE_DISENGAGE lets the player retreat from combat back
 });
 
 test('extraction is automatic: landing on an already-open standard exit ends the run without a separate confirm command', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   const run = s.facilityRunState;
   const neighborId = run.graph.edges.find((e) => e.from === run.playerNodeId)?.to
@@ -389,7 +416,7 @@ test('extraction is automatic: landing on an already-open standard exit ends the
 });
 
 test('extraction is automatic: landing on the key exit while it is discovered ends the run', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   const run = s.facilityRunState;
   const neighborId = run.graph.edges.find((e) => e.from === run.playerNodeId)?.to
@@ -405,7 +432,7 @@ test('extraction is automatic: landing on the key exit while it is discovered en
 });
 
 test('a threat wandering onto the player mid-action (not just mid-move) forces combat too', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 2 });
+  let s = startLoadout(2);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   const run = s.facilityRunState;
   const neighborId = run.graph.edges.find((e) => e.from === run.playerNodeId)?.to
@@ -441,7 +468,7 @@ test('a threat wandering onto the player mid-action (not just mid-move) forces c
 // §신규 조우 시스템 전용 테스트 — 위협 하나를 플레이어 인접 노드에 놓고 지정한 alert/size로
 // 고정한 뒤 BASIC_RECON 한 번으로 결정론적 콜리전을 일으켜, 원하는 tier의 run.encounter를 얻는다.
 function riggedEncounterState(seed, { alert, size, monsterIds, equip = false }) {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed });
+  let s = startLoadout(seed);
   if (equip) s = equipFromWarehouseByEquipmentId(s, 'katana');
   if (equip) s = equipFromWarehouseByEquipmentId(s, 'rifle');
   if (equip) s = equipFromWarehouseByEquipmentId(s, 'light_top');
@@ -524,7 +551,7 @@ test('encounter tier disadvantage: grace action allowed once, then forced with n
 });
 
 test('USE_MAP_CONSUMABLE heals from inventory or quickslot, costs MAP_CONSUMABLE_TIME_COST (30), and only accepts healing consumables', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 4 });
+  let s = startLoadout(4);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = { ...s, playerState: { ...s.playerState, hp: Math.round(s.playerState.maxHp * 0.5) } };
 
@@ -570,7 +597,7 @@ test('USE_MAP_CONSUMABLE heals from inventory or quickslot, costs MAP_CONSUMABLE
 });
 
 test('USE_MAP_CONSUMABLE is a no-op outside the map screen (e.g. mid-combat)', () => {
-  let s = gameReducer(null, { type: 'NEW_RUN', seed: 4 });
+  let s = startLoadout(4);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   assert.equal(s.currentScreen, 'map');
   const notOnMap = { ...s, currentScreen: 'combat' };

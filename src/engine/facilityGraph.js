@@ -1,25 +1,20 @@
-// 240-node extraction facility graph generation (docs/extraction-map-implementation-spec.md §4).
+// 206-node extraction facility graph generation (docs/extraction-map-implementation-spec.md §4).
 // Pure and deterministic: every function threads rngState explicitly (see rng.js), never calls
-// Math.random(). This module is standalone — it does not touch mapEngine.js/gameReducer.js/
-// MapScreen.js, which keep running the existing 8-floor map until a later phase swaps them over.
+// Math.random().
 //
-// Topology design (geometric, not chain-based): each of the 8 sectors (facilityLayout.js
-// SECTOR_IDS) gets a center on one big ring, and its 20 nodes are scattered by uniform-in-disk
-// sampling around that center ("뿌리듯이" placement) — see buildBaseGraph. Regular (non-special)
-// edges are then built purely from 2D proximity: sort every node pair by distance, greedily add
-// edges to whichever pair is closest while nobody exceeds BASE_EDGE_DEGREE_SOFT_CAP (2), then a
-// second pass over the same sorted list merges any still-disconnected components using the
-// closest available cross-component pair, allowing up to BASE_EDGE_DEGREE_HARD_CAP (4) — this is
-// essentially a degree-capped Kruskal's MST pass, followed by a third pass (see the bridge-repair
-// comment in buildBaseGraph) that specifically hunts down and patches remaining bridges. The cap
-// was raised from an earlier max-3 design once that constant proved too tight here: a real
-// geometric proximity graph needs more slack to eliminate bridges than the old single-cycle
-// 48-node topology did, or exit placement fails almost every attempt (see buildBaseGraph's
-// comment). Because closer pairs are always tried first,
-// "only fairly nearby nodes connect" falls out for free, and because sector circles don't overlap
-// (SECTOR_NODE_RADIUS well under half the ring spacing), regular edges practically never cross a
-// sector boundary — within-sector pairs are almost always closer and get claimed first. Ordinary
-// movement between sectors is therefore only possible through the special edges below.
+// Topology design (floor plans on a ring). Each of the 8 sectors (facilityLayout.js SECTOR_IDS)
+// gets a center on one big ring, and its interior is drawn by layoutArchetypes.js as an actual
+// floor plan — a corridor skeleton whose shape comes from that sector's archetype (grid, chain,
+// radial, tower, hall, dual) with rooms hung off it. Sector node counts differ (SECTOR_LAYOUTS):
+// the hangar is 14 big rooms while the residential block is 32 mostly-corridor nodes, so a
+// sector's size is itself information. Every node carries a type (FacilityNodeType) that decides
+// its concealment and opportunity density.
+//
+// Regular edges come from two places and two places only: the floor plan's own doors and
+// corridors, and one gateway edge per ring-adjacent sector pair. There is no global
+// nearest-neighbor pass any more — an edge exists because the building has a door there. Because
+// the eight sectors form a ring, no gateway edge is a bridge, and a route can go around the ring
+// either way.
 //
 // Each edge's timeCost is derived from its actual 2D length (EDGE_TIME_PER_LENGTH_UNIT, clamped to
 // [EDGE_TIME_MIN, EDGE_TIME_MAX]) instead of a flat constant — shorter corridors are faster,
@@ -30,30 +25,30 @@
 // "within-sector" (both endpoints from one sector's pool), "cross-sector" (one endpoint from each
 // of a SECTOR_ADJACENCY — ring-neighbor — pair's pools), and a very small number of "long-range"
 // edges connecting two sectors that are NOT ring-adjacent (LONG_RANGE_SPECIAL_EDGES_MIN/MAX,
-// deliberately rare — these are a gamble shortcut, not a normal route). Within/cross-sector edges
-// are the only way to move between adjacent sectors on the regular graph; long-range edges are the
-// only way to skip across the ring directly. All three share the same BASE_EDGE_DEGREE_HARD_CAP
-// (4) per node used by the base graph, tracked the same way (skip a candidate node once it's
-// already at cap). Because the degree cap is enforced everywhere edges are added — base graph
-// included — no
-// single node can ever end up above that cap, but this is no longer a structurally *proven*
-// bridge-free guarantee like the old single-cycle base graph was; connectivity and the "2
-// edge-disjoint paths to every exit" requirement (§4.1 step 5) are validated empirically instead,
-// via generateFacilityGraph's existing retry (GENERATION_MAX_ATTEMPTS) + fallback-seed safety net.
+// deliberately rare — these are a gamble shortcut, not a normal route). They share the
+// BASE_EDGE_DEGREE_HARD_CAP (4) per-node budget with the base graph, so a node already busy with
+// corridors and doors will not sprout more.
+//
+// A room hung off a single corridor is a leaf, and its edge is a bridge — an exit cannot go there
+// because §4.1 step 5 needs two edge-disjoint paths. layoutArchetypes.js therefore adds
+// connecting doors between nearby rooms, and every archetype except the tower carries at least one
+// cycle in its skeleton. Connectivity and the two-path requirement are still validated empirically
+// per attempt, via generateFacilityGraph's retry (GENERATION_MAX_ATTEMPTS) + fallback-seed net.
 
 import { createRngState, nextFloat, nextInt, pick, shuffle, weightedPick } from './rng.js';
-import { dijkstraDistances, bfsHopDistances, countEdgeDisjointPaths, reachableSet } from './graphUtils.js';
+import { dijkstraDistances, bfsHopDistances, countEdgeDisjointPaths, reachableSet, isEdgeUnlocked } from './graphUtils.js';
+import { generateSectorLayout } from './layoutArchetypes.js';
 import {
-  SECTOR_IDS, NODES_PER_SECTOR, SECTOR_RING_RADIUS, SECTOR_NODE_RADIUS,
-  NODE_MIN_SEPARATION, NODE_PLACEMENT_MAX_ATTEMPTS,
+  SECTOR_IDS, SECTOR_RING_RADIUS, SECTOR_NODE_RADIUS,
   EDGE_TIME_PER_LENGTH_UNIT, EDGE_TIME_MIN, EDGE_TIME_MAX,
-  BASE_EDGE_DEGREE_SOFT_CAP, BASE_EDGE_DEGREE_HARD_CAP, EXIT_DISTANCE_RANGES, SECTOR_ADJACENCY,
+  BASE_EDGE_DEGREE_HARD_CAP, EXIT_DISTANCE_RANGES, SECTOR_ADJACENCY,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
   LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SPECIAL_EDGE_CATEGORY_WEIGHTS,
-  SPECIAL_EDGE_SECOND_TAG_CHANCE, LANDMARKS_BY_SECTOR, OPPORTUNITY_COUNT_WEIGHTS,
+  SPECIAL_EDGE_SECOND_TAG_CHANCE, LANDMARKS_BY_SECTOR, NODE_TYPE_OPPORTUNITY_WEIGHTS,
   OPPORTUNITY_USES_WEIGHTS, KEY_DROP_CHANCE, CAMERA_NODE_CHANCE, ACCESS_INTERFACE_NODE_CHANCE,
-  CONCEALMENT_NODE_WEIGHTS,
+  PRIZE_PROMOTION_CHANCE_BY_NODE_TYPE, PRIZE_TIER_WEIGHTS, PRIZE_AXIS_WEIGHTS,
+  NODE_TYPE_CONCEALMENT_WEIGHTS,
   THREAT_COUNT_BY_SECTOR, THREAT_MIN_HOPS_FROM_START,
   THREAT_MIN_HOPS_BETWEEN_MARKERS, THREAT_PATROL_ROUTE_MIN, THREAT_PATROL_ROUTE_MAX,
   THREAT_GROUP_SIZE_WEIGHTS, ENTRANCE_THREAT_MAX_GROUP_SIZE, GENERATION_MAX_ATTEMPTS, GENERATOR_SECTOR_IDS,
@@ -79,95 +74,30 @@ function edgeTimeCostForLength(length) {
  * @property {import('./types.js').FacilityNode[]} nodes
  * @property {import('./types.js').FacilityEdge[]} edges
  * @property {Record<string, string[]>} nodeIdsBySector
+ * @property {Record<string, string[]>} externalIdsBySector 그 구역에서 바깥과 이어질 수 있는 노드.
+ *   보통은 구역 전체지만, 탑 구조(통신·관제탑)는 1층 로비만 들어간다.
+ * @property {Record<string, number>} groupByNodeId 층처럼 구역을 더 잘게 나눈 덩어리. 여기 실린
+ *   노드끼리는 같은 덩어리 안에서만 특수 엣지가 난다. 나뉘지 않는 구역의 노드는 빠져 있다.
+ * @property {Record<string, string[]>} landmarkIdsBySector 표지가 놓일 수 있는 노드. 배치 원형이
+ *   정한다(D16) — 도면만 보고 후보를 좁힐 수 있게 하려는 것이다.
  * @property {string} startNodeId
  * @property {import('./types.js').ExitPlacement[]} exits
  */
 
 /**
- * Tarjan's bridge-finding algorithm — returns the indices (into `edges`) of every bridge (an edge
- * whose removal disconnects the graph). Used by buildBaseGraph's pass 3 to hunt down and patch up
- * the weak points a degree-capped nearest-neighbor mesh tends to leave behind.
- * @param {string[]} nodeIds
- * @param {{from: string, to: string}[]} edges
- * @returns {number[]}
- */
-function findBridges(nodeIds, edges) {
-  /** @type {Map<string, {to: string, idx: number}[]>} */
-  const adjacency = new Map(nodeIds.map((id) => [id, []]));
-  edges.forEach((e, idx) => {
-    /** @type {{to: string, idx: number}[]} */ (adjacency.get(e.from)).push({ to: e.to, idx });
-    /** @type {{to: string, idx: number}[]} */ (adjacency.get(e.to)).push({ to: e.from, idx });
-  });
-  const disc = new Map();
-  const low = new Map();
-  /** @type {number[]} */
-  const bridges = [];
-  let timer = 0;
-
-  /** @param {string} start */
-  function dfsFrom(start) {
-    // Explicit stack (not recursion) — 240 nodes is small enough that recursion would be fine
-    // too, but this keeps it independent of any call-stack depth assumptions.
-    /** @type {[string, number, number][]} */
-    const stack = [[start, -1, 0]]; // [node, parentEdgeIdx, nextChildIndex]
-    disc.set(start, timer); low.set(start, timer); timer += 1;
-    while (stack.length > 0) {
-      const frame = stack[stack.length - 1];
-      const [u, parentEdgeIdx, childIndex] = frame;
-      const neighbors = /** @type {{to: string, idx: number}[]} */ (adjacency.get(u));
-      if (childIndex < neighbors.length) {
-        frame[2] += 1;
-        const { to: v, idx } = neighbors[childIndex];
-        if (idx === parentEdgeIdx) continue;
-        if (!disc.has(v)) {
-          disc.set(v, timer); low.set(v, timer); timer += 1;
-          stack.push([v, idx, 0]);
-        } else {
-          low.set(u, Math.min(/** @type {number} */ (low.get(u)), /** @type {number} */ (disc.get(v))));
-        }
-      } else {
-        stack.pop();
-        if (stack.length > 0) {
-          const parent = stack[stack.length - 1];
-          const parentU = parent[0];
-          low.set(parentU, Math.min(/** @type {number} */ (low.get(parentU)), /** @type {number} */ (low.get(u))));
-          if (/** @type {number} */ (low.get(u)) > /** @type {number} */ (disc.get(parentU))) bridges.push(parentEdgeIdx);
-        }
-      }
-    }
-  }
-
-  for (const id of nodeIds) if (!disc.has(id)) dfsFrom(id);
-  return bridges;
-}
-
-/**
- * Tiny union-find for the connectivity-repair pass in buildBaseGraph.
- * @param {string[]} ids
- */
-function createUnionFind(ids) {
-  const parent = new Map(ids.map((id) => [id, id]));
-  /** @param {string} id @returns {string} */
-  const find = (id) => {
-    let root = id;
-    while (parent.get(root) !== root) root = /** @type {string} */ (parent.get(root));
-    let cur = id;
-    while (parent.get(cur) !== root) { const next = /** @type {string} */ (parent.get(cur)); parent.set(cur, root); cur = next; }
-    return root;
-  };
-  /** @param {string} a @param {string} b */
-  const union = (a, b) => parent.set(find(a), find(b));
-  return { find, union };
-}
-
-/**
  * Steps 1-3 of §4.1. Each sector gets a center on one big ring (SECTOR_RING_RADIUS from the
  * global origin, evenly spaced by SECTOR_IDS order — see that array's comment for why entrance
- * and power sit opposite each other), and its NODES_PER_SECTOR nodes are scattered by
- * uniform-in-disk sampling (r = R*sqrt(u), theta = 2*pi*u) within SECTOR_NODE_RADIUS of that
- * center. Regular edges are then a degree-capped nearest-neighbor graph over ALL nodes (see the
- * module header for the two-pass algorithm) — sector circles don't overlap, so in practice this
- * only ever connects nodes within the same sector.
+ * and power sit opposite each other). Inside that center layoutArchetypes.js draws the sector's
+ * floor plan: a corridor skeleton whose shape depends on the sector's archetype, with rooms hung
+ * off it. The generator returns local coordinates normalized to radius 1, which we scale by
+ * SECTOR_NODE_RADIUS and translate onto the ring — so sector-to-sector distance is decided purely
+ * by the ring and is unaffected by which archetype a sector uses. That matters because the exit
+ * distance ranges and the whole time budget are calibrated against this coordinate scale.
+ *
+ * Sectors are joined only by gateway edges: for each ring-adjacent pair, the node in each sector
+ * closest to the other sector's center becomes a gateway, and one regular edge links them. The
+ * eight sectors therefore form a ring, so no gateway edge is a bridge and the route around the
+ * ring stays open in both directions.
  * @param {import('./rng.js').RngState} rngState
  */
 export function buildBaseGraph(rngState) {
@@ -176,105 +106,104 @@ export function buildBaseGraph(rngState) {
   const nodes = [];
   /** @type {Record<string, string[]>} */
   const nodeIdsBySector = {};
+  /** @type {Record<string, string[]>} */
+  const externalIdsBySector = {};
+  /** @type {Record<string, number>} */
+  const groupByNodeId = {};
+  /** @type {Record<string, string[]>} */
+  const landmarkIdsBySector = {};
+  /** @type {Record<string, {x: number, y: number}>} */
+  const sectorCenters = {};
+  /** @type {import('./types.js').FacilityEdge[]} */
+  const edges = [];
+  const existing = new Set();
+  /** @type {Map<string, number>} */
+  const degree = new Map();
+  /** @type {Map<string, import('./types.js').FacilityNode>} */
+  const byId = new Map();
+
+  /**
+   * @param {string} a @param {string} b
+   * @param {import('./types.js').SpecialEdgeFeature[]} [features] 배치 원형이 구조적으로 두는 특수 통로.
+   * @param {number} [requiredCapability]
+   */
+  const addEdge = (a, b, features = [], requiredCapability = undefined) => {
+    const key = [a, b].sort().join('|');
+    if (existing.has(key)) return;
+    const nodeA = /** @type {import('./types.js').FacilityNode} */ (byId.get(a));
+    const nodeB = /** @type {import('./types.js').FacilityNode} */ (byId.get(b));
+    /** @type {import('./types.js').FacilityEdge} */
+    const edge = { id: edgeId(a, b), from: a, to: b, bidirectional: true, timeCost: edgeTimeCostForLength(distance(nodeA, nodeB)), features };
+    if (requiredCapability !== undefined) edge.requiredCapability = requiredCapability;
+    edges.push(edge);
+    existing.add(key);
+    degree.set(a, /** @type {number} */ (degree.get(a)) + 1);
+    degree.set(b, /** @type {number} */ (degree.get(b)) + 1);
+  };
 
   SECTOR_IDS.forEach((sectorId, sectorIndex) => {
     const angle = (sectorIndex / SECTOR_IDS.length) * Math.PI * 2 - Math.PI / 2;
     const center = { x: Math.cos(angle) * SECTOR_RING_RADIUS, y: Math.sin(angle) * SECTOR_RING_RADIUS };
-    const sectorNodeIds = [];
-    /** @type {{x: number, y: number}[]} */
-    const placedInSector = [];
-    for (let i = 0; i < NODES_PER_SECTOR; i++) {
-      // 거부 샘플링: NODE_MIN_SEPARATION을 만족하는 후보가 나올 때까지 다시 뽑는다. 못 찾으면
-      // (구역이 노드로 꽉 차가는 막바지에 흔함) 지금까지 시도한 후보 중 가장 널찍은 것으로
-      // 타협한다 — 무한 루프 없이 항상 종료를 보장하면서 겹침은 최대한 줄인다.
-      let best = null;
-      let bestMinDist = -Infinity;
-      for (let attempt = 0; attempt < NODE_PLACEMENT_MAX_ATTEMPTS; attempt++) {
-        const { value: uR, state: sR } = nextFloat(state);
-        const { value: uTheta, state: sTheta } = nextFloat(sR);
-        state = sTheta;
-        const r = SECTOR_NODE_RADIUS * Math.sqrt(uR);
-        const theta = uTheta * Math.PI * 2;
-        const candidate = { x: center.x + Math.cos(theta) * r, y: center.y + Math.sin(theta) * r };
-        const minDist = placedInSector.length === 0 ? Infinity : Math.min(...placedInSector.map((p) => distance(p, candidate)));
-        if (minDist >= NODE_MIN_SEPARATION) { best = candidate; break; }
-        if (minDist > bestMinDist) { bestMinDist = minDist; best = candidate; }
-      }
-      const point = /** @type {{x: number, y: number}} */ (best);
-      placedInSector.push(point);
+    sectorCenters[sectorId] = center;
+
+    const layout = generateSectorLayout(state, sectorId);
+    state = layout.rngState;
+
+    const offPlan = new Set(layout.offPlanIndices);
+    const sectorNodeIds = layout.nodes.map((local, i) => {
       const id = `${sectorId}_${i}`;
-      nodes.push({ id, sectorId, x: point.x, y: point.y });
-      sectorNodeIds.push(id);
-    }
+      const node = {
+        id,
+        sectorId: /** @type {import('./types.js').FacilitySectorId} */ (sectorId),
+        type: local.type,
+        ...(offPlan.has(i) ? { offPlan: true } : {}),
+        x: center.x + local.x * SECTOR_NODE_RADIUS,
+        y: center.y + local.y * SECTOR_NODE_RADIUS,
+      };
+      nodes.push(node);
+      byId.set(id, node);
+      degree.set(id, 0);
+      return id;
+    });
     nodeIdsBySector[sectorId] = sectorNodeIds;
+    externalIdsBySector[sectorId] = layout.externalIndices
+      ? layout.externalIndices.map((i) => sectorNodeIds[i])
+      : sectorNodeIds;
+    if (layout.groups) layout.groups.forEach((g, i) => { groupByNodeId[sectorNodeIds[i]] = g; });
+    landmarkIdsBySector[sectorId] = layout.landmarkIndices.map((i) => sectorNodeIds[i]);
+
+    for (const [a, b] of layout.edges) addEdge(sectorNodeIds[a], sectorNodeIds[b]);
+    // 배치 원형이 구조적으로 두는 특수 통로(통신·관제탑 승강기 등). 무작위 특수 엣지와 달리
+    // 시드와 무관하게 항상 존재하며, 기저 그래프의 일부라 차수 계산에도 그대로 들어간다.
+    for (const special of layout.specialEdges) {
+      addEdge(sectorNodeIds[special.from], sectorNodeIds[special.to], [...special.features], special.requiredCapability);
+    }
   });
 
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  /** @type {{a: string, b: string, dist: number}[]} */
-  const pairs = [];
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) pairs.push({ a: nodes[i].id, b: nodes[j].id, dist: distance(nodes[i], nodes[j]) });
-  }
-  pairs.sort((p, q) => p.dist - q.dist);
-
-  const degree = new Map(nodes.map((n) => [n.id, 0]));
-  const uf = createUnionFind(nodes.map((n) => n.id));
-  /** @type {import('./types.js').FacilityEdge[]} */
-  const edges = [];
-  const existing = new Set();
-  /** @param {string} a @param {string} b @param {number} dist */
-  const addEdge = (a, b, dist) => {
-    edges.push({ id: edgeId(a, b), from: a, to: b, bidirectional: true, timeCost: edgeTimeCostForLength(dist), features: [] });
-    existing.add([a, b].sort().join('|'));
-    degree.set(a, /** @type {number} */ (degree.get(a)) + 1);
-    degree.set(b, /** @type {number} */ (degree.get(b)) + 1);
-    uf.union(a, b);
+  // 관문: 링에서 인접한 구역 쌍마다 서로에게 가장 가까운 노드를 하나씩 골라 잇는다. 한 노드가
+  // 양쪽 관문을 겸하면 그 구역의 두 출입구가 겹쳐 병목이 과해지므로 이미 관문인 노드는 뺀다.
+  /** @type {Set<string>} */
+  const gatewayIds = new Set();
+  /** @param {string} ownSector @param {{x: number, y: number}} targetCenter */
+  const nearestTo = (ownSector, targetCenter) => {
+    const open = externalIdsBySector[ownSector];
+    const free = open.filter((id) => !gatewayIds.has(id));
+    const pool = free.length > 0 ? free : open;
+    return pool.reduce((best, id) => (
+      distance(/** @type {import('./types.js').FacilityNode} */ (byId.get(id)), targetCenter)
+        < distance(/** @type {import('./types.js').FacilityNode} */ (byId.get(best)), targetCenter) ? id : best
+    ), pool[0]);
   };
-
-  // Pass 1: dense local mesh, capped at BASE_EDGE_DEGREE_SOFT_CAP so every node keeps at least
-  // one free slot for the repair pass below.
-  for (const { a, b, dist } of pairs) {
-    if (/** @type {number} */ (degree.get(a)) >= BASE_EDGE_DEGREE_SOFT_CAP) continue;
-    if (/** @type {number} */ (degree.get(b)) >= BASE_EDGE_DEGREE_SOFT_CAP) continue;
-    addEdge(a, b, dist);
+  for (const [fromSector, toSector] of SECTOR_ADJACENCY) {
+    const a = nearestTo(fromSector, sectorCenters[toSector]);
+    const b = nearestTo(toSector, sectorCenters[fromSector]);
+    gatewayIds.add(a);
+    gatewayIds.add(b);
+    addEdge(a, b);
   }
+  for (const node of nodes) if (gatewayIds.has(node.id)) node.isGateway = true;
 
-  // Pass 2: connectivity repair — degree-capped Kruskal over the same sorted pairs, only adding
-  // an edge when it merges two still-separate components.
-  for (const { a, b, dist } of pairs) {
-    if (uf.find(a) === uf.find(b)) continue;
-    if (/** @type {number} */ (degree.get(a)) >= BASE_EDGE_DEGREE_HARD_CAP) continue;
-    if (/** @type {number} */ (degree.get(b)) >= BASE_EDGE_DEGREE_HARD_CAP) continue;
-    addEdge(a, b, dist);
-  }
-
-  // Pass 3: bridge repair. A degree-capped nearest-neighbor mesh is connected (pass 2 guarantees
-  // that) but often still full of bridges — edges that, if cut, split the graph. For real
-  // 2-edge-disjoint-path coverage (what exit placement needs), patch each bridge found by adding
-  // the closest still-affordable cross-side edge, then re-scan (fixing one bridge can reveal or
-  // resolve others) until none remain or the degree cap genuinely can't afford any more.
-  for (let sweep = 0; sweep < 25; sweep++) {
-    const bridgeIdxs = findBridges(nodes.map((n) => n.id), edges);
-    if (bridgeIdxs.length === 0) break;
-    let repairedAny = false;
-    for (const idx of bridgeIdxs) {
-      const bridge = edges[idx];
-      const edgesWithoutBridge = edges.filter((_, i) => i !== idx);
-      const sideA = reachableSet(edgesWithoutBridge, bridge.from);
-      // sideB is everything else — since pass 2 guaranteed single-component connectivity and
-      // this edge is a genuine bridge, "everything not in sideA" is exactly the other side.
-      const found = pairs.find(({ a, b }) => sideA.has(a) !== sideA.has(b)
-        && /** @type {number} */ (degree.get(a)) < BASE_EDGE_DEGREE_HARD_CAP
-        && /** @type {number} */ (degree.get(b)) < BASE_EDGE_DEGREE_HARD_CAP
-        && !existing.has([a, b].sort().join('|')));
-      if (!found) continue;
-      addEdge(found.a, found.b, found.dist);
-      repairedAny = true;
-    }
-    if (!repairedAny) break;
-  }
-
-  return { nodes, edges, nodeIdsBySector, rngState: state };
+  return { nodes, edges, nodeIdsBySector, externalIdsBySector, groupByNodeId, landmarkIdsBySector, rngState: state };
 }
 
 /**
@@ -323,24 +252,42 @@ function placeStartAndExits(nodes, edges, rngState) {
    */
   const inRange = (candidates, range) => candidates.filter((c) => c.weightedDistance >= range.min && c.weightedDistance <= range.max);
 
+  // 방을 복도 하나에만 매단 평면도에서는 잎 노드가 많고, 잎으로 가는 길은 하나뿐이라 §4.1 step 5의
+  // 2-edge-disjoint 요구를 만족하지 못한다. 이 검사는 탈출구마다 독립이므로 후보 노드 하나당 한 번만
+  // 하고 캐시한다 — 삼중 루프 안에서 매 조합마다 다시 하면 같은 노드를 수백 번 검사하게 된다.
+  /** @type {Map<string, boolean>} */
+  const twoPathCache = new Map();
+  // 잠긴 통로는 우회로로 치지 않는다. 배치 원형이 구조적으로 두는 특수 엣지(탑 승강기)가 base
+  // 그래프에 이미 들어 있는데, 그걸 두 번째 경로로 인정하면 "열지 못하면 퇴로가 없는" 탈출구가
+  // 생긴다. 여는 절차가 필요 없는 엣지만으로 우회로가 있어야 한다.
+  const redundancyEdges = edges.filter((e) => isEdgeUnlocked(e));
+  /** @param {string} nodeId */
+  const hasTwoPaths = (nodeId) => {
+    const cached = twoPathCache.get(nodeId);
+    if (cached !== undefined) return cached;
+    const ok = countEdgeDisjointPaths(redundancyEdges, startNodeId, nodeId, 2) >= 2;
+    twoPathCache.set(nodeId, ok);
+    return ok;
+  };
+
   let state = afterStart;
   const { value: sectorOrder, state: afterShuffle } = shuffle(state, SECTOR_IDS);
   state = afterShuffle;
 
   for (const sectorA of sectorOrder) {
-    const aPool = inRange(candidatesBySector[sectorA] || [], EXIT_DISTANCE_RANGES.A);
+    const aPool = inRange(candidatesBySector[sectorA] || [], EXIT_DISTANCE_RANGES.A).filter((c) => hasTwoPaths(c.id));
     if (aPool.length === 0) continue;
     for (const nodeA of aPool) {
       for (const sectorKey of sectorOrder) {
         if (sectorKey === sectorA) continue;
         const keyPool = inRange(candidatesBySector[sectorKey] || [], EXIT_DISTANCE_RANGES.key)
-          .filter((c) => c.weightedDistance > nodeA.weightedDistance);
+          .filter((c) => c.weightedDistance > nodeA.weightedDistance && hasTwoPaths(c.id));
         if (keyPool.length === 0) continue;
         for (const nodeKey of keyPool) {
           for (const sectorB of sectorOrder) {
             if (sectorB === sectorA || sectorB === sectorKey) continue;
             const bPool = inRange(candidatesBySector[sectorB] || [], EXIT_DISTANCE_RANGES.B)
-              .filter((c) => c.weightedDistance > nodeKey.weightedDistance);
+              .filter((c) => c.weightedDistance > nodeKey.weightedDistance && hasTwoPaths(c.id));
             if (bPool.length === 0) continue;
             const nodeB = bPool[0];
             /** @type {import('./types.js').ExitPlacement[]} */
@@ -349,8 +296,6 @@ function placeStartAndExits(nodes, edges, rngState) {
               { exitId: 'key', nodeId: nodeKey.id, sectorId: sectorKey, weightedDistanceFromStart: nodeKey.weightedDistance },
               { exitId: 'B', nodeId: nodeB.id, sectorId: sectorB, weightedDistanceFromStart: nodeB.weightedDistance },
             ];
-            const pathsOk = exits.every((exit) => countEdgeDisjointPaths(edges, startNodeId, exit.nodeId, 2) >= 2);
-            if (!pathsOk) continue;
             return { startNodeId, exits, rngState: state };
           }
         }
@@ -384,6 +329,9 @@ function tryBuildTopology(rngState) {
       nodes: base.nodes,
       edges: base.edges,
       nodeIdsBySector: base.nodeIdsBySector,
+      externalIdsBySector: base.externalIdsBySector,
+      groupByNodeId: base.groupByNodeId,
+      landmarkIdsBySector: base.landmarkIdsBySector,
       startNodeId: placement.startNodeId,
       exits: placement.exits,
     },
@@ -412,17 +360,21 @@ function getFallbackTopology() {
  * "long-range" edges between non-adjacent sectors (LONG_RANGE_SPECIAL_EDGES_MIN/MAX, deliberately
  * rare). Within/cross-sector edges are the only way regular movement can cross into a *neighboring*
  * sector; long-range edges are the only way to skip across the ring directly (see module header).
- * All three share the same per-node degree cap tracking so the whole graph never exceeds
- * BASE_EDGE_DEGREE_HARD_CAP, building on whatever degree each node already has from the base graph.
+ * All three share the same per-node degree cap tracking, building on whatever degree each node
+ * already has from the base graph — so a node the floor plan already loaded up (a grid junction,
+ * the tower lobby) takes no special edges at all. The cap does *not* bound the base graph itself;
+ * see BASE_EDGE_DEGREE_HARD_CAP.
  * @param {import('./types.js').FacilityNode[]} nodes
  * @param {import('./types.js').FacilityEdge[]} baseEdges
  * @param {Record<string, string[]>} nodeIdsBySector
+ * @param {Record<string, string[]>} externalIdsBySector 구역 밖으로 이어질 수 있는 노드만 담은 풀.
+ * @param {Record<string, number>} groupByNodeId 구역을 더 잘게 나눈 덩어리(탑의 층).
  * @param {Map<string, {x: number, y: number}>} byId
  * @param {Set<string>} existingPairs
  * @param {Map<string, number>} baseDegree
  * @param {import('./rng.js').RngState} rngState
  */
-function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPairs, baseDegree, rngState) {
+function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySector, groupByNodeId, byId, existingPairs, baseDegree, rngState) {
   let state = rngState;
   const existing = new Set(existingPairs);
   const degree = new Map(baseDegree);
@@ -440,13 +392,11 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPair
     const { value: category, state: sCat } = weightedPick(state, SPECIAL_EDGE_CATEGORY_WEIGHTS);
     state = sCat;
     const features = [category];
-    if (category !== 'oneWay' && category !== 'highGround') {
+    // 막힌 통로에만 자물쇠 종류가 붙는다. 일방통행과 고지대는 잠긴 것이 아니라 지형이다.
+    if (category === 'blocked') {
       const { value: roll, state: sRoll } = nextFloat(state);
       state = sRoll;
-      if (roll < SPECIAL_EDGE_SECOND_TAG_CHANCE) {
-        const other = category === 'blocked' ? 'electronic' : 'blocked';
-        features.push(other);
-      }
+      if (roll < SPECIAL_EDGE_SECOND_TAG_CHANCE) features.push('electronic');
     }
     const dist = distance(/** @type {{x:number,y:number}} */ (byId.get(a)), /** @type {{x:number,y:number}} */ (byId.get(b)));
     specialEdges.push({
@@ -459,6 +409,27 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPair
     return true;
   };
 
+  // 구역 중심(노드 평균) — 구역 간 특수 엣지를 서로 마주 보는 쪽에 놓기 위해 쓴다.
+  /** @type {Record<string, {x: number, y: number}>} */
+  const sectorCentroids = {};
+  for (const sectorId of SECTOR_IDS) {
+    const pool = nodeIdsBySector[sectorId];
+    const points = pool.map((id) => /** @type {{x:number,y:number}} */ (byId.get(id)));
+    sectorCentroids[sectorId] = {
+      x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
+      y: points.reduce((sum, p) => sum + p.y, 0) / points.length,
+    };
+  }
+  /** 기준점에 가까운 순으로 후보 k개. @param {string[]} pool @param {{x: number, y: number}} origin */
+  const nearest = (pool, origin, k, exclude) => pool
+    .filter((id) => id !== exclude)
+    .map((id) => ({ id, d: distance(/** @type {{x:number,y:number}} */ (byId.get(id)), origin) }))
+    .sort((p, q) => p.d - q.d || (p.id < q.id ? -1 : 1))
+    .slice(0, k)
+    .map((c) => c.id);
+
+  // 구역 안 특수 엣지는 서로 가까운 방끼리만 잇는다. 무작위 쌍을 고르면 평면도를 가로지르는
+  // 긴 줄이 생겨 도면이 안 읽힌다 — 잠긴 문이나 전자문은 옆방으로 나는 것이 자연스럽다.
   for (const sectorId of SECTOR_IDS) {
     const pool = nodeIdsBySector[sectorId];
     const { value: count, state: sCount } = nextInt(state, SPECIAL_EDGES_PER_SECTOR_MAX - SPECIAL_EDGES_PER_SECTOR_MIN + 1);
@@ -469,7 +440,13 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPair
     while (placed < target && attempts < 60) {
       attempts += 1;
       const { value: a, state: sa } = pick(state, pool);
-      const { value: b, state: sb } = pick(sa, pool);
+      state = sa;
+      // 층이 나뉜 구역(탑)에서는 같은 층 안에서만 고른다. 층과 층은 계단과 승강기로만 이어진다.
+      const group = groupByNodeId[a];
+      const reachable = group === undefined ? pool : pool.filter((id) => groupByNodeId[id] === group);
+      const neighbours = nearest(reachable, /** @type {{x:number,y:number}} */ (byId.get(a)), 6, a);
+      if (neighbours.length === 0) continue;
+      const { value: b, state: sb } = pick(state, neighbours);
       state = sb;
       if (tryPlace(a, b)) placed += 1;
     }
@@ -481,12 +458,16 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPair
     const { value: count, state: sCount } = nextInt(state, CROSS_SECTOR_SPECIAL_EDGES_MAX - CROSS_SECTOR_SPECIAL_EDGES_MIN + 1);
     state = sCount;
     const target = count + CROSS_SECTOR_SPECIAL_EDGES_MIN;
+    // 구역과 구역을 잇는 특수 엣지는 서로 마주 본 경계 쪽에서만 난다 — 반대편 끝까지
+    // 가로지르는 줄이 생기지 않도록 상대 구역에 가까운 노드 여덟 개 안에서 고른다.
+    const frontA = nearest(externalIdsBySector[sectorA] || poolA, sectorCentroids[sectorB], 8, '');
+    const frontB = nearest(externalIdsBySector[sectorB] || poolB, sectorCentroids[sectorA], 8, '');
     let placed = 0;
     let attempts = 0;
     while (placed < target && attempts < 60) {
       attempts += 1;
-      const { value: a, state: sa } = pick(state, poolA);
-      const { value: b, state: sb } = pick(sa, poolB);
+      const { value: a, state: sa } = pick(state, frontA);
+      const { value: b, state: sb } = pick(sa, frontB);
       state = sb;
       if (tryPlace(a, b)) placed += 1;
     }
@@ -513,8 +494,8 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPair
     while (placed < longRangeTarget && attempts < 60) {
       attempts += 1;
       const { value: pair, state: sPair } = pick(state, nonAdjacentSectorPairs);
-      const { value: a, state: sa } = pick(sPair, nodeIdsBySector[pair[0]]);
-      const { value: b, state: sb } = pick(sa, nodeIdsBySector[pair[1]]);
+      const { value: a, state: sa } = pick(sPair, externalIdsBySector[pair[0]] || nodeIdsBySector[pair[0]]);
+      const { value: b, state: sb } = pick(sa, externalIdsBySector[pair[1]] || nodeIdsBySector[pair[1]]);
       state = sb;
       if (tryPlace(a, b)) placed += 1;
     }
@@ -528,14 +509,16 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, byId, existingPair
  * @param {string[]} excludeNodeIds
  * @param {import('./rng.js').RngState} rngState
  */
-function placeLandmarks(nodeIdsBySector, excludeNodeIds, rngState) {
+function placeLandmarks(landmarkIdsBySector, nodeIdsBySector, excludeNodeIds, rngState) {
   let state = rngState;
   const excluded = new Set(excludeNodeIds);
   const landmarks = [];
   for (const sectorId of SECTOR_IDS) {
     const def = LANDMARKS_BY_SECTOR[sectorId];
-    const pool = nodeIdsBySector[sectorId].filter((id) => !excluded.has(id));
-    const { value: nodeId, state: next } = pick(state, pool.length > 0 ? pool : nodeIdsBySector[sectorId]);
+    // 후보는 배치 원형이 정한 방들뿐이다(D16). 시작점·탈출구와 겹치면 그것만 뺀다.
+    const candidates = landmarkIdsBySector[sectorId] || nodeIdsBySector[sectorId];
+    const pool = candidates.filter((id) => !excluded.has(id));
+    const { value: nodeId, state: next } = pick(state, pool.length > 0 ? pool : candidates);
     state = next;
     landmarks.push({ id: def.id, nodeId, sectorId, approaches: def.approaches });
   }
@@ -554,14 +537,31 @@ function placeOpportunities(nodes, rngState) {
   const opportunities = [];
   let seq = 0;
   for (const node of nodes) {
-    const { value: count, state: sCount } = weightedPick(state, OPPORTUNITY_COUNT_WEIGHTS);
+    const { value: count, state: sCount } = weightedPick(state, NODE_TYPE_OPPORTUNITY_WEIGHTS[node.type]);
     state = sCount;
     for (let i = 0; i < count; i++) {
       const { value: roll, state: sRoll } = nextFloat(state);
       state = sRoll;
       const { value: uses, state: sUses } = weightedPick(state, OPPORTUNITY_USES_WEIGHTS);
       state = sUses;
-      opportunities.push({ id: `opp${seq++}`, nodeId: node.id, keyEligible: roll < KEY_DROP_CHANCE, usesRemaining: uses });
+      /** @type {import('./types.js').Opportunity} */
+      const opportunity = { id: `opp${seq++}`, nodeId: node.id, keyEligible: roll < KEY_DROP_CHANCE, usesRemaining: uses, grade: 'supply' };
+
+      // 확보 대상 승격(§5단계, D10) — 중요한 방일수록 확률이 높다. 지점마다 독립적으로
+      // 굴리므로 한 구역의 확보 대상이 전부 같은 축일 수도 있고, 그러면 그 구역은 그만큼
+      // 갈 이유가 줄어든다(축은 정찰로 보인다).
+      const { value: prizeRoll, state: sPrize } = nextFloat(state);
+      state = sPrize;
+      if (prizeRoll < PRIZE_PROMOTION_CHANCE_BY_NODE_TYPE[node.type]) {
+        const { value: tier, state: sTier } = weightedPick(state, PRIZE_TIER_WEIGHTS);
+        state = sTier;
+        const { value: axis, state: sAxis } = weightedPick(state, PRIZE_AXIS_WEIGHTS);
+        state = sAxis;
+        opportunity.grade = 'prize';
+        opportunity.tier = tier;
+        opportunity.axis = axis;
+      }
+      opportunities.push(opportunity);
     }
   }
   return { opportunities, rngState: state };
@@ -579,7 +579,7 @@ function placeConcealment(nodes, rngState) {
   /** @type {Record<string, 1|2|3>} */
   const concealmentByNodeId = {};
   for (const node of nodes) {
-    const { value, state: sValue } = weightedPick(state, CONCEALMENT_NODE_WEIGHTS);
+    const { value, state: sValue } = weightedPick(state, NODE_TYPE_CONCEALMENT_WEIGHTS[node.type]);
     state = sValue;
     if (value > 0) concealmentByNodeId[node.id] = /** @type {1|2|3} */ (value);
   }
@@ -637,10 +637,14 @@ function placeGenerators(nodeIdsBySector, rngState) {
  */
 function placeThreats(allEdges, nodeIdsBySector, startNodeId, rngState) {
   let state = rngState;
+  // 순찰은 실제로 걸어 다니는 것이므로 잠긴 통로는 길로 치지 않는다. 배치 시점에는 아직 아무
+  // 엣지도 열려 있지 않으므로 구조적으로 열린 엣지만 남긴다 — 이렇게 하지 않으면 순찰 경로에
+  // 자기가 열 수 없는 문(탑 승강기 등)이 끼어 위협이 층을 건너뛴다.
+  const patrolEdges = allEdges.filter((edge) => isEdgeUnlocked(edge));
   // Hop count (not weighted Dijkstra distance) is the right notion of "closeness" here — it's
   // cheap (O(V+E) vs O(V^2)) and this only needs a coarse topological proximity check, not a
   // time-accurate one.
-  const startHops = bfsHopDistances(allEdges, startNodeId);
+  const startHops = bfsHopDistances(patrolEdges, startNodeId);
   const threats = [];
   let seq = 0;
   /** @type {string[]} */
@@ -650,7 +654,7 @@ function placeThreats(allEdges, nodeIdsBySector, startNodeId, rngState) {
     const count = THREAT_COUNT_BY_SECTOR[sectorId];
     /** @type {Map<string, string[]>} */
     const sectorAdjacency = new Map();
-    for (const edge of allEdges) {
+    for (const edge of patrolEdges) {
       const fromSector = edge.from.startsWith(`${sectorId}_`);
       const toSector = edge.to.startsWith(`${sectorId}_`);
       if (!fromSector || !toSector) continue;
@@ -677,7 +681,7 @@ function placeThreats(allEdges, nodeIdsBySector, startNodeId, rngState) {
         state = sCand;
         const hopsFromStart = startHops.get(candidate) ?? Infinity;
         if (hopsFromStart < THREAT_MIN_HOPS_FROM_START) continue;
-        const tooClose = placedAnchors.some((other) => (bfsHopDistances(allEdges, other).get(candidate) ?? Infinity) < THREAT_MIN_HOPS_BETWEEN_MARKERS);
+        const tooClose = placedAnchors.some((other) => (bfsHopDistances(patrolEdges, other).get(candidate) ?? Infinity) < THREAT_MIN_HOPS_BETWEEN_MARKERS);
         if (tooClose) continue;
         anchor = candidate;
       }
@@ -724,11 +728,11 @@ function placeThreats(allEdges, nodeIdsBySector, startNodeId, rngState) {
 function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
   let state = rngState;
 
-  const special = placeSpecialEdges(topology.nodes, topology.edges, topology.nodeIdsBySector, byId, existingPairs, baseDegree, state);
+  const special = placeSpecialEdges(topology.nodes, topology.edges, topology.nodeIdsBySector, topology.externalIdsBySector, topology.groupByNodeId, byId, existingPairs, baseDegree, state);
   state = special.rngState;
 
   const reserved = [topology.startNodeId, ...topology.exits.map((e) => e.nodeId)];
-  const landmarkResult = placeLandmarks(topology.nodeIdsBySector, reserved, state);
+  const landmarkResult = placeLandmarks(topology.landmarkIdsBySector, topology.nodeIdsBySector, reserved, state);
   state = landmarkResult.rngState;
 
   const opportunityResult = placeOpportunities(topology.nodes, state);
@@ -765,7 +769,7 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
 }
 
 /**
- * §4.1: generate the full 240-node facility graph for a seed. Deterministic — same seed always
+ * §4.1: generate the full facility graph for a seed (TOTAL_NODES nodes). Deterministic — same seed always
  * produces the same graph, threats, opportunities, and key-eligible rolls.
  * @param {number} seed
  * @returns {{graph: import('./types.js').FacilityGraph, rngState: import('./rng.js').RngState, usedFallback: boolean}}
