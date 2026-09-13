@@ -63,7 +63,7 @@ export function LoadoutScreen() {
                 return html`
                   ${/* 창고(출격 준비)와 맵이 같은 문장을 써야 한다 — 여기서만 "유효치"를 말하면
                       플레이어는 층계 판정이 그 값으로 이뤄진다고 읽는다(리뷰 B7). */ null}
-                  <${Tooltip} key=${key} width=${240} content=${`${CAPABILITY_LABELS[key]}(${CAPABILITY_KOREAN[key]}) — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다 — 0으로 자르지 않으며, 0 하한이 걸리는 것은 높은 지형 통과 판정뿐입니다. 그 하한을 적용한 값은 ${eff}). 시설맵 화면에서 사용됩니다.`}>
+                  <${Tooltip} key=${key} width=${240} content=${`${CAPABILITY_LABELS[key]}(${CAPABILITY_KOREAN[key]}) — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다 — 0으로 자르지 않습니다. 예외는 고지대 통과 하나로, 지형 판정이라 0 하한을 적용한 값 ${eff}로 층계를 가릅니다). 시설맵 화면에서 사용됩니다.`}>
                     <span class="tag tag-outline" tabIndex="0">${CAPABILITY_SHORT[key]}(${CAPABILITY_KOREAN[key]}) ${raw >= 0 ? '+' : ''}${raw}</span>
                   <//>
                 `;

@@ -227,6 +227,33 @@ test('moving into a threat triggers combat; winning it routes to the reward scre
   assert.equal(s.pendingReward.slots[0].category, 'equipment');
 });
 
+test('DEBUG_WIN_COMBAT는 정상 승리와 같은 자리에 도착한다 — 보상 화면, 시체, 격퇴 처리까지', () => {
+  let s = startLoadout(2);
+  s = equipDefaultLoadout(s);
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const atCombat = driveToNextCombatOrEnd(s);
+  assert.equal(atCombat.currentScreen, 'combat');
+  const threatId = atCombat.combatContext.threatId;
+
+  const debugWon = gameReducer(atCombat, { type: 'DEBUG_WIN_COMBAT' });
+  const played = autoPlayCombat(atCombat);
+
+  assert.equal(debugWon.currentScreen, 'reward');
+  assert.equal(debugWon.currentScreen, played.currentScreen, '정상 승리와 같은 화면으로 간다');
+  assert.equal(debugWon.activeCombatState, null);
+  assert.equal(debugWon.combatContext, null);
+  // 보상 구성은 RNG가 정하므로 정상 승리와 슬롯 수까지 같지는 않다(같은 전투라도 몇 라운드를
+  // 썼는지가 다르다). 같아야 하는 것은 "보상이 같은 규칙으로 생성됐다"는 사실이다.
+  assert.ok(debugWon.pendingReward, '보상이 정상 승리와 같이 생성된다');
+  assert.equal(debugWon.pendingReward.slots[0].category, played.pendingReward.slots[0].category);
+  assert.ok(debugWon.pendingReward.slots.every((slot) => slot.options.length > 0));
+  assert.equal(debugWon.facilityRunState.threats[threatId], undefined, '이긴 위협은 격퇴된다');
+  assert.ok(debugWon.facilityRunState.corpses.some((c) => c.id.includes(threatId)), '그 자리에 시체가 남는다');
+
+  // 전투 화면이 아니거나 이미 끝난 전투에서는 아무 일도 하지 않는다.
+  assert.equal(gameReducer(debugWon, { type: 'DEBUG_WIN_COMBAT' }), debugWon);
+});
+
 test('CONFIRM_REWARDS applies picked options and returns to the map', () => {
   let s = startLoadout(2);
   s = equipDefaultLoadout(s);

@@ -102,6 +102,7 @@ function summarize(command, before) {
       return `PLAY_CARD ${card ? card.defId : command.instanceId}`;
     }
     case 'END_TURN': return 'END_TURN';
+    case 'DEBUG_WIN_COMBAT': return 'DEBUG_WIN_COMBAT (디버그)';
     case 'USE_CONSUMABLE': return `USE_CONSUMABLE ${command.itemId}`;
     case 'SELECT_REWARD': return `SELECT_REWARD ${command.slotKey}:${command.optionIndex}`;
     case 'CONFIRM_REWARDS': return 'CONFIRM_REWARDS';

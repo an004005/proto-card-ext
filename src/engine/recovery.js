@@ -17,7 +17,7 @@ import { applyCapabilityCost } from './runEngine.js';
 import { requireActionCost } from './actionCosts.js';
 import {
   POWER_CUT_DURATION, FALSE_BROADCAST_OVERLOAD, FALSE_BROADCAST_INTENSITY, ADJACENT_SECTOR_IDS,
-  FALSE_BROADCAST_ANY_SECTOR_DECEPTION, FAKE_NOISE_RANGE_BY_DECEPTION, FAKE_NOISE_REQUIREMENT,
+  FALSE_BROADCAST_ANY_SECTOR_DECEPTION, FAKE_NOISE_RANGE_BY_DECEPTION,
   FAKE_NOISE_STRONG_DECEPTION, FAKE_NOISE_INTENSITY, FAKE_NOISE_STRONG_INTENSITY,
 } from '../data/facilityLayout.js';
 import { bfsHopDistances } from './graphUtils.js';
@@ -40,7 +40,8 @@ function interfaceHere(state) {
 }
 
 /**
- * 실효 Deception이 가짜 소음을 심을 수 있는 홉 범위. 자격 미달(1 미만)이면 0이다.
+ * 실효 Deception이 가짜 소음을 심을 수 있는 홉 범위. 요구치(1)에 못 미쳐도 최소 1홉은 남는다 —
+ * 이분 게이트가 아니라 층계이고, 부족분의 대가는 시간으로 받는다(D8).
  * @param {number} effectiveDeception
  * @returns {number}
  */
@@ -67,13 +68,14 @@ export function plantFakeNoise(state, effectiveDeception, targetNodeId) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('fake noise unavailable');
   const target = state.graph.nodes.find((n) => n.id === targetNodeId);
   if (!target) throw new RuleViolation(`unknown node ${targetNodeId}`);
+  // 자격 판정은 사양표 하나가 한다 — 요구치(1) 미달은 잠김이 아니라 더 비싼 시도이고,
+  // 정말 막히는 것은 불가 단계뿐이다. 사거리는 그 위에 얹히는 별개의 축소다.
+  const cost = requireActionCost('fakeNoise', { value: effectiveDeception });
   const range = fakeNoiseRange(effectiveDeception);
-  if (range <= 0) throw new RuleViolation(`deception too low (needs ${FAKE_NOISE_REQUIREMENT}, have ${effectiveDeception})`);
   // 심을 수 있는 거리는 "들리는 거리"와 같은 잣대로 잰다 — 잠긴 문 너머에도 소리는 만들 수 있다.
   const hops = bfsHopDistances(state.graph.edges, state.playerNodeId).get(targetNodeId);
   if (hops === undefined || hops > range) throw new RuleViolation(`${targetNodeId} is out of fake-noise range (${range} hops)`);
 
-  const cost = requireActionCost('fakeNoise', { value: effectiveDeception });
   const intensity = effectiveDeception >= FAKE_NOISE_STRONG_DECEPTION ? FAKE_NOISE_STRONG_INTENSITY : FAKE_NOISE_INTENSITY;
   // 다른 현장 작업과 같다 — 소음은 시작이 아니라 **완료 시각**에 난다.
   return applyCapabilityCost(state, { ...cost, duration: null }, undefined, 'fakeNoise', { targetNodeId, intensity });

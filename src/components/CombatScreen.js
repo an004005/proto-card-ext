@@ -155,6 +155,19 @@ export function CombatScreen() {
             <//>
           `;
         })}
+        ${/* 디버그: 정상 승리와 같은 처리 경로(checkWinLoss -> finalizeIfCombatEnded)를 타므로
+              보상·시체·라운드 정산이 실제 승리와 동일하게 일어난다. */ null}
+        <${Tooltip} width=${230} content="디버그: 살아 있는 적을 전부 쓰러뜨린 것으로 치고 정상 승리 처리(보상 생성·시체 남기기·라운드 정산)를 그대로 진행합니다.">
+          <button
+            class="btn btn-secondary"
+            style=${{
+              fontSize: '11px', fontWeight: 800, padding: '4px 10px', letterSpacing: '0.03em',
+              borderColor: 'var(--color-accent-2-700)', color: 'var(--color-accent-2-700)',
+            }}
+            disabled=${playbackActive}
+            onClick=${() => dispatch({ type: 'DEBUG_WIN_COMBAT' })}
+          >DEBUG 즉시 승리</button>
+        <//>
         ${disengage ? html`
           <div style=${{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginLeft: 'auto', fontSize: '11px' }}>
             ${disengage.escapeIntent

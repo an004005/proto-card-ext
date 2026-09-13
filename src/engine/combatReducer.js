@@ -207,6 +207,25 @@ export function playCardCommand(snapshot, instanceId, targetId) {
   return endRunIfCollapsed(finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, combatContext, facilityRunState }));
 }
 
+/**
+ * 디버그 전용 — 지금 살아 있는 적을 전부 쓰러뜨린 것으로 치고 **정상 승리와 같은 길**로 보낸다.
+ *
+ * 승리 처리(보상 생성·시체 남기기·라운드 정산·붕괴 우선)를 여기서 다시 쓰지 않는 것이 요점이다.
+ * 카드로 마지막 적을 잡았을 때와 똑같이 checkWinLoss -> finalizeIfCombatEnded를 지나므로, 이
+ * 버튼으로 도달한 상태와 실제로 이겨서 도달한 상태가 갈라질 수 없다.
+ * @param {GameSnapshot} snapshot @returns {GameSnapshot}
+ */
+export function debugWinCombatCommand(snapshot) {
+  if (snapshot.currentScreen !== 'combat' || !snapshot.activeCombatState) return snapshot;
+  const combat = snapshot.activeCombatState;
+  // 이미 끝난 전투에는 쓰지 않는다 — 승리·패배 화면 전환은 한 번뿐이어야 한다.
+  if (combat.phase === 'victory' || combat.phase === 'defeat') return snapshot;
+  const enemies = combat.enemies.map((e) => (e.hp > 0 ? { ...e, hp: 0, block: 0 } : e));
+  return endRunIfCollapsed(finalizeIfCombatEnded({
+    ...snapshot, activeCombatState: checkWinLoss({ ...combat, enemies }),
+  }));
+}
+
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function endTurnCommand(snapshot) {
   if (!snapshot.activeCombatState || !snapshot.combatContext || !snapshot.facilityRunState) return snapshot;

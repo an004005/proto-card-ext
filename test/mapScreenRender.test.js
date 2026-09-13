@@ -22,7 +22,7 @@ const { snapshotSignal, historySignal } = await import(projectUrl('../src/state/
 const { createHistory } = await import(projectUrl('../src/engine/historyEngine.js'));
 const { MapScreen } = await import(projectUrl('../src/components/MapScreen.js'));
 
-function snapshotOf(run) {
+function snapshotOf(run, loadoutOverride = null) {
   return {
     currentScreen: 'map',
     rngState: run.rngState,
@@ -34,7 +34,7 @@ function snapshotOf(run) {
     offeredContracts: null,
     activeContract: null,
     playerState: {
-      hp: 50, maxHp: 50, overload: 0, loadout: { consumableSlots: [], weapons: [], modules: [], implants: [] },
+      hp: 50, maxHp: 50, overload: 0, loadout: { consumableSlots: [], weapons: [], modules: [], implants: [], ...(loadoutOverride || {}) },
       inventory: { items: [], ammo: 0, capacity: 12 }, warehouse: { items: [], ammo: 0, capacity: 99 },
     },
   };
@@ -42,8 +42,8 @@ function snapshotOf(run) {
 
 /** 화면을 그리고 트리를 돌려준다 — 글자만이 아니라 버튼을 실제로 눌러 볼 수 있어야 한다.
  * dispatch는 historySignal에서 현재 스냅샷을 읽으므로 둘을 함께 세운다. */
-function mountMap(run) {
-  const snapshot = snapshotOf(run);
+function mountMap(run, loadoutOverride = null) {
+  const snapshot = snapshotOf(run, loadoutOverride);
   snapshotSignal.value = snapshot;
   historySignal.value = createHistory(snapshot);
   const root = makeRoot();
@@ -169,6 +169,45 @@ test('작업 중단·조우·교전 상태가 모두 채워져 있어도 지도 
   assert.ok(text.includes('6칸 전'), '카메라 발각 표기는 칸 단위여야 한다');
   assert.ok(text.includes('다음 이동까지 3칸'), '관측 중인 위협의 다음 이동이 보여야 한다');
   assert.ok(!/[a-z]+_[0-9a-z]{2,}/.test(text.replace(/[A-Za-z]+_[0-9a-z]*칸/g, '')), '노드 id가 화면에 그대로 노출됐다');
+});
+
+test('고지대 통로는 잠긴 길이 아니라 "부족분만큼 HP"로 예고된다', async () => {
+  // 예전에는 "Mobility 3 필요"만 적혀 있어서 2인 빌드에게는 없는 길로 보였다. 층계 이후로는
+  // 넘을 수 있고, 그 값이 누르기 전에 보여야 선택이 된다.
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const edge = base.graph.edges.find((e) => e.from === base.playerNodeId || e.to === base.playerNodeId);
+  const neighbor = edge.from === base.playerNodeId ? edge.to : edge.from;
+  const run = {
+    ...base,
+    graph: { ...base.graph, edges: base.graph.edges.map((e) => (e.id === edge.id ? { ...e, features: ['highGround'] } : e)) },
+    threats: {},
+  };
+
+  /** 그 이웃 노드를 골라 선택 패널을 연다 — 이동 예고는 거기에 적힌다. */
+  async function selectNeighbor(root) {
+    for (const hit of queryAll(root, (node) => node.localName === 'circle' && node.getAttribute('tabindex') === '-1')) {
+      fire(hit, 'click');
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+      if (findByText(root, 'button', '이 노드로 이동')) return true;
+    }
+    return false;
+  }
+
+  // 기본 로드아웃은 Mobility 0이라 불가다 — 그 사실을 "필요"가 아니라 기준·현재 값으로 적는다.
+  const bare = mountMap(run);
+  assert.ok(await selectNeighbor(bare), `이웃 ${neighbor}을 고를 수 있어야 한다`);
+  assert.ok(bare.textContent.includes('고지대 — Mobility 3 기준'), '고지대 기준이 선택 패널에 적혀야 한다');
+  assert.ok(bare.textContent.includes('통과 불가'), 'Mobility 0은 불가 구간이다');
+  assert.ok(!bare.textContent.includes('Mobility 3 필요'), '이분 게이트 시절의 문구가 남아 있다');
+  assert.equal(findByText(bare, 'button', '이 노드로 이동').getAttribute('disabled'), 'true', '불가 구간에서는 이동이 잠긴다');
+
+  // Mobility 2(무리)면 부족분 1만큼 HP를 치르고 넘는다는 예고가 그 자리에 나오고, 버튼이 열린다.
+  const strained = mountMap(run, { modules: [{ id: 'm1', equipmentId: 'module_sandevistan' }] });
+  assert.ok(await selectNeighbor(strained));
+  assert.ok(strained.textContent.includes('현재 부족분 1: HP −3'), '부족분과 HP 대가가 보여야 한다');
+  assert.ok(!strained.textContent.includes('통과 불가'), '넘을 수 있는데 불가라고 적혀 있다');
+  assert.equal(findByText(strained, 'button', '이 노드로 이동').getAttribute('disabled'), null, '무리 단계 이동이 잠겨 있다');
 });
 
 test('그려진 화면에는 포인트 시절의 세 자리 시간 숫자가 없다', () => {

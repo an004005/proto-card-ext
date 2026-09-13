@@ -34,7 +34,8 @@ import {
   MOBILITY_MOVE_TIME_DELTA, MOVE_MIN_TIME,
   GENERATOR_HACK_TIME, GENERATOR_HACK_OVERLOAD, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
   CONCEALMENT_ACTION_TIME_COST, HALL_STEALTH_PENALTY, CONTROL_ROOM_HACK_TIME, CONTROL_ROOM_HACK_OVERLOAD,
-  STEALTH_CONTEXT_CAMERA, STEALTH_CONTEXT_POWER_CUT, STEALTH_CONTEXT_LOCKDOWN, ENCOUNTER_DECEIVE_REQUIREMENT,
+  STEALTH_CONTEXT_CAMERA, STEALTH_CONTEXT_POWER_CUT, STEALTH_CONTEXT_LOCKDOWN,
+  ENCOUNTER_DECEIVE_REQUIREMENT, ENCOUNTER_DECEIVE_STEP_PENALTY, HIGH_GROUND_MOBILITY_REQUIREMENT,
   PURSUIT_DECAY_TICKS, INVESTIGATE_DECAY_TICKS, PURSUIT_DECAY_ALERT,
   CONTRACT_ACQUIRE_TIME, CONTRACT_ACQUIRE_OVERLOAD, CONTRACT_DESTROY_TIME, CONTRACT_DESTROY_OVERLOAD,
   CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD, LOCKDOWN_EXIT_CLOSE_WINDOW,
@@ -544,8 +545,13 @@ export function reportSighting(state, threatId, playerNodeId) {
  * "추적을 끊는" 것이라면 이것은 "추적을 다른 곳으로 보내는" 것이다 — 위협은 여전히 켜져 있고,
  * 그래서 0칸이어도 회피의 상위 호환이 아니다.
  *
- * 판정은 결정적이다: Deception이 그 위협의 경계 수치 이상이면 성공, 아니면 실패다. 실패하면
- * 동률이 열세로 내려간다 — 속이려다 들킨 셈이다.
+ * 판정은 결정적이다: Deception이 그 위협의 경계 수치(+ 층계 벌점) 이상이면 성공, 아니면
+ * 실패다. 실패하면 동률이 열세로 내려간다 — 속이려다 들킨 셈이다.
+ *
+ * 요구치 2는 이분 게이트가 아니라 층계다(D8). 0칸짜리 행동이라 시간으로 받을 대가가 없으므로
+ * 대가를 판정 자체에 붙인다(ENCOUNTER_DECEIVE_STEP_PENALTY): 무리(Deception 1)는 성공 기준이
+ * 1 높아지고, 위태(0)는 거기에 더해 시도 자체가 들통나 그 위협의 경계가 1 오른다. 불가(-1
+ * 이하)만 예전처럼 막힌다.
  *
  * 위협당 한 번뿐이다(`deceivedThreatIds`). 그러지 않으면 0칸짜리 무한 재시도가 된다.
  * @param {import('./types.js').FacilityRunState} state
@@ -556,15 +562,25 @@ export function reportSighting(state, threatId, playerNodeId) {
 export function deceiveThreat(state, threatId, effectiveDeception) {
   const threat = state.threats[threatId];
   if (!threat) throw new RuleViolation(`unknown threat ${threatId}`);
-  if (effectiveDeception < ENCOUNTER_DECEIVE_REQUIREMENT) {
-    throw new RuleViolation(`deception too low (needs ${ENCOUNTER_DECEIVE_REQUIREMENT}, have ${effectiveDeception})`);
-  }
   if ((state.deceivedThreatIds || []).includes(threatId)) throw new RuleViolation('this threat has already been deceived once');
+  // 불가 단계면 여기서 던진다 — 사양표를 거치므로 화면의 예고와 같은 판정이다.
+  requireActionCost('encounterDeceive', { value: effectiveDeception });
+  const penalty = ENCOUNTER_DECEIVE_STEP_PENALTY[capabilityStep(effectiveDeception, ENCOUNTER_DECEIVE_REQUIREMENT)];
 
   const used = [...(state.deceivedThreatIds || []), threatId];
-  if (effectiveDeception < threat.alert) {
+  const success = effectiveDeception >= threat.alert + penalty.successPenalty;
+  // 위태 단계는 성공하든 실패하든 그 위협의 경계가 오른다 — 어설픈 수작은 그 자체로 신호다.
+  const alerted = penalty.raisesThreatAlert ? Math.min(3, threat.alert + 1) : threat.alert;
+  if (!success) {
     // 실패도 한 번을 쓴다 — 실패한 뒤 수치를 바꿀 방법이 런 중에는 없으므로 재시도는 의미가 없다.
-    return { state: { ...state, deceivedThreatIds: used }, success: false };
+    return {
+      state: {
+        ...state,
+        deceivedThreatIds: used,
+        threats: { ...state.threats, [threatId]: { ...threat, alert: alerted } },
+      },
+      success: false,
+    };
   }
 
   // 내가 선 자리 말고 인접한 다른 노드 하나로 시선을 던진다. 갈 수 있는 통로로만 던져야
@@ -575,7 +591,16 @@ export function deceiveThreat(state, threatId, effectiveDeception) {
     .map((e) => (e.from === playerNodeId ? e.to : e.from))
     .filter((nodeId) => nodeId !== threat.nodeId);
   const decoyNodeId = decoys[0] ?? null;
-  if (!decoyNodeId) return { state: { ...state, deceivedThreatIds: used }, success: false };
+  if (!decoyNodeId) {
+    return {
+      state: {
+        ...state,
+        deceivedThreatIds: used,
+        threats: { ...state.threats, [threatId]: { ...threat, alert: alerted } },
+      },
+      success: false,
+    };
+  }
 
   return {
     state: {
@@ -585,6 +610,7 @@ export function deceiveThreat(state, threatId, effectiveDeception) {
         ...state.threats,
         [threatId]: {
           ...threat,
+          alert: alerted,
           mode: 'pursuit',
           lastKnownPlayerNodeId: decoyNodeId,
           // 속인 순간부터 감쇠 타이머가 다시 돈다 — 엉뚱한 자리를 향해 걷다 6칸이면 조사로 내려온다.
@@ -1625,8 +1651,22 @@ function pruneIgnoredThreats(state) {
 function isEdgeTraversable(state, edge, fromId, effectiveMobility = 0) {
   if (edge.features.includes('oneWay') && edge.from !== fromId) return false;
   if (!isEdgeUnlocked(edge, state.openedEdgeIds)) return false;
-  if (edge.features.includes('highGround') && effectiveForRequirement(effectiveMobility) < 3) return false;
+  // 고지대도 다른 요구치와 같은 층계다(D8) — 모자란 채로 넘을 수 있고 대신 HP를 치른다.
+  // 정말 막히는 것은 불가 단계(요구치 3에 대해 0 이하)뿐이다.
+  if (edge.features.includes('highGround')
+    && capabilityStep(highGroundMobility(effectiveMobility), HIGH_GROUND_MOBILITY_REQUIREMENT) === 'impossible') return false;
   return true;
+}
+
+/**
+ * 고지대 층계 판정에 쓰는 실효 Mobility. 지형 판정은 구현 명세 §3.2의 0 하한을 그대로 쓰므로
+ * Capability 하한(-2)까지 내려간 빌드도 0과 같은 취급을 받는다 — 어느 쪽이든 요구치 3에서는
+ * 불가지만, 화면이 적는 "현재 값"과 엔진의 판정값이 갈라지지 않도록 한 곳에서만 자른다.
+ * @param {number} effectiveMobility
+ * @returns {number}
+ */
+export function highGroundMobility(effectiveMobility) {
+  return effectiveForRequirement(effectiveMobility);
 }
 
 /** Public UI/test predicate for an edge from the player's current node. */
@@ -1700,12 +1740,20 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
   });
   if (!traversedEdge) throw new RuleViolation(`${destinationNodeId} is not currently reachable from ${state.playerNodeId}`);
 
+  // 고지대는 요구치 3짜리 층계 행동이다(D8). 시간은 이동의 전용 규칙이 이미 청구하므로
+  // 여기서 받는 것은 Mobility의 통화인 HP뿐이다. 불가면 위 isEdgeTraversable이 이미 걸렀다.
+  const highGroundCost = traversedEdge.features.includes('highGround')
+    ? requireActionCost('traverseHighGround', { edge: traversedEdge, value: highGroundMobility(effectiveMobility) })
+    : null;
+
   const visitedNodeIds = state.visitedNodeIds.includes(destinationNodeId)
     ? state.visitedNodeIds
     : [...state.visitedNodeIds, destinationNodeId];
   // 자리를 뜨면 고르지 않은 확보 대상 후보는 사라진다 — 파밍한 자리에서 결정하지 않으면
   // 가져갈 수 없다. 열린 채로 남겨두면 4단계의 "떠난 조우가 남아 소프트락"과 같은 모양이 된다.
   let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null, activeConcealment: null, encounter: null, pendingFarmChoice: null, lastWaitEndedAt: /** @type {number|null} */ (null) };
+  // 다른 층계 대가와 같은 자리로 보낸다 — facilityReducer의 공통 래퍼가 playerState에서 정산한다.
+  if (highGroundCost?.hpCost) moved = { ...moved, pendingHpLoss: (moved.pendingHpLoss || 0) + highGroundCost.hpCost };
   moved = applyCameraDetection(moved, destinationNodeId, effectiveStealth);
   const stealthIndex = Math.max(-2, Math.min(4, effectiveStealth)) + 2;
   const movementNoise = [3, 2, 1, 0, 0, 0, 0][stealthIndex];

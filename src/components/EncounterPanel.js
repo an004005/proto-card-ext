@@ -8,9 +8,10 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { computeThreatPerception, explainEffectiveStealth, describeThreatDecay } from '../engine/runEngine.js';
-import { actionTimeCost } from '../engine/actionCosts.js';
+import { actionTimeCost, forecastAction } from '../engine/actionCosts.js';
 import { MONSTER_DEFINITIONS } from '../data/monsters.js';
-import { ENCOUNTER_DECEIVE_REQUIREMENT } from '../data/facilityLayout.js';
+import { ENCOUNTER_DECEIVE_STEP_PENALTY } from '../data/facilityLayout.js';
+import { ladderNote, StepBadge } from './ladderDisplay.js';
 
 const THREAT_MODE_LABELS = { patrol: '순찰', investigate: '조사', alert: '경계', pursuit: '추적', exit_guard: '출구 경계' };
 
@@ -62,17 +63,30 @@ export function EncounterPanel({ run, capabilities }) {
   const decay = describeThreatDecay(run, threat);
   // 조우 속이기(D) — 회피 대신 고르는 0칸짜리 선택지. 위협당 한 번뿐이고, 성공 여부는
   // 지금 이 자리에서 이미 정해져 있다(Deception >= 그 위협의 경계). 그 예고를 그대로 적는다.
+  //
+  // 요구치 2는 이분 게이트가 아니라 층계다(D8) — 모자란 채로도 시도할 수 있고, 대신 0칸짜리
+  // 행동이라 시간 대신 판정 자체가 불리해진다(ENCOUNTER_DECEIVE_STEP_PENALTY).
   const deception = capabilities.deception ?? 0;
   const deceiveUsed = (run.deceivedThreatIds || []).includes(threat.id);
-  const canDeceive = deception >= ENCOUNTER_DECEIVE_REQUIREMENT && !deceiveUsed;
-  const deceiveWouldWork = deception >= threat.alert;
+  const deceiveForecast = forecastAction('encounterDeceive', { value: deception });
+  const penalty = ENCOUNTER_DECEIVE_STEP_PENALTY[deceiveForecast.step] || { successPenalty: 0, raisesThreatAlert: false };
+  const penaltyText = deceiveForecast.blocked ? '' : [
+    penalty.successPenalty ? `성공 기준 +${penalty.successPenalty}` : '',
+    penalty.raisesThreatAlert ? '시도 자체로 이 위협의 경계 +1' : '',
+  ].filter(Boolean).join(' · ');
+  const deceiveLadder = ladderNote(deceiveForecast, penaltyText);
+  const canDeceive = !deceiveForecast.blocked && !deceiveUsed;
+  // 성공 기준은 그 위협의 경계에 층계 벌점을 더한 값이다 — 엔진의 deceiveThreat와 같은 식.
+  const deceiveBar = threat.alert + penalty.successPenalty;
+  const deceiveWouldWork = deception >= deceiveBar;
   const deceiveTip = deceiveUsed
     ? '이 위협은 이미 한 번 속였습니다 — 같은 수는 두 번 통하지 않습니다.'
-    : deception < ENCOUNTER_DECEIVE_REQUIREMENT
-      ? `Deception ${ENCOUNTER_DECEIVE_REQUIREMENT} 이상이 필요합니다 (현재 ${deception}).`
-      : deceiveWouldWork
-        ? `성공합니다 — Deception ${deception} ≥ 이 위협의 경계 ${threat.alert}. 추적은 유지되지만 목표가 옆 노드로 옮겨갑니다.`
-        : `실패합니다 — Deception ${deception} < 이 위협의 경계 ${threat.alert}. 속이려다 들켜 열세로 내려갑니다.`;
+    : deceiveForecast.blocked
+      ? `${deceiveLadder?.note ?? ''}.`
+      : `${deceiveWouldWork
+        ? `성공합니다 — Deception ${deception} ≥ 성공 기준 ${deceiveBar}. 추적은 유지되지만 목표가 옆 노드로 옮겨갑니다.`
+        : `실패합니다 — Deception ${deception} < 성공 기준 ${deceiveBar}. 속이려다 들켜 열세로 내려갑니다.`}${
+        penaltyText ? ` 층계 ${deceiveLadder?.label} — ${penaltyText}(성공 기준은 이 위협의 경계 ${threat.alert}에 벌점을 더한 값입니다).` : ''}`;
   const opSymbol = stealth > perception ? '>' : stealth === perception ? '=' : '<';
   const info = TIER_INFO[encounter.tier];
   // 열세는 버튼이 하나도 없는 안내문이라 지도를 계속 가린다 — 읽은 뒤에는 접을 수 있어야 한다.
@@ -123,7 +137,7 @@ export function EncounterPanel({ run, capabilities }) {
           <button class="btn btn-secondary" style=${{ width: '100%' }} disabled=${!canDeceive}
             title=${deceiveTip}
             onClick=${() => dispatch({ type: 'ENCOUNTER_DECEIVE' })}>
-            속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})
+            속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})${canDeceive && deceiveLadder && deceiveLadder.step !== 'standard' ? html` <${StepBadge} ladder=${deceiveLadder} />` : null}
           </button>
           <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-2px' }}>${deceiveTip}</div>
         </div>
@@ -137,7 +151,7 @@ export function EncounterPanel({ run, capabilities }) {
           <button class="btn btn-secondary" style=${{ width: '100%' }} disabled=${!canDeceive}
             title=${deceiveTip}
             onClick=${() => dispatch({ type: 'ENCOUNTER_DECEIVE' })}>
-            속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})
+            속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})${canDeceive && deceiveLadder && deceiveLadder.step !== 'standard' ? html` <${StepBadge} ladder=${deceiveLadder} />` : null}
           </button>
           <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-2px' }}>${deceiveTip}</div>
         </div>

@@ -25,14 +25,15 @@ function nodeAtHops(run, hops) {
 
 // ---- 가짜 소음 ----
 
-test('가짜 소음의 사거리는 Deception이 정한다 — 1 미만은 아예 쓸 수 없다', () => {
-  assert.equal(fakeNoiseRange(-2), 0);
-  assert.equal(fakeNoiseRange(0), 0);
+test('가짜 소음의 사거리는 Deception이 정한다 — 요구치 미달은 1홉으로 주저앉을 뿐 잠기지 않는다', () => {
+  assert.equal(fakeNoiseRange(-2), 0, '불가 구간은 조회될 일이 없다 — 사양표가 먼저 막는다');
+  assert.equal(fakeNoiseRange(-1), 1);
+  assert.equal(fakeNoiseRange(0), 1);
   assert.equal(fakeNoiseRange(1), 1);
   assert.equal(fakeNoiseRange(2), 2);
   assert.equal(fakeNoiseRange(3), 3);
   assert.equal(fakeNoiseRange(4), 3);
-  assert.deepEqual(FAKE_NOISE_RANGE_BY_DECEPTION, [0, 0, 0, 1, 2, 3, 3]);
+  assert.deepEqual(FAKE_NOISE_RANGE_BY_DECEPTION, [0, 1, 1, 1, 2, 3, 3]);
 });
 
 test('가짜 소음은 3칸이고, 예고와 청구가 같은 사양표에서 나온다', () => {
@@ -46,9 +47,12 @@ test('가짜 소음은 3칸이고, 예고와 청구가 같은 사양표에서 �
   assert.equal(planted.overload - run.overload, forecast.overload, '예고한 과부화가 그대로 청구된다');
 });
 
-test('가짜 소음은 사거리 안의 노드에만 심을 수 있다', () => {
+test('가짜 소음은 사거리 안의 노드에만 심을 수 있다 — 요구치 미달은 층계로 더 비싸게 심는다', () => {
   const run = quietRun(1);
-  assert.throws(() => plantFakeNoise(run, 0, nodeAtHops(run, 1)), /deception too low/);
+  const strained = plantFakeNoise(run, 0, nodeAtHops(run, 1));
+  assert.ok(strained.time - run.time > FAKE_NOISE_TIME, 'Deception 0(무리)은 시간을 더 쓴다');
+  assert.throws(() => plantFakeNoise(run, 0, nodeAtHops(run, 2)), /out of fake-noise range/);
+  assert.throws(() => plantFakeNoise(run, -2, nodeAtHops(run, 1)), /too low/, '불가 구간만 막힌다');
   assert.throws(() => plantFakeNoise(run, 1, nodeAtHops(run, 2)), /out of fake-noise range/);
   assert.ok(plantFakeNoise(run, 2, nodeAtHops(run, 2)));
   assert.ok(plantFakeNoise(run, 3, nodeAtHops(run, 3)));
@@ -88,13 +92,34 @@ function runWithThreatHere(seed = 1) {
   };
 }
 
-test('조우 속이기는 Deception 2 이상이어야 하고 위협당 한 번뿐이다', () => {
+test('조우 속이기는 Deception 2가 표준이고 위협당 한 번뿐이다 — 미달은 잠김이 아니라 층계다', () => {
   const { run, threatId } = runWithThreatHere();
-  assert.throws(() => deceiveThreat(run, threatId, ENCOUNTER_DECEIVE_REQUIREMENT - 1), /deception too low/);
+  // 요구치 2에서 불가 구간은 -1 이하다. 1(무리)과 0(위태)은 대가를 치르고 시도할 수 있다.
+  assert.throws(() => deceiveThreat(run, threatId, ENCOUNTER_DECEIVE_REQUIREMENT - 3), /too low/);
+  assert.ok(deceiveThreat(run, threatId, ENCOUNTER_DECEIVE_REQUIREMENT - 1).state);
 
   const once = deceiveThreat(run, threatId, 2).state;
   assert.deepEqual(once.deceivedThreatIds, [threatId]);
   assert.throws(() => deceiveThreat(once, threatId, 4), /already been deceived/);
+});
+
+test('요구치 미달의 대가는 판정 자체에 붙는다 — 무리는 성공 기준 +1, 위태는 거기에 경계 +1', () => {
+  const { run, threatId } = runWithThreatHere();
+  assert.equal(run.threats[threatId].alert, 2, '이 고정 위협의 경계는 2다');
+
+  // 무리(Deception 1): 성공 기준이 경계 2 + 벌점 1 = 3이라 1로는 실패한다.
+  const strained = deceiveThreat(run, threatId, 1);
+  assert.equal(strained.success, false);
+  assert.equal(strained.state.threats[threatId].alert, 2, '무리 단계는 경계를 올리지 않는다');
+
+  // 위태(Deception 0): 실패하는 데다 시도 자체가 들통나 경계가 1 오른다.
+  const severe = deceiveThreat(run, threatId, 0);
+  assert.equal(severe.success, false);
+  assert.equal(severe.state.threats[threatId].alert, 3, '위태 단계는 시도만으로 경계가 오른다');
+
+  // 경계가 낮은 위협이라면 무리 단계로도 성공할 수 있다 — 벌점은 기준을 1 올릴 뿐이다.
+  const calm = { ...run, threats: { [threatId]: { ...run.threats[threatId], alert: 0 } } };
+  assert.equal(deceiveThreat(calm, threatId, 1).success, true);
 });
 
 test('성공 판정은 결정적이다 — Deception이 그 위협의 경계 이상이면 성공', () => {
