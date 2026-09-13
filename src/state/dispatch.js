@@ -7,6 +7,7 @@ import {
 import { gameReducer } from '../engine/gameReducer.js';
 import { historySignal, snapshotSignal, combatAnimationSignal, combatPlaybackDurationSignal, combatPlaybackActiveSignal } from './runState.js';
 import { buildCombatTimeline } from './combatTimeline.js';
+import { resetMapView } from './mapViewState.js';
 
 let playbackTimer = null;
 let playbackActive = false;
@@ -124,6 +125,12 @@ export function dispatch(command) {
     queuedCombatCommands.push(command);
     return;
   }
+
+  // 지도 카메라(팬·줌)는 화면 상태라 스냅샷에 없다 — 그래서 런이 바뀔 때 누군가는 명시적으로
+  // 되돌려야 한다. 그 자리는 여기 둘뿐이다: NEW_RUN은 게임 전체를 헐고, CONFIRM_LOADOUT은
+  // 새 시설 그래프를 만든다(loadoutReducer.confirmLoadout → createRunState). 둘 다 이전 런의
+  // 좌표가 의미를 잃는 순간이므로 둘 다에서 되돌린다.
+  if (command.type === 'NEW_RUN' || command.type === 'CONFIRM_LOADOUT') resetMapView();
 
   if (command.type === 'NEW_RUN') {
     stopPlayback(true);

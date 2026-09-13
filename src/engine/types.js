@@ -274,6 +274,21 @@
  * @property {1|2|3} [concealment] 정찰로 읽어낸 은엄폐 등급(Perception 2 이상).
  * @property {Record<string, {tier: 'normal'|'elite', axis: string|null}>} [opportunityGrades] 정찰로 읽어낸 확보 대상 등급(Perception 0 이상)과 역할축(1 이상, 그 전에는 null).
  * @property {{threatId: string, size: number, mode: string, monsterIds?: string[]}} [threat] 그 시각에 본 위협의 규모·모드(구성은 정찰로만).
+ * @property {NodeContents} [contents] 그 노드에 **무엇이 놓여 있는가**. 관측이 닿으면 Perception과
+ *   무관하게 전부 적힌다 — 깊이(detailLevel)가 가르는 것은 위협 상세·확보 대상 등급·은엄폐 값뿐이다.
+ */
+
+/**
+ * @typedef {Object} ObservedDevice
+ * @property {'camera'|'interface'|'generator'} kind
+ * @property {string} id
+ * @property {'active'|'hacked'|'destroyed'} status 관측 시점의 상태.
+ */
+
+/**
+ * @typedef {Object} NodeContents
+ * @property {{id: string, grade: 'supply'|'prize', usesRemaining: number}[]} opportunities 남아 있는 현장 기회.
+ * @property {ObservedDevice[]} devices 그 노드의 장치.
  */
 
 /**

@@ -313,6 +313,8 @@ export function refreshLocalObservations(run, effectivePerception = 0) {
       exitStatus: exit?.kind === 'standard' ? exit.status : undefined,
       // 무료 인접 관측의 깊이는 Perception과 무관하게 고정이다 — 유무와 규모까지.
       detailLevel: FREE_OBSERVATION_DETAIL_LEVEL,
+      // 내용물(현장 기회·장치)은 깊이와 무관하게 관측이 닿으면 기록된다.
+      contents: nodeContentsAt(run, nodeId),
     });
   }
   return { ...run, observations };
@@ -390,10 +392,46 @@ export function refreshActiveRecon(run) {
       exitStatus: exit?.kind === 'standard' ? exit.status : undefined,
       concealment: detailIncludes(detailLevel, 'concealment') ? run.graph.concealmentByNodeId[nodeId] : undefined,
       detailLevel,
+      // 내용물은 Perception과 무관하다 — 정찰이 닿은 노드는 무엇이 놓여 있는지 전부 적는다.
+      contents: nodeContentsAt(run, nodeId),
       ...observedPrizeGrades(run, nodeId, detailLevel),
     });
   }
   return { ...run, observations };
+}
+
+/**
+ * 그 노드의 **내용물** — 어떤 현장 기회와 장치가 있는가. 관측(무료 인접·정찰·해킹한 카메라)이
+ * 닿기만 하면 Perception과 무관하게 전부 적힌다. Perception이 가르는 것은 그 다음의 **깊이**다:
+ * 위협의 상세, 확보 대상의 등급·역할축, 은엄폐 값. "방 안에 무엇이 놓여 있는가"까지 지각 수치로
+ * 가리면 정찰이 사는 것이 무엇인지 플레이어가 읽을 수 없다.
+ *
+ * 장치 상태(status)는 그 시각의 값이다 — 기록이 "마지막으로 확인한 것"이라는 결을 지킨다.
+ * @param {import('./types.js').FacilityRunState} run
+ * @param {string} nodeId
+ * @returns {import('./types.js').NodeContents}
+ */
+export function nodeContentsAt(run, nodeId) {
+  const opportunities = run.graph.opportunities
+    .filter((opportunity) => opportunity.nodeId === nodeId && opportunity.usesRemaining > 0)
+    .map((opportunity) => ({ id: opportunity.id, grade: opportunity.grade, usesRemaining: opportunity.usesRemaining }));
+  /** @type {import('./types.js').ObservedDevice[]} */
+  const devices = [];
+  for (const camera of run.graph.cameras) {
+    if (camera.nodeId !== nodeId) continue;
+    const status = (run.disabledCameraIds || []).includes(camera.id) ? 'destroyed'
+      : (isCameraHackActive(run, camera.id) ? 'hacked' : 'active');
+    devices.push({ kind: 'camera', id: camera.id, status });
+  }
+  for (const entry of run.graph.accessInterfaces) {
+    if (entry.nodeId !== nodeId) continue;
+    devices.push({ kind: 'interface', id: entry.id, status: (run.hackedInterfaceIds || []).includes(entry.id) ? 'hacked' : 'active' });
+  }
+  for (const generator of run.graph.generators || []) {
+    if (generator.nodeId !== nodeId) continue;
+    devices.push({ kind: 'generator', id: generator.id, status: (run.disabledGeneratorIds || []).includes(generator.id) ? 'destroyed' : 'active' });
+  }
+  return { opportunities, devices };
 }
 
 /**

@@ -21,6 +21,7 @@ const { render, html } = await import(projectUrl('../src/lib.js'));
 const { snapshotSignal, historySignal } = await import(projectUrl('../src/state/runState.js'));
 const { createHistory } = await import(projectUrl('../src/engine/historyEngine.js'));
 const { MapScreen } = await import(projectUrl('../src/components/MapScreen.js'));
+const { resetMapView } = await import(projectUrl('../src/state/mapViewState.js'));
 
 function snapshotOf(run) {
   return {
@@ -179,4 +180,59 @@ test('그려진 화면에는 포인트 시절의 세 자리 시간 숫자가 없
   for (const forbidden of ['시간 100', '시간 120', '시간 130', '시간 150', '시간 180', '시간 200', '300시간', '시간 +40', '시간 -40', '포인트']) {
     assert.ok(!text.includes(forbidden), `옛 단위가 남아 있다: ${forbidden}`);
   }
+});
+
+test('노드 카드는 유형·현장 기회·장치를 각각 한 줄로 적는다', () => {
+  // 카드는 문자열 사본을 감춰 두므로(NodeTooltipCard), 호버 없이도 본문을 검사할 수 있다.
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const camera = graph.cameras[0];
+  const node = graph.nodes.find((n) => n.id === camera.nodeId);
+  const run = {
+    ...base,
+    threats: {},
+    playerNodeId: camera.nodeId,
+    visitedNodeIds: [...base.visitedNodeIds, camera.nodeId],
+    graph: {
+      ...graph,
+      opportunities: [
+        ...graph.opportunities.filter((o) => o.nodeId !== camera.nodeId),
+        { id: 'opp_render_supply', nodeId: camera.nodeId, grade: 'supply', tier: 'normal', axis: null, usesRemaining: 2 },
+      ],
+    },
+  };
+
+  const text = renderMap(run);
+  const typeLabels = {
+    corridor: '복도', office: '사무·작업실', hall: '대공간', vault: '봉인 격실',
+    utility: '설비실', watch: '감시 지점', refuge: '은신처', crawlway: '비인가 통로',
+  };
+  assert.ok(text.includes(typeLabels[node.type]), '카드 머리에 노드 유형이 있어야 한다');
+  assert.ok(text.includes('보급품'), '현장 기회 행이 있어야 한다');
+  assert.ok(text.includes('2회 남음'), '남은 횟수가 보여야 한다');
+  assert.ok(text.includes('카메라 작동 중'), '장치 칩이 있어야 한다');
+});
+
+test('DEBUG 전체보기는 아직 관측하지 않은 노드의 내용물까지 카드에 낸다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const run = { ...createRunState(graph, 11), threats: {} };
+  const root = mountMap(run);
+  assert.ok(!root.textContent.includes('실제 지식: 미확인'), '디버그를 켜기 전에는 안개 밖 노드의 내용이 없어야 한다');
+
+  fire(findByText(root, 'button', 'DEBUG 전체보기'), 'click');
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+  // 미확인 노드를 하나 골라 "선택 노드" 카드를 띄운다 — 디버그는 안개와 무관하게 전부 말한다.
+  const hits = queryAll(root, (node) => node.localName === 'circle' && node.getAttribute('tabindex') != null);
+  assert.ok(hits.length > 0);
+  for (const hit of hits) {
+    fire(hit, 'click');
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    if (root.textContent.includes('실제 지식: 미확인') && /보급품 — \d+회 남음/.test(root.textContent)) break;
+  }
+  assert.ok(root.textContent.includes('실제 지식: 미확인'), '디버그 카드는 실제 안개 상태를 함께 적어야 한다');
+  assert.ok(/보급품 — \d+회 남음/.test(root.textContent), '한 번도 관측하지 않은 노드의 보급품과 남은 횟수까지 나와야 한다');
+
+  // 시그널은 화면 밖에 살아 있으므로 다음 검사로 새지 않도록 되돌린다.
+  resetMapView();
 });

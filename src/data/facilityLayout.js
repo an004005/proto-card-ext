@@ -561,7 +561,7 @@ export const BASIC_RECON_HOP_RANGE = 2;
  * @property {number} level 0~5. 관측 기록의 detailLevel.
  * @property {number} reconHops 정찰 사거리(홉).
  * @property {('presence'|'size'|'mode'|'alert'|'nextMove'|'composition'|'patrolNext')[]} threat 위협에 대해 읽히는 항목.
- * @property {('prizeGrade'|'prizeAxis'|'concealment'|'cameras'|'evidence')[]} extra 사거리 안에서 함께 드러나는 것.
+ * @property {('prizeGrade'|'prizeAxis'|'concealment'|'evidence')[]} extra 사거리 안에서 함께 드러나는 것.
  */
 /** @type {PerceptionInfoLevel[]} */
 export const PERCEPTION_INFO_TABLE = [
@@ -576,10 +576,15 @@ export const PERCEPTION_INFO_TABLE = [
   // 2
   { level: 3, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
   // 3
-  { level: 4, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'cameras'] },
+  { level: 4, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
   // 4
-  { level: 5, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'cameras', 'evidence'] },
+  { level: 5, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'evidence'] },
 ];
+
+// 장치(카메라·접속 인터페이스·발전기)와 현장 기회의 **존재**는 이 표에 없다. 관측이 닿기만 하면
+// 깊이와 무관하게 관측 기록의 `contents`에 적힌다(runEngine.observedNodeContents) — 방 안에
+// 무엇이 놓여 있는지까지 Perception으로 가리면 "정찰은 무엇을 사는가"가 읽히지 않는다.
+// Perception이 가르는 것은 그 다음의 깊이뿐이다: 위협 상세, 확보 대상의 등급·역할축, 은엄폐 값.
 
 // 무료 인접 관측은 Perception과 무관하게 이 깊이로 고정이다 — 유무와 규모까지. 값을 치르지 않고
 // 얻는 정보가 빌드에 따라 달라지면 "정찰을 할 것인가"라는 결정 자체가 흐려진다.

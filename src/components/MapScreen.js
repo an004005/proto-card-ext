@@ -10,12 +10,13 @@
 import { html, useState, useEffect, useRef, useMemo } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
+import { mapViewSignal, mapDebugRevealSignal, DEFAULT_MAP_VIEW } from '../state/mapViewState.js';
 import { computeCapabilities, listFieldActiveEquipment } from '../engine/capabilityEngine.js';
 import { bfsHopDistances } from '../engine/graphUtils.js';
 import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
-  explainEffectiveStealth, detailIncludes, lockdownClosesExitB,
+  explainEffectiveStealth, detailIncludes, lockdownClosesExitB, nodeContentsAt,
 } from '../engine/runEngine.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
 import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION } from '../data/facilityLayout.js';
@@ -29,6 +30,7 @@ import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE,
 import { OverloadGauge } from './OverloadGauge.js';
 import { InventoryPopup } from './InventoryPopup.js';
 import { Tooltip } from './Tooltip.js';
+import { NodeTooltipCard } from './NodeTooltipCard.js';
 import { PlayLog } from './PlayLog.js';
 import { HistoryControls } from './HistoryControls.js';
 import { describeItem, EQUIPMENT_DEFS } from '../data/itemDisplay.js';
@@ -364,6 +366,19 @@ const NODE_TYPE_LABELS = {
   utility: '설비실', watch: '감시 지점', refuge: '은신처', crawlway: '비인가 통로',
 };
 
+/** 노드 유형이 하는 일 한 줄. 범례와, 아직 관측하지 않은 노드의 카드가 같은 문장을 쓴다 —
+ * 미확인 노드에서 유일하게 말할 수 있는 것이 "이 방은 원래 무엇을 하는 자리인가"다. */
+const NODE_TYPE_NOTES = {
+  corridor: '지나가는 곳. 기회도 은엄폐도 없다',
+  office: '보급품이 많은 평범한 방',
+  hall: '시야가 트여 Stealth가 깎인다',
+  vault: '닫혀 있고 값어치가 크다',
+  utility: '발전기·배전반·서버가 있다',
+  watch: '멀리 보기 위한 자리',
+  refuge: '숨고 쉴 수 있다',
+  crawlway: '도면에 없는 길. 지나가 봐야 지도에 뜬다',
+};
+
 /** 점집합의 볼록 껍질(모노톤 체인). 배치 원형마다 구역 모양이 달라 원으로는 감쌀 수 없다. */
 function convexHull(points) {
   const pts = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
@@ -503,7 +518,9 @@ function movementRiskForecast(run, edge, destinationNodeId, mobility) {
 }
 
 const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 3;
+// 160여 노드가 한 캔버스에 들어가면 한 방의 글자·표식이 몇 픽셀밖에 안 된다. 3배로는 그것을
+// 읽을 수 없어 상한을 6배까지 올렸다 — 휠 한 칸(1.1배)과 +/− 버튼은 그대로다.
+const ZOOM_MAX = 6;
 // 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — CAMERA_HACK_DURATION(15칸)보다
 // 조금 길게 잡아, 그 이후는 조용한 이력 표기로 낮춘다(계속 안 사라지면 지금도 쫓기는 중처럼 읽힘).
 const CAMERA_DETECTION_BANNER_WINDOW = 20;
@@ -530,29 +547,74 @@ function scoutedGradeOf(run, nodeId, opportunityId) {
 }
 
 /**
- * 노드 툴팁의 현장 기회 한 줄. 보급품은 현행대로 서 있을 때만 보이고, 확보 대상은 정찰한 뒤에만
- * 등급·역할축이 붙는다 — 정찰 전에는 서 있어도 "등급·역할축 미확인"이다.
+ * 그 노드에서 **플레이어가 아는** 내용물(현장 기회·장치). 관측(무료 인접·정찰·해킹한 카메라)이
+ * 닿은 노드는 Perception과 무관하게 무엇이 놓여 있는지가 관측 기록에 남는다
+ * (runEngine.nodeContentsAt). 디버그는 안개를 무시하고 실제 그래프를 본다.
+ * @returns {import('../engine/types.js').NodeContents}
  */
-function describeOpportunity(run, node, opp, knowledge, debugReveal) {
-  if (!opp) return null;
-  const here = debugReveal || knowledge === 'current';
-  if (opp.grade !== 'prize') return here ? `보급품 ${opp.usesRemaining}회 남음` : null;
-  const grade = debugReveal ? { tier: opp.tier, axis: opp.axis } : scoutedGradeOf(run, node.id, opp.id);
-  if (grade) {
-    // 역할축은 Perception 1부터 읽힌다(정보 깊이 표) — 0으로 정찰했으면 axis가 null이다.
-    const axis = grade.axis ? ` · ${PRIZE_AXIS_LABELS[grade.axis] || grade.axis}` : ' · 역할축 미확인(Perception 1 필요)';
-    return `확보 대상(${PRIZE_TIER_LABELS[grade.tier] || grade.tier}${axis}) ${opp.usesRemaining}회 남음`;
-  }
-  return here ? '확보 대상 있음 — 등급·역할축 미확인(정찰하면 보인다)' : null;
+function knownContentsOf(run, nodeId, debugReveal = false) {
+  if (debugReveal) return nodeContentsAt(run, nodeId);
+  const recorded = run.observations[nodeId]?.contents;
+  if (recorded) return recorded;
+  // 관측 기록이 아직 없어도 가 본 자리는 두 눈으로 봤다.
+  if (run.visitedNodeIds.includes(nodeId)) return nodeContentsAt(run, nodeId);
+  return { opportunities: [], devices: [] };
 }
 
+/** 장치 상태의 표시 이름 — 종류마다 "작동 중"의 반대말이 다르다. */
+const DEVICE_STATUS_LABELS = {
+  camera: { active: '카메라 작동 중', hacked: '카메라 해킹됨', destroyed: '카메라 파괴됨' },
+  interface: { active: '접속 인터페이스 미해킹', hacked: '접속 인터페이스 해킹됨', destroyed: '접속 인터페이스 파괴됨' },
+  generator: { active: '배터리 발전기 작동 중', hacked: '배터리 발전기 해킹됨', destroyed: '배터리 발전기 무력화됨' },
+};
 
 /**
- * 이 노드에 서 있는 위협들을 한 문장으로. 실시간으로 보고 있으면 규모·모드까지, 정찰 중이면
+ * 장치의 **지금** 상태. 존재는 관측 기록이 정하지만 상태는 지금 값을 읽는다 — 해킹·파괴·무력화는
+ * 전부 플레이어 자신이 한 일이라, 그 노드를 다시 보지 않았다고 해서 모를 수가 없다.
+ */
+function deviceStatusNow(run, device) {
+  if (device.kind === 'camera') {
+    if ((run.disabledCameraIds || []).includes(device.id)) return 'destroyed';
+    return isCameraHackActive(run, device.id) ? 'hacked' : 'active';
+  }
+  if (device.kind === 'interface') return (run.hackedInterfaceIds || []).includes(device.id) ? 'hacked' : 'active';
+  return (run.disabledGeneratorIds || []).includes(device.id) ? 'destroyed' : 'active';
+}
+
+/**
+ * 카드의 현장 기회 한 행. 기회의 **존재와 남은 횟수**는 관측이 닿으면 보이고(내용물), 확보 대상의
+ * 등급·역할축만이 정찰이 사는 깊이다 — 정찰 전에는 "등급·역할축 미확인"이다.
+ */
+function opportunityRow(run, nodeId, opp, debugReveal) {
+  const uses = `${opp.usesRemaining}회 남음`;
+  if (opp.grade !== 'prize') {
+    return { kind: 'opportunity', icon: 'supply', tone: 'plain', title: '보급품', detail: uses };
+  }
+  const live = run.graph.opportunities.find((o) => o.id === opp.id);
+  const grade = debugReveal ? { tier: live?.tier, axis: live?.axis } : scoutedGradeOf(run, nodeId, opp.id);
+  if (grade) {
+    // 역할축은 Perception 1부터 읽힌다(정보 깊이 표) — 0으로 정찰했으면 axis가 null이다.
+    const axis = grade.axis ? ` · ${PRIZE_AXIS_LABELS[grade.axis] || grade.axis}` : '';
+    return {
+      kind: 'opportunity',
+      icon: 'prize',
+      tone: 'plain',
+      title: `확보 대상 · ${PRIZE_TIER_LABELS[grade.tier] || grade.tier}${axis}`,
+      detail: grade.axis ? uses : `${uses} · 역할축 미확인(Perception 1 필요)`,
+    };
+  }
+  return {
+    kind: 'opportunity', icon: 'prize', tone: 'plain', title: '확보 대상',
+    detail: `${uses} · 등급·역할축 미확인(정찰하면 보인다)`,
+  };
+}
+
+/**
+ * 이 노드에 서 있는 위협들을 한 행으로. 실시간으로 보고 있으면 규모·모드까지, 정찰 중이면
  * 구성까지 말한다 — 안 보이는 노드는 "마지막으로 위협을 봤다"까지만(리뷰 B8).
  */
 function describeThreatsHere(run, node, liveThreats) {
-  if (liveThreats.length === 0) return '위협 포착(마지막 확인 시점)';
+  if (liveThreats.length === 0) return { title: '위협 포착', detail: '마지막 확인 시점' };
   const described = liveThreats.map((threat) => {
     const observed = describeObservedThreat(run, threat);
     // 관측 기록보다 깊은 것은 그리지 않는다(정보 깊이 표) — 없는 항목은 null로 오므로 거른다.
@@ -564,13 +626,18 @@ function describeThreatsHere(run, node, liveThreats) {
     if (observed.patrolNext) parts.push(`다음 목적지 ${describeNodeLocation(run, observed.patrolNext)}`);
     return parts.length ? parts.join(' · ') : '있음';
   });
-  return `위협 포착 (${liveThreats.length}개 그룹) — ${described.join(' / ')}`;
+  return { title: `위협 포착 · ${liveThreats.length}개 그룹`, detail: described.join(' / ') };
 }
 
 /**
- * 노드 하나를 사람이 읽는 문장으로 요약 — 지도 위 호버 툴팁과 "선택 노드" 패널이 같은 문구를 쓴다.
+ * 노드 하나를 **구조화된 카드**로 요약 — 지도 위 호버 툴팁과 "선택 노드" 패널이 같은 설명을 쓰고
+ * (NodeTooltipCard), describeNodeText가 그것을 한 문장 사본으로 잇는다.
+ *
+ * 머리(유형·구역·지식 상태) / 행(탈출구·위협·현장 기회·장치·흔적·은신) / 꼬리(정찰 상태)로 나눈다.
+ * 없는 행은 만들지 않는다 — 한 줄로 이어 붙이던 시절에는 길수록 무엇이 중요한지 읽히지 않았다.
+ *
  * debugReveal이 true면 실제 안개 상태(knowledge)는 그대로 반환하되(이동 가능 판정이 이걸 씀),
- * 문구에는 위협 상세(모드/경계/규모)와 현장 기회까지 안개와 무관하게 덧붙인다.
+ * 내용에는 위협 상세와 내용물까지 안개와 무관하게 전부 담는다.
  */
 function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, baseStealth = null, perception = 0) {
   const knowledge = nodeKnowledge(run, n.id, perception);
@@ -578,45 +645,131 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
   const live = debugReveal || knowledge === 'current' || knowledge === 'fresh';
   const hasThreat = live ? (threatsByNode[n.id] || []).length > 0 : !!run.observations[n.id]?.hasThreat;
   const threatCount = live ? (threatsByNode[n.id] || []).length : (run.observations[n.id]?.hasThreat ? null : 0);
-  const knowledgeLabel = { current: '현재 위치', fresh: '시야 안(실시간)', stale: '마지막 확인 정보(고정)', unknown: '미확인' }[knowledge];
-  const opp = run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0);
-  // 카메라 위치는 가 봤거나, Perception 3 이상으로 정찰한 사거리 안에서 드러난다(정보 깊이 표).
+  const observedAt = run.observations[n.id]?.observedAt;
+  const knowledgeLabel = {
+    current: '현재 위치',
+    fresh: '실시간',
+    stale: observedAt != null ? `마지막 확인 · ${ticksUntil(run.time, observedAt)}칸 전` : '마지막 확인',
+    unknown: '미확인',
+  }[knowledge];
   const observedDetail = run.observations[n.id]?.detailLevel;
-  const devicesDiscovered = debugReveal || run.visitedNodeIds.includes(n.id) || detailIncludes(observedDetail, 'cameras');
-  const camera = devicesDiscovered ? run.graph.cameras.find((device) => device.nodeId === n.id) : null;
-  const accessInterface = devicesDiscovered ? run.graph.accessInterfaces.find((device) => device.nodeId === n.id) : null;
-  const generator = devicesDiscovered ? (run.graph.generators || []).find((device) => device.nodeId === n.id) : null;
-  const debugThreats = debugReveal ? (threatsByNode[n.id] || []) : [];
-  const title = [
-    `${SECTOR_NAMES[n.sectorId]} · ${NODE_TYPE_LABELS[n.type] || n.type}${n.isGateway ? '(구역 출입구)' : ''} · ${knowledgeLabel}${debugReveal ? ' · DEBUG' : ''}`,
-    exit ? (exit.kind === 'key' ? '숨겨진 열쇠 탈출구' : `표준 탈출구 ${exit.exitId} (${exitStatusLabel(exit)})`) : null,
-    (knowledge === 'unknown' && !debugReveal) ? null : (hasThreat ? describeThreatsHere(run, n, live ? (threatsByNode[n.id] || []) : []) : '위협 없음(확인 시점 기준)'),
-    describeOpportunity(run, n, opp, knowledge, debugReveal),
-    camera ? `카메라 ${run.disabledCameraIds?.includes(camera.id) ? '파괴됨' : (isCameraHackActive(run, camera.id) ? '해킹됨' : '작동 중')}` : null,
-    accessInterface ? `접속 인터페이스 ${run.hackedInterfaceIds?.includes(accessInterface.id) ? '해킹됨' : '미해킹'}` : null,
-    generator ? `배터리 발전기 ${run.disabledGeneratorIds.includes(generator.id) ? '무력화됨' : '작동 중'}` : null,
-    // 시체·흔적의 위치도 가 본 자리이거나 Perception 4의 정찰 사거리 안에서만 보인다.
-    (run.visitedNodeIds.includes(n.id) || debugReveal || detailIncludes(observedDetail, 'evidence'))
-      && run.corpses?.some((c) => c.nodeId === n.id) ? '시체가 남아 있음 — 위협이 밟으면 신고되어 이 구역 경계도가 오른다' : null,
-    (() => {
-      if (!run.visitedNodeIds.includes(n.id) && !debugReveal && !detailIncludes(observedDetail, 'evidence')) return null;
-      const traces = (run.evidence || []).filter((e) => e.nodeId === n.id);
-      if (traces.length === 0) return null;
+  // 랜드마크(구역 통제실 = 계약 목표부)는 그 노드를 한 번이라도 관측했을 때만 이름을 말한다 —
+  // 계약의 사전 정보 공개도 관측 기록을 미리 채우는 방식이라 같은 판정으로 걸러진다.
+  const landmark = run.graph.landmarks.find((l) => l.nodeId === n.id);
+  const landmarkKnown = !!landmark && (debugReveal || !!run.observations[n.id] || run.visitedNodeIds.includes(n.id));
+  const seized = landmarkKnown && run.revealedPatrolRouteSectorIds.includes(landmark.sectorId);
+  const header = {
+    typeLabel: NODE_TYPE_LABELS[n.type] || n.type,
+    gatewayLabel: n.isGateway ? '구역 출입구' : null,
+    sectorName: SECTOR_NAMES[n.sectorId],
+    landmark: landmarkKnown ? (LANDMARKS_BY_SECTOR[landmark.sectorId]?.name || landmark.id) : null,
+    isObjective: landmarkKnown && run.contract?.sectorId === landmark.sectorId,
+    seized,
+    knowledge,
+    knowledgeLabel,
+    debug: debugReveal,
+    emptyNote: `내용물은 정찰하거나 직접 가 봐야 보인다. ${NODE_TYPE_NOTES[n.type] || ''}`.trim(),
+  };
+
+  const rows = [];
+  if (exit) {
+    rows.push({
+      kind: 'exit',
+      tone: 'plain',
+      title: exit.kind === 'key' ? '숨겨진 열쇠 탈출구' : `표준 탈출구 ${exit.exitId}`,
+      detail: exit.kind === 'key' ? null : exitStatusLabel(exit),
+    });
+  }
+  if (knowledge !== 'unknown' || debugReveal) {
+    const debugThreats = debugReveal ? (threatsByNode[n.id] || []) : [];
+    if (hasThreat) {
+      const described = describeThreatsHere(run, n, live ? (threatsByNode[n.id] || []) : []);
+      rows.push({
+        kind: 'threat',
+        tone: 'threat',
+        title: described.title,
+        detail: described.detail,
+        debugLines: debugThreats.map((t) => `[${t.id}] 규모 ${t.size} · ${t.mode} · 경계 ${t.alert}`),
+      });
+    } else {
+      rows.push({ kind: 'threat', tone: 'muted', title: '위협 없음', detail: '확인 시점 기준' });
+    }
+  }
+
+  // 내용물 — 정찰이든 무료 인접 관측이든 한 번 닿았으면 현장 기회와 장치가 전부 적혀 있다.
+  const contents = knownContentsOf(run, n.id, debugReveal);
+  for (const opp of contents.opportunities) rows.push(opportunityRow(run, n.id, opp, debugReveal));
+  if (contents.devices.length > 0) {
+    rows.push({
+      kind: 'device',
+      tone: 'plain',
+      title: '장치',
+      chips: contents.devices.map((device) => {
+        const status = deviceStatusNow(run, device);
+        return {
+          label: DEVICE_STATUS_LABELS[device.kind]?.[status] || device.kind,
+          // 아직 작동하는 카메라만 붉게 둔다 — 지나가면 걸리는 유일한 장치다.
+          tone: device.kind === 'camera' && status === 'active' ? 'threat' : 'neutral',
+        };
+      }),
+    });
+  }
+
+  // 시체·흔적의 위치는 가 본 자리이거나 Perception 4의 정찰 사거리 안에서만 보인다.
+  const evidenceVisible = debugReveal || run.visitedNodeIds.includes(n.id) || detailIncludes(observedDetail, 'evidence');
+  if (evidenceVisible && run.corpses?.some((c) => c.nodeId === n.id)) {
+    rows.push({ kind: 'trace', tone: 'trace', title: '시체가 남아 있음', detail: '위협이 밟으면 신고되어 이 구역 경계도가 오른다' });
+  }
+  if (evidenceVisible) {
+    const traces = (run.evidence || []).filter((e) => e.nodeId === n.id);
+    if (traces.length > 0) {
       const strong = traces.filter((e) => e.tier >= 2).length;
-      return `내 흔적 ${traces.length}개${strong ? ` (강한 흔적 ${strong}개 — 발견되면 경계도가 오른다)` : ' (약한 흔적 — 조사만 끌어온다)'}`;
-    })(),
-    run.activeRecon?.targetNodeIds.includes(n.id) ? '실시간 정찰 중' : null,
-    // ADR-0079 상황 보정 — 서 있는 자리에서 조우 판정에 실제로 쓰일 은신을 분해해 보여준다.
-    // 다른 노드에는 붙이지 않는다: 은엄폐·카메라 무력화 상태가 그 자리에 가 봐야 정해진다.
-    (baseStealth !== null && n.id === run.playerNodeId)
-      ? (() => {
-        const explained = explainEffectiveStealth(baseStealth, run);
-        return stealthBreakdownText(explained.total, explained.base, explained.parts);
-      })()
-      : null,
-    debugThreats.length ? debugThreats.map((t) => `[${t.id}] 규모 ${t.size} · ${t.mode} · 경계 ${t.alert}`).join(' / ') : null,
-  ].filter(Boolean).join(' — ');
-  return { knowledge, exit, hasThreat, threatCount, title };
+      rows.push({
+        kind: 'trace',
+        tone: 'trace',
+        title: `내 흔적 ${traces.length}개${strong ? ` · 강한 흔적 ${strong}개` : ''}`,
+        detail: strong ? '발견되면 이 구역 경계도가 오른다' : '약한 흔적 — 조사만 끌어온다',
+      });
+    }
+  }
+
+  // ADR-0079 상황 보정 — 서 있는 자리에서 조우 판정에 실제로 쓰일 은신을 분해해 보여준다.
+  // 다른 노드에는 붙이지 않는다: 은엄폐·카메라 무력화 상태가 그 자리에 가 봐야 정해진다.
+  if (baseStealth !== null && n.id === run.playerNodeId) {
+    const explained = explainEffectiveStealth(baseStealth, run);
+    rows.push({
+      kind: 'stealth',
+      tone: 'plain',
+      title: '은신 판정',
+      detail: stealthBreakdownText(explained.total, explained.base, explained.parts),
+    });
+  }
+
+  const footer = run.activeRecon?.targetNodeIds.includes(n.id) ? ['실시간 정찰 중'] : [];
+  return { knowledge, exit, hasThreat, threatCount, header, rows, footer };
+}
+
+/**
+ * 구조화된 노드 설명을 한 문장 사본으로 잇는다. 카드는 보이지 않는 사본으로 이 문장을 항상 들고
+ * 있다(Tooltip.js와 같은 규칙) — 보조 기술이 읽고, 렌더 테스트가 검사할 수 있어야 한다.
+ */
+function describeNodeText(description) {
+  const { header, rows, footer } = description;
+  const parts = [
+    `${header.sectorName} · ${header.typeLabel}${header.gatewayLabel ? `(${header.gatewayLabel})` : ''} · ${header.knowledgeLabel}${header.debug ? ' · DEBUG' : ''}`,
+    header.landmark ? `${header.landmark}${header.seized ? ' · 장악됨' : ''}${header.isObjective ? ' · 계약 목표부' : ''}` : null,
+  ];
+  for (const row of rows) {
+    parts.push([
+      row.title,
+      row.detail,
+      (row.chips || []).map((chip) => chip.label).join(' · '),
+      (row.debugLines || []).join(' / '),
+    ].filter(Boolean).join(' — '));
+  }
+  if (rows.length === 0 && header.emptyNote) parts.push(header.emptyNote);
+  parts.push(...footer);
+  return parts.filter(Boolean).join(' — ');
 }
 
 export function MapScreen() {
@@ -624,13 +777,25 @@ export function MapScreen() {
   const [error, setError] = useState('');
   const [fieldPicker, setFieldPicker] = useState(null); // {instanceId, contract} | null — 대상(엣지/노드) 지정 중인 현장 장비
   const [noisePicker, setNoisePicker] = useState(false); // 가짜 소음(D)의 대상 노드를 고르는 중인가
-  const [view, setView] = useState({ x: 0, y: 0, scale: 1 }); // 지도 확대/이동
-  const [hover, setHover] = useState(null); // {x, y, text} | null — 커스텀 툴팁(브라우저 기본 title의 지연 없이 즉시 표시)
+  // 지도 확대/이동은 컴포넌트 밖 시그널에 산다(state/mapViewState.js) — 이 화면은 전투·보상·
+  // 인벤토리 팝업마다 언마운트되므로 useState에 두면 그때마다 뷰가 초기화된다.
+  const view = mapViewSignal.value;
+  const setView = (next) => {
+    mapViewSignal.value = typeof next === 'function' ? next(mapViewSignal.value) : next;
+  };
+  // {x, y, text} 또는 {x, y, node} | null — 커스텀 툴팁(브라우저 기본 title의 지연 없이 즉시 표시).
+  // node는 describeNode의 구조화된 설명이고, 그때는 NodeTooltipCard로 그린다.
+  const [hover, setHover] = useState(null);
   const [hoveredNodeId, setHoveredNodeId] = useState(null); // 노드 호버 시 연결 엣지 강조용
   const [selectedNodeId, setSelectedNodeId] = useState(null); // 클릭해 "선택 노드" 패널에 고정한 노드
   const [legendOpen, setLegendOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
-  const [debugReveal, setDebugReveal] = useState(false); // 디버그: 안개/미발견 상태 무시하고 전부 표시(순수 뷰 전환 — 실제 run 상태는 안 건드림)
+  // 디버그: 안개/미발견 상태 무시하고 전부 표시(순수 뷰 전환 — 실제 run 상태는 안 건드림).
+  // 뷰와 같은 시그널에 둬서 전투 한 번에 꺼지지 않는다.
+  const debugReveal = mapDebugRevealSignal.value;
+  const setDebugReveal = (next) => {
+    mapDebugRevealSignal.value = typeof next === 'function' ? next(mapDebugRevealSignal.value) : next;
+  };
   const [farmPlan, setFarmPlan] = useState(null);
   const [edgeApproachMode, setEdgeApproachMode] = useState('normal'); // 특수 엣지 개방의 접근 방식(안전/표준/강행)
   const [capabilityOpen, setCapabilityOpen] = useState(false); // Capability 블록은 기본 접힘 — 행동이 위로 온다
@@ -710,7 +875,9 @@ export function MapScreen() {
   // 도면에 없는 노드(비인가 통로)는 직접 보기 전까지 지도에 그리지 않는다(D16). 구조를 감추는
   // 유일한 예외이며, 그 노드로 이어지는 통로도 함께 숨는다.
   const chartedNodeIds = new Set(run.graph.nodes.filter((n) => debugReveal || isNodeCharted(run, n)).map((n) => n.id));
-  const isDeviceVisible = (nodeId) => debugReveal || visitedNodeIds.has(nodeId);
+  // 장치의 위치는 가 봤거나, 관측이 닿아 내용물이 기록된 노드에서 드러난다(Perception과 무관).
+  // 지도 글자(C/I/G)와 해킹·파괴 버튼이 같은 하나의 판정을 써야 "보이는데 못 고르는" 장치가 없다.
+  const isDeviceVisible = (nodeId) => debugReveal || visitedNodeIds.has(nodeId) || !!run.observations[nodeId]?.contents;
   const cameraByNode = Object.fromEntries(run.graph.cameras.filter((camera) => isDeviceVisible(camera.nodeId)).map((camera) => [camera.nodeId, camera]));
   const interfaceNodeIds = new Set(run.graph.accessInterfaces.filter((entry) => isDeviceVisible(entry.nodeId)).map((entry) => entry.nodeId));
   const currentInterface = run.graph.accessInterfaces.find((entry) => entry.nodeId === run.playerNodeId);
@@ -855,7 +1022,7 @@ export function MapScreen() {
   };
 
   const zoomBy = (factor) => setView((v) => ({ ...v, scale: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v.scale * factor)) }));
-  const resetView = () => setView({ x: 0, y: 0, scale: 1 });
+  const resetView = () => setView(DEFAULT_MAP_VIEW);
   const focusOnPlayer = () => {
     const pos = positions[run.playerNodeId];
     const scale = Math.max(view.scale, 1.3);
@@ -881,6 +1048,8 @@ export function MapScreen() {
   // 호버는 rAF 한 프레임에 한 번만 반영한다(scheduleHover) — 마우스를 한 번 훑으면
   // onMouseMove가 수십 번 오는데, 그때마다 200여 노드 지도를 다시 그리면 눈에 띄게 끊긴다.
   const showHover = (ev, text) => scheduleHover({ x: ev.clientX, y: ev.clientY, text });
+  /** 노드 호버만은 문장이 아니라 카드다(NodeTooltipCard) — 엣지·화살표는 그대로 문자열을 쓴다. */
+  const showNodeHover = (ev, description) => scheduleHover({ x: ev.clientX, y: ev.clientY, node: description });
   const hideHover = () => scheduleHover(null);
   const recenterAt = (canvasX, canvasY) => setView((v) => ({ ...v, x: -(canvasX - CANVAS_CENTER) * v.scale, y: -(canvasY - CANVAS_CENTER) * v.scale }));
   /** 패널 줄을 눌렀을 때 지도를 그 노드로 옮긴다 — 위치를 말로만 읽어 주면 결국 눈으로 찾아야 한다. */
@@ -899,7 +1068,11 @@ export function MapScreen() {
 
   const inspectedId = selectedNodeId || run.playerNodeId;
   const inspectedNode = run.graph.nodes.find((n) => n.id === inspectedId);
-  const inspected = inspectedNode ? describeNode(run, inspectedNode, threatsByNode, exitByNode, false, capabilities.stealth, capabilities.perception) : null;
+  // 패널도 호버 카드와 같은 설명을 쓴다 — 두 곳이 다른 문구를 만들면 하나가 조용히 낡는다.
+  // 디버그 전체보기도 그대로 반영한다(지도만 다 보이고 패널은 안 보이면 디버그가 반쪽이다).
+  const inspected = inspectedNode
+    ? describeNode(run, inspectedNode, threatsByNode, exitByNode, debugReveal, capabilities.stealth, capabilities.perception)
+    : null;
   const inspectedObservedAt = selectedNodeId && run.observations[selectedNodeId] ? run.observations[selectedNodeId].observedAt : null;
   const selectedEdge = selectedNodeId ? findTraversableEdge(run, selectedNodeId) : null;
   const selectedEdgeTraversable = selectedEdge ? canTraverseEdge(run, selectedEdge, capabilities.mobility) : false;
@@ -1061,7 +1234,7 @@ export function MapScreen() {
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-neutral-300)' }}></span>한 번도 확인 안 함 — 방이 있다는 것만 알고 안에 무엇이 있는지는 모른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-accent)' }}></span>탈출구(A/B/K, 안개 무관 항상 표시)</div>
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>노드 유형 — 모양으로 구분</div>
-                ${[['corridor', '지나가는 곳. 기회도 은엄폐도 없다'], ['office', '보급품이 많은 평범한 방'], ['hall', '시야가 트여 Stealth가 깎인다'], ['vault', '닫혀 있고 값어치가 크다'], ['utility', '발전기·배전반·서버가 있다'], ['watch', '멀리 보기 위한 자리'], ['refuge', '숨고 쉴 수 있다'], ['crawlway', '도면에 없는 길. 지나가 봐야 지도에 뜬다']].map(([type, note]) => html`
+                ${Object.entries(NODE_TYPE_NOTES).map(([type, note]) => html`
                   <div key=${type} style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <svg width="28" height="28" viewBox="0 0 28 28" style=${{ flex: '0 0 auto' }}>
                       ${nodeBodyShape(type, 14, 14, { fill: 'var(--color-bg)', stroke: 'var(--color-divider)', 'stroke-width': 1.5 })}
@@ -1171,12 +1344,17 @@ export function MapScreen() {
                 // displayKnowledge: 디버그 모드에서 색/투명도만 "다 보임"으로 바꾼다(진짜 knowledge는
                 // 그대로 둬서 이동 가능 판정 등 다른 로직은 안개 규칙을 그대로 따른다).
                 const displayKnowledge = debugReveal ? (n.id === run.playerNodeId ? 'current' : 'fresh') : knowledge;
-                // 정찰로 등급을 확인한 확보 대상은 지도에 ◆로 남는다 — 4칸을 쓴 대가가 화면에
-                // 계속 보여야 "어디를 정찰할까"가 결정이 된다.
-                const opportunity = debugReveal
-                  ? run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0)
-                  : run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0 && scoutedGradeOf(run, n.id, o.id));
-                const nodeTitle = describeNode(run, n, threatsByNode, exitByNode, debugReveal, capabilities.stealth, capabilities.perception).title;
+                // 관측이 닿은 노드는 무엇이 놓여 있는지가 기록에 남으므로 지도에도 ◆(확보 대상)·
+                // ○(보급품)로 남는다 — 4칸을 쓴 대가가 화면에 계속 보여야 "어디를 정찰할까"가
+                // 결정이 된다. 등급(정예 색)만은 여전히 정찰로 읽은 것만 쓴다.
+                const nodeContents = knownContentsOf(run, n.id, debugReveal);
+                const opportunity = nodeContents.opportunities.find((o) => o.grade === 'prize') || nodeContents.opportunities[0];
+                const prizeTier = opportunity && opportunity.grade === 'prize'
+                  ? (debugReveal
+                    ? run.graph.opportunities.find((o) => o.id === opportunity.id)?.tier
+                    : scoutedGradeOf(run, n.id, opportunity.id)?.tier)
+                  : null;
+                const nodeDescription = describeNode(run, n, threatsByNode, exitByNode, debugReveal, capabilities.stealth, capabilities.perception);
                 const isSelected = n.id === selectedNodeId || (!selectedNodeId && n.id === run.playerNodeId);
                 const activelyObserved = activeReconNodeIds.has(n.id);
                 const camera = cameraByNode[n.id];
@@ -1199,7 +1377,7 @@ export function MapScreen() {
                     ${exit ? html`<text x=${pos.x} y=${pos.y + 5} text-anchor="middle" font-size="12" font-weight="800" fill="var(--color-bg)" pointer-events="none">${exit.kind === 'key' ? 'K' : exit.exitId}</text>` : null}
                     ${hasThreat ? html`<text x=${pos.x} y=${pos.y - NODE_RADIUS - 8} text-anchor="middle" font-size="13" fill="var(--color-accent-2-700, #dd2b0f)" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">▲${threatCount ?? ''}</text>` : null}
                     ${opportunity && opportunity.grade === 'prize'
-                      ? html`<text x=${pos.x + 9} y=${pos.y - 6} text-anchor="middle" font-size="11" font-weight="900" fill=${opportunity.tier === 'elite' ? '#b45309' : 'var(--color-accent-2-700)'} pointer-events="none">◆</text>`
+                      ? html`<text x=${pos.x + 9} y=${pos.y - 6} text-anchor="middle" font-size="11" font-weight="900" fill=${prizeTier === 'elite' ? '#b45309' : 'var(--color-accent-2-700)'} pointer-events="none">◆</text>`
                       : (opportunity ? html`<circle cx=${pos.x + 9} cy=${pos.y - 9} r="3.5" fill="var(--color-accent-2-700)" stroke="var(--color-bg)" stroke-width="1" pointer-events="none"></circle>` : null)}
                     ${corpseByNode[n.id] ? html`<text x=${pos.x + 12} y=${pos.y + 13} text-anchor="middle" font-size="11" font-weight="900" fill="var(--color-negative, #dd2b0f)" pointer-events="none">†</text>` : null}
                     ${traceCountByNode.get(n.id) ? html`<text x=${pos.x - 12} y=${pos.y + 4} text-anchor="middle" font-size="9" font-weight="800" fill="#b45309" opacity="0.85" pointer-events="none">˙${traceCountByNode.get(n.id)}</text>` : null}
@@ -1214,11 +1392,11 @@ export function MapScreen() {
                       cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="transparent"
                       style=${{ cursor: 'pointer' }}
                       onClick=${() => handleNodeSelect(n.id)}
-                      onMouseEnter=${(ev) => { showHover(ev, nodeTitle); setHoveredNodeId(n.id); }}
-                      onMouseMove=${(ev) => showHover(ev, nodeTitle)}
+                      onMouseEnter=${(ev) => { showNodeHover(ev, nodeDescription); setHoveredNodeId(n.id); }}
+                      onMouseMove=${(ev) => showNodeHover(ev, nodeDescription)}
                       onMouseLeave=${() => { hideHover(); setHoveredNodeId(null); }}
                       tabindex=${n.id === focusedNodeId ? 0 : -1}
-                      onFocus=${(ev) => { showHover(ev, nodeTitle); setHoveredNodeId(n.id); }}
+                      onFocus=${(ev) => { showNodeHover(ev, nodeDescription); setHoveredNodeId(n.id); }}
                       onBlur=${() => { hideHover(); setHoveredNodeId(null); }}
                       onKeyDown=${(ev) => handleNodeKeyDown(ev, n.id)}
                     ></circle>
@@ -1276,7 +1454,15 @@ export function MapScreen() {
             </svg>
           </div>
 
-          ${hover ? html`
+          ${hover && hover.node ? html`
+            <div style=${{
+              position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
+              boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
+            }}>
+              <${NodeTooltipCard} description=${hover.node} text=${describeNodeText(hover.node)} hint="클릭해 선택" />
+            </div>
+          ` : null}
+          ${hover && !hover.node ? html`
             <div style=${{
               position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
               background: 'var(--color-neutral-900)', color: 'var(--color-bg)', padding: '6px 10px',
@@ -1373,7 +1559,9 @@ export function MapScreen() {
           <div style=${{ padding: 'var(--space-3) var(--space-4)', flex: 1 }}>
             <h4 style=${{ margin: '0 0 4px' }}>${selectedNodeId && selectedNodeId !== run.playerNodeId ? '선택 노드' : '현재 노드'}</h4>
             ${inspected ? html`
-              <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>${inspected.title}</div>
+              <div style=${{ marginBottom: '10px' }}>
+                <${NodeTooltipCard} description=${inspected} text=${describeNodeText(inspected)} width=${308} />
+              </div>
               ${inspected.knowledge === 'stale' && inspectedObservedAt != null ? html`<div style=${{ fontSize: '10.5px', fontStyle: 'italic', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>${run.time - inspectedObservedAt}칸 전 관측 (시각 ${inspectedObservedAt}) — 그 사이 상황이 바뀌었을 수 있습니다.</div>` : null}
 
               ${/* 이동 가능 여부는 "관측이 최신인가"가 아니라 "통로로 이어져 있는가"다 — 대기로
