@@ -70,7 +70,7 @@
 | 0028 네 구역 테마 | amended | ADR-0078의 8구역 |
 | 0065 위협 마커 12 | amended | ADR-0078의 40마커 |
 | 0066 특수 엣지 12~16 | amended | ADR-0078, 구현 명세의 현행 분포(두 접근법 원칙은 유효) |
-| 0056 Hacking 층계 1~4 | amended | MVP는 tier 1만 구현, 상위 티어는 planned.md |
+| 0056 Hacking 층계 1~4 | amended | MVP는 tier 1만 구현, 상위 티어는 planned.md. 부족분의 통화는 ADR-0080으로 과부화 → 구역 경계도 |
 | 0057 Force 층계 1~4 | amended | MVP는 tier 1만 구현, 상위 티어는 planned.md |
 | 0058 Deception 층계 1~4 | amended | MVP는 tier 1만 구현, 상위 티어는 planned.md |
 | 0077 조우 3단계 판정 | amended | ADR-0079의 상황 보정(왼쪽 변의 재료가 넓어짐) |

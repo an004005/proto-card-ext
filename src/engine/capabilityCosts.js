@@ -18,7 +18,6 @@ import {
   CAPABILITY_MIN_TIME,
   CAPABILITY_STEP_NOISE_DELTA,
   CAPABILITY_STEP_DURABILITY_LOSS,
-  CAPABILITY_STEP_OVERLOAD_DELTA,
   CAPABILITY_STEP_HP_COST,
   CAPABILITY_STEP_LEAVES_STRONG_TRACE,
   CAPABILITY_STEP_RAISES_ALERT,
@@ -31,7 +30,6 @@ import {
  * @typedef {object} CapabilityCostBase 호출부가 넘기는 "표준 비용". 없는 항목은 그 통화를 안 쓴다는 뜻이다.
  * @property {number} [time] 표준 소요 시간. 시간은 전 Capability 공통 통화라 대부분 채워진다.
  * @property {number} [noise] 표준 소음 강도(0~3).
- * @property {number} [overload] 표준 과부화 증가량.
  * @property {Record<string, number>} [durationByStep] 단계별 지속 **고정표**. 지속이 통화인
  *   행동(현재는 Deception 가짜 목표 송출)만 넘긴다. 배율을 곱하지 않고 이 표를 조회한다.
  * @property {number} [timeDelta] 층계 밖의 칸 가감(공통 접근 모드의 안전 +2 / 강행 -2).
@@ -45,7 +43,6 @@ import {
  * @property {CapabilityStep} step
  * @property {number} timeCost 정수 칸.
  * @property {number} noise 0~3으로 clamp된 소음 강도. 0은 무음이다.
- * @property {number} overload 과부화 증감. 음수면 오히려 부하가 내려간다(surplus).
  * @property {number} hpCost 차감할 HP. playerState 쪽이라 호출부가 따로 반영한다.
  * @property {number} durabilityLoss 깎일 장비 내구도.
  * @property {number|null} duration base.durationByStep가 있을 때만 조회된 실제 지속 칸.
@@ -57,10 +54,11 @@ import {
  * Capability별로 "자기 통화만" 받는다. 여기 없는 통화는 그 Capability의 부족분으로 청구되지
  * 않으며(시간 가감만은 공통), base로 들어온 표준 비용은 단계와 무관하게 그대로 통과한다.
  * 표에 새 항목을 더하기 전에 D8의 의도 — 통화가 겹치면 층계가 다시 시간 하나로 수렴한다 — 를 볼 것.
- * @type {Record<CapabilityKind, {noise?: true, durability?: true, overload?: true, hp?: true, duration?: true, trace?: true, alert?: true}>}
+ * @type {Record<CapabilityKind, {noise?: true, durability?: true, hp?: true, duration?: true, trace?: true, alert?: true}>}
  */
 const CAPABILITY_CURRENCIES = {
-  hacking: { overload: true },
+  // Hacking — 서툰 침입은 시스템에 걸린다. 그 대가는 그 자리에서 구역 경계도가 오르는 것이다.
+  hacking: { alert: true },
   force: { noise: true, durability: true },
   stealth: { trace: true, alert: true },
   mobility: { hp: true },
@@ -104,7 +102,6 @@ export function capabilityStep(effectiveValue, required = 1) {
 const NO_COST = /** @type {const} */ ({
   timeCost: 0,
   noise: 0,
-  overload: 0,
   hpCost: 0,
   durabilityLoss: 0,
   duration: null,
@@ -141,14 +138,10 @@ export function resolveCapabilityCost(capabilityKind, effectiveValue, required =
 
   const baseTime = base.time ?? 0;
   const baseNoise = base.noise ?? 0;
-  const baseOverload = base.overload ?? 0;
 
   // 자기 통화가 아닌 항목은 단계 보정 없이 표준 비용을 그대로 통과시킨다. base에 값이 없으면
-  // 결과도 0이라 "hacking은 소음 0, force는 과부화 0"이 자연히 성립한다.
+  // 결과도 0이라 "hacking은 소음 0, force는 경계 상승 없음"이 자연히 성립한다.
   const noise = currencies.noise ? baseNoise + CAPABILITY_STEP_NOISE_DELTA[step] : baseNoise;
-  // 과부화는 clamp하지 않는다. surplus의 음수는 "부하를 오히려 덜어낸다"는 뜻이고, 게이지 하한
-  // 처리는 과부화를 보관하는 쪽의 몫이다.
-  const overload = currencies.overload ? baseOverload + CAPABILITY_STEP_OVERLOAD_DELTA[step] : baseOverload;
   // 지속이 통화인 행동은 단계별 고정표를 조회한다. 표를 안 넘겼으면 지속 개념이 없는 행동이다.
   // 자기 통화가 아닌 Capability에는 다른 대가와 마찬가지로 표준값(standard)이 그대로 통과한다.
   const duration = base.durationByStep ? base.durationByStep[currencies.duration ? step : 'standard'] : null;
@@ -163,7 +156,6 @@ export function resolveCapabilityCost(capabilityKind, effectiveValue, required =
     step,
     timeCost: baseTime > 0 ? Math.max(CAPABILITY_MIN_TIME, rawTime) : 0,
     noise: clampNoise(noise),
-    overload,
     hpCost: currencies.hp ? CAPABILITY_STEP_HP_COST[step] : 0,
     durabilityLoss: currencies.durability ? CAPABILITY_STEP_DURABILITY_LOSS[step] : 0,
     // 지속 개념이 없는 행동에 0을 주면 호출부가 "지속 0"으로 오해한다. 없으면 null로 둔다.

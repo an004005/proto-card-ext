@@ -17,7 +17,7 @@ export const WAREHOUSE_STARTING_POOL = {
   bottoms: ['tactical_bottom'],
   modules: ['module_neural', 'module_body'],
   implants: ['implant1', 'implant3', 'implant6', 'implant7'],
-  consumables: [{ defId: 'bandage', count: 2 }, { defId: 'stabilizer', count: 1 }],
+  consumables: [{ defId: 'bandage', count: 3 }],
 };
 
 /** @type {EquipmentPool} */
@@ -26,7 +26,7 @@ export const FARMING_ONLY_POOL = {
   tops: ['heavy_top'],
   bottoms: ['heavy_bottom'],
   modules: ['module_forcefield', 'module_spatial', 'module_emp', 'module_sandevistan', 'module_mantis_blades'],
-  implants: ['implant2', 'implant4', 'implant5'],
+  implants: ['implant2', 'implant4'],
   consumables: ['grenade', 'flashbang'],
 };
 

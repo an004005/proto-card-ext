@@ -16,7 +16,7 @@ import { RuleViolation } from './errors.js';
 import { applyCapabilityCost } from './runEngine.js';
 import { requireActionCost } from './actionCosts.js';
 import {
-  POWER_CUT_DURATION, FALSE_BROADCAST_OVERLOAD, FALSE_BROADCAST_INTENSITY, ADJACENT_SECTOR_IDS,
+  POWER_CUT_DURATION, FALSE_BROADCAST_INTENSITY, ADJACENT_SECTOR_IDS,
   FALSE_BROADCAST_ANY_SECTOR_DECEPTION, FAKE_NOISE_RANGE_BY_DECEPTION, FAKE_NOISE_REQUIREMENT,
   FAKE_NOISE_STRONG_DECEPTION, FAKE_NOISE_INTENSITY, FAKE_NOISE_STRONG_INTENSITY,
 } from '../data/facilityLayout.js';
@@ -157,7 +157,7 @@ export function broadcastFalseTarget(state, effectiveDeception, targetSectorId) 
   // 미끼는 거기서부터 층계 고정표의 지속만큼 버틴다.
   const decoyNode = state.graph.nodes.find((n) => n.sectorId === targetSectorId && n.isGateway)
     || state.graph.nodes.find((n) => n.sectorId === targetSectorId);
-  return applyCapabilityCost(state, { ...cost, overload: FALSE_BROADCAST_OVERLOAD, duration: null }, undefined, 'falseBroadcast', {
+  return applyCapabilityCost(state, { ...cost, duration: null }, undefined, 'falseBroadcast', {
     sectorId,
     targetSectorId,
     decoyNodeId: decoyNode ? decoyNode.id : null,

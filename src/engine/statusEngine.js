@@ -87,7 +87,7 @@ export function applyPoisonAtTurnStart(combatant) {
  * @returns {number}
  */
 export function computeDamage(baseValue, { stage, scalesWithStage, flatBonus = 0, weak = false, vulnerable = false }) {
-  const stageMultiplier = scalesWithStage && (stage === 1 || stage === 2) ? 1.25 : 1;
+  const stageMultiplier = scalesWithStage && stage === 1 ? 1.25 : 1;
   let amount = Math.ceil(baseValue * stageMultiplier + flatBonus);
   if (weak) amount = Math.floor(amount * 0.75);
   amount = applyVulnerableDamage(amount, vulnerable);

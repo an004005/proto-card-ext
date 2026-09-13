@@ -140,11 +140,6 @@ function implantEffects(loadout) {
 }
 
 /** @param {Loadout} loadout @returns {number} */
-export function computeFloorOverload(loadout) {
-  return (loadout.implantIds || []).reduce((sum, id) => sum + (IMPLANT_DEFINITIONS[id]?.floorOverload || 0), 0);
-}
-
-/** @param {Loadout} loadout @returns {number} */
 export function computeMaxHpBonus(loadout) {
   return implantEffects(loadout).filter((e) => e.kind === 'maxHpBonus').reduce((s, e) => s + e.amount, 0);
 }
@@ -152,11 +147,6 @@ export function computeMaxHpBonus(loadout) {
 /** @param {Loadout} loadout @returns {number} */
 export function computeInventoryCapacityBonus(loadout) {
   return implantEffects(loadout).filter((e) => e.kind === 'inventoryBonus').reduce((s, e) => s + e.amount, 0);
-}
-
-/** @param {Loadout} loadout @returns {number} */
-export function computeOverloadGainMultiplier(loadout) {
-  return implantEffects(loadout).filter((e) => e.kind === 'overloadGainMultiplier').reduce((m, e) => m * e.multiplier, 1);
 }
 
 /**

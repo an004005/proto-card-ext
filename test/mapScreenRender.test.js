@@ -34,7 +34,7 @@ function snapshotOf(run) {
     offeredContracts: null,
     activeContract: null,
     playerState: {
-      hp: 50, maxHp: 50, overload: 0, loadout: { consumableSlots: [], weapons: [], modules: [], implants: [] },
+      hp: 50, maxHp: 50, overloadActive: false, loadout: { consumableSlots: [], weapons: [], modules: [], implants: [] },
       inventory: { items: [], ammo: 0, capacity: 12 }, warehouse: { items: [], ammo: 0, capacity: 99 },
     },
   };
@@ -70,7 +70,7 @@ test('초기 상태(pendingTask·lastTaskOutcome·engagedThreatId가 전부 null
   assert.ok(text.includes('기본 정찰 · 4칸'), '예고가 붙은 행동 버튼이 보여야 한다');
 });
 
-test('유료 버튼은 이름·칸·소음·과부화를 같은 순서로 적는다', () => {
+test('유료 버튼은 이름·칸·소음을 같은 순서로 적는다', () => {
   const { graph } = generateFacilityGraph(11);
   const base = createRunState(graph, 11);
   // 흔적이 있으면 수습 블록이 열리고, 그 안의 버튼이 같은 라벨 규칙을 따르는지 볼 수 있다.
@@ -179,4 +179,16 @@ test('그려진 화면에는 포인트 시절의 세 자리 시간 숫자가 없
   for (const forbidden of ['시간 100', '시간 120', '시간 130', '시간 150', '시간 180', '시간 200', '300시간', '시간 +40', '시간 -40', '포인트']) {
     assert.ok(!text.includes(forbidden), `옛 단위가 남아 있다: ${forbidden}`);
   }
+});
+
+test('지도 헤더의 과부화 토글은 현재 상태를 적고, 누르면 켜진다', () => {
+  const { graph } = generateFacilityGraph(11);
+  const root = mountMap(createRunState(graph, 11));
+  assert.ok(root.textContent.includes('과부화 OFF'), '꺼진 상태가 헤더에 보여야 한다');
+
+  const toggle = findByText(root, 'button', '과부화 OFF');
+  assert.ok(toggle, '토글 버튼이 있어야 한다');
+  fire(toggle, 'click');
+  assert.equal(snapshotSignal.value.playerState.overloadActive, true);
+  assert.equal(snapshotSignal.value.facilityRunState.time, 0, '토글은 시계를 흘리지 않는다');
 });

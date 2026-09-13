@@ -20,9 +20,9 @@ import {
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency } from '../src/engine/graphUtils.js';
 
-function makeRun(seed = 1, overloadConfig) {
+function makeRun(seed = 1, runConfig) {
   const { graph } = generateFacilityGraph(seed);
-  return createRunState(graph, seed, overloadConfig);
+  return createRunState(graph, seed, runConfig);
 }
 
 /**

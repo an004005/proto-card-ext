@@ -10,8 +10,7 @@ import { createRunState } from '../src/engine/runEngine.js';
 function combat(monsterIds = ['nibbit', 'nibbit']) {
   return beginPlayerFirst(createCombatState({
     deckEntries: Array.from({ length: 10 }, (_, i) => ({ defId: 'katana_slash', instanceId: `card-${i}` })),
-    monsterIds, playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999, overload: 0, overloadFloor: 0,
-    overloadGainMultiplier: 1, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
+    monsterIds, playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999, overloadActive: false, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
     inventoryItemIdsInOrder: [], inventoryCapacity: 30, rngState: { seed: 1 },
   }));
 }
@@ -39,7 +38,7 @@ test('combat timeline keeps intermediate combat snapshots and ends at the reduce
   const { graph } = generateFacilityGraph(1);
   const facilityRunState = createRunState(graph, 1);
   const snapshot = {
-    currentScreen: 'combat', activeCombatState: combat(), playerState: { loadout: { consumableSlots: [] }, overload: 0 },
+    currentScreen: 'combat', activeCombatState: combat(), playerState: { loadout: { consumableSlots: [] }, overloadActive: false },
     facilityRunState, combatContext: { nodeId: facilityRunState.playerNodeId, ammoAtStart: 8, noiseGauge: 0, noiseIntensity: 0, disengage: { escapeIntent: false, disengageProgress: 0 } },
   };
   const command = { type: 'END_TURN' };

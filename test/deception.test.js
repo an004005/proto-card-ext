@@ -6,7 +6,7 @@ import { createRunState, deceiveThreat } from '../src/engine/runEngine.js';
 import { plantFakeNoise, fakeNoiseRange } from '../src/engine/recovery.js';
 import { forecastAction } from '../src/engine/actionCosts.js';
 import {
-  FAKE_NOISE_TIME, FAKE_NOISE_OVERLOAD, FAKE_NOISE_RANGE_BY_DECEPTION, NOISE_DURATION,
+  FAKE_NOISE_TIME, FAKE_NOISE_RANGE_BY_DECEPTION, NOISE_DURATION,
   ENCOUNTER_DECEIVE_REQUIREMENT,
 } from '../src/data/facilityLayout.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
@@ -39,11 +39,9 @@ test('가짜 소음은 3칸이고, 예고와 청구가 같은 사양표에서 �
   const run = quietRun(1);
   const forecast = forecastAction('fakeNoise', { value: 1 });
   assert.equal(forecast.timeCost, FAKE_NOISE_TIME);
-  assert.equal(forecast.overload, FAKE_NOISE_OVERLOAD);
 
   const planted = plantFakeNoise(run, 1, nodeAtHops(run, 1));
   assert.equal(planted.time - run.time, forecast.timeCost, '예고한 칸이 그대로 청구된다');
-  assert.equal(planted.overload - run.overload, forecast.overload, '예고한 과부화가 그대로 청구된다');
 });
 
 test('가짜 소음은 사거리 안의 노드에만 심을 수 있다', () => {

@@ -2,7 +2,7 @@
 // (state, ...args) => newState — no DOM/Preact, runnable headlessly under `node --test`.
 import * as cardEngine from './cardEngine.js';
 import { computeDamage, computeBlock, applyDamage, applyVulnerableDamage, decayStatusesAtTurnEnd, applyStatus, applyArmorAtTurnStart, applyPoisonAtTurnStart } from './statusEngine.js';
-import { getStage, gainOverload } from './overloadEngine.js';
+import { getStage } from './overloadEngine.js';
 import { currentMove, advanceAiState, createInitialAiState } from './monsterAI.js';
 import { isItemBurdenGivenOrder } from './inventoryEngine.js';
 import { nextInt, nextFloat } from './rng.js';
@@ -27,59 +27,16 @@ export const DURABILITY_DECAY_CHANCE = 0.01;
 // ---- card resolution helpers ----
 
 /**
- * §과부화 3단계 개편: 과부화가 100을 넘으면 그 자리에서 100으로 clamp하고, 초과분 10당(올림)
- * 상태이상 카드 1장을 뽑을 더미(drawPile)의 무작위 위치에 삽입한다(이번 전투에만) — 더 이상 즉사
- * 조건이 아니며, overload 자체는 전투 중 100을 넘는 값으로 저장되지 않는다.
- * @param {number} rawOverload clamp 이전의 값 (100을 넘을 수 있음)
- * @param {import('./types.js').Piles} piles
- * @param {RngState} rngState
- * @returns {{overload: number, piles: import('./types.js').Piles, rngState: RngState}}
- */
-function clampOverloadAndInsertStatusCards(rawOverload, piles, rngState) {
-  const statusCardCount = Math.ceil(Math.max(0, rawOverload - 100) / 10);
-  let p = piles;
-  let rng = rngState;
-  for (let i = 0; i < statusCardCount; i++) {
-    const inserted = cardEngine.insertCardToDrawRandom(p, 'overload_status_card', rng);
-    p = inserted.piles;
-    rng = inserted.rngState;
-  }
-  return { overload: Math.min(rawOverload, 100), piles: p, rngState: rng };
-}
-
-/**
- * @param {number} stage
- * @returns {number} stage 2(강화+페널티·과열)에서 모든 카드 코스트에 +1.
- */
-function getStagePenaltyCostModifier(stage) {
-  return stage === 2 ? 1 : 0;
-}
-
-/**
  * @param {CardDef} def
- * @param {number} stage
+ * @param {number} stage 0(노멀) 또는 1(과부화).
  * @returns {{cost: number, effects: CardEffect[], armorPerTurn?: number}}
  */
 export function resolveCard(def, stage) {
   if (def.stageTable) {
-    const row = def.stageTable[Math.min(stage, 3)];
+    const row = def.stageTable[stage];
     return { cost: row.cost, effects: row.effects || [], armorPerTurn: row.armorPerTurn };
   }
   return { cost: def.cost, effects: def.effects || [] };
-}
-
-/**
- * @param {CardDef} def
- * @param {number} stage
- * @param {Object.<string, {active: boolean}>} powers
- * @returns {number}
- */
-function getCostModifierFromPowers(def, stage, powers) {
-  let mod = 0;
-  if (powers.neuralBoost && stage === 3 && def.type === 'skill') mod += 1;
-  if (powers.bodyBoost && stage === 3 && def.attackKind === 'melee') mod += 1;
-  if (powers.spatialAwareness && (stage === 2 || stage === 3) && def.attackKind === 'ranged') mod += 1;
-  return mod;
 }
 
 /**
@@ -94,34 +51,28 @@ function getCostModifierFromStatuses(def, statuses) {
 }
 
 /**
- * Effective energy cost for UI display (hand cards show this, not the flat def.cost — module
- * power cost surcharges and stageTable costs both vary with the current overload stage).
+ * Effective energy cost for UI display (hand cards show this, not the flat def.cost —
+ * stageTable costs vary with the current 과부화 단계).
  * @param {CardDef} def
  * @param {number} stage
- * @param {Object.<string, {active: boolean}>} powers
  * @param {Statuses} [statuses]
  * @returns {number}
  */
-export function getEffectiveCost(def, stage, powers, statuses = {}) {
-  return explainEffectiveCost(def, stage, powers, statuses).total;
+export function getEffectiveCost(def, stage, statuses = {}) {
+  return explainEffectiveCost(def, stage, statuses).total;
 }
 
 /**
- * 같은 계산을 "왜 이 값인가"까지 돌려준다 — 툴팁이 `코스트 4 = 기본 1 + 과열 1 + 뒤얽힘 2`로
+ * 같은 계산을 "왜 이 값인가"까지 돌려준다 — 툴팁이 `코스트 3 = 기본 1 + 뒤얽힘 2`로
  * 풀어 쓸 수 있도록. 화면이 코스트를 따로 계산하면 엔진과 어긋나므로 여기 한 자리에만 둔다.
  * @param {CardDef} def
  * @param {number} stage
- * @param {Object.<string, {active: boolean}>} powers
  * @param {Statuses} [statuses]
  * @returns {{total: number, base: number, parts: {label: string, amount: number}[]}}
  */
-export function explainEffectiveCost(def, stage, powers, statuses = {}) {
+export function explainEffectiveCost(def, stage, statuses = {}) {
   const base = resolveCard(def, stage).cost;
   const parts = [];
-  const powerMod = getCostModifierFromPowers(def, stage, powers);
-  if (powerMod) parts.push({ label: '모듈 과부하', amount: powerMod });
-  const stagePenalty = getStagePenaltyCostModifier(stage);
-  if (stagePenalty) parts.push({ label: '과열', amount: stagePenalty });
   const entangled = getCostModifierFromStatuses(def, statuses);
   if (entangled) parts.push({ label: '뒤얽힘', amount: entangled });
   const total = Math.max(0, base + parts.reduce((sum, part) => sum + part.amount, 0));
@@ -179,8 +130,8 @@ export function isCardPlayable(state, instanceId) {
     if (!card.itemId) return false;
     if (!isItemBurdenGivenOrder(state.player.inventoryItemIdsInOrder, state.player.removedItemIds, state.player.inventoryCapacity, card.itemId)) return false;
   }
-  const stage = getStage(state.overload);
-  const cost = getEffectiveCost(def, stage, state.player.powers, state.player.statuses);
+  const stage = getStage(state.overloadActive);
+  const cost = getEffectiveCost(def, stage, state.player.statuses);
   if (state.player.energy < cost) return false;
   if (def.ammoCost && state.player.loaded < def.ammoCost) return false;
   if (def.requiresLoadedAtMost !== undefined && state.player.loaded > def.requiresLoadedAtMost) return false;
@@ -225,9 +176,7 @@ export function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier,
  * @param {number} params.playerMaxHp
  * @param {number} params.usableAmmo total ammo pulled in from inventory reserve at combat start
  * @param {number} params.maxLoad cap on player.loaded, sum of equipped weapons' maxLoadBonus
- * @param {number} params.overload
- * @param {number} params.overloadFloor
- * @param {number} params.overloadGainMultiplier
+ * @param {boolean} params.overloadActive
  * @param {number} [params.extraDrawPerTurn]
  * @param {number} [params.turnStartAoeDamage]
  * @param {string[]} [params.inventoryItemIdsInOrder]
@@ -238,7 +187,7 @@ export function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier,
  */
 export function createCombatState({
   deckEntries, monsterIds, hpMultiplier, playerHp, playerMaxHp, usableAmmo, maxLoad,
-  overload, overloadFloor, overloadGainMultiplier, extraDrawPerTurn, turnStartAoeDamage,
+  overloadActive, extraDrawPerTurn, turnStartAoeDamage,
   inventoryItemIdsInOrder, inventoryCapacity, hasBurdenItems, rngState,
 }) {
   const piles = cardEngine.createEmptyPiles();
@@ -261,14 +210,12 @@ export function createCombatState({
   const loaded = Math.min(maxLoad, usableAmmo);
   const reserve = usableAmmo - loaded;
 
-  const clamped = clampOverloadAndInsertStatusCards(overload, shuffled.piles, rng);
-
   // phase 'setup' — caller must run beginPlayerFirst() or beginEnemyFirst() (ambush, §7.3)
   // to actually open the combat; neither has happened yet.
   return {
     phase: 'setup',
     turn: 1,
-    overload: clamped.overload, overloadFloor, overloadGainMultiplier,
+    overloadActive: !!overloadActive,
     player: {
       hp: playerHp, maxHp: playerMaxHp, block: 0,
       energy: BASE_ENERGY, maxEnergy: BASE_ENERGY, loaded, reserve, maxLoad,
@@ -281,8 +228,8 @@ export function createCombatState({
       durabilityDecayInstanceIds: [],
     },
     enemies,
-    piles: clamped.piles,
-    rngState: clamped.rngState,
+    piles: shuffled.piles,
+    rngState: rng,
   };
 }
 
@@ -484,7 +431,7 @@ function applyOneEffect(state, effect, context) {
       const hitsCount = effect.hits || 1;
       for (let hit = 0; hit < hitsCount; hit++) {
         const target = resolveTargetScope(effect, context);
-        const stage = getStage(s.overload);
+        const stage = getStage(s.overloadActive);
         let flatBonus = 0;
         if (context.source === 'player') {
           flatBonus = getModuleDamageBonus(effect.attackKind, stage, s.player.powers) + (s.player.statuses.strength || 0);
@@ -524,7 +471,7 @@ function applyOneEffect(state, effect, context) {
     }
     case 'block': {
       const target = resolveTargetScope(effect, context);
-      const stage = getStage(state.overload);
+      const stage = getStage(state.overloadActive);
       if (target.scope === 'player') {
         const flatBonus = getModuleBlockBonus(stage, state.player.powers) + (state.player.statuses.dexterity || 0) + computeScalesByBonus(effect, state, context);
         const fragile = !!state.player.statuses.fragile;
@@ -617,7 +564,7 @@ function discardCardWithSlyTrigger(state, card, context) {
   if (!def.sly) {
     return { ...state, piles: cardEngine.moveToDiscard(state.piles, card) };
   }
-  const resolved = resolveCard(def, getStage(state.overload));
+  const resolved = resolveCard(def, getStage(state.overloadActive));
   let s = applyEffects(state, resolved.effects, {
     source: 'player', cardTargetId: context.cardTargetId,
     ignoresBlock: false, itemId: card.itemId,
@@ -643,8 +590,7 @@ function applyEffects(state, effects, context) {
 // ---- win/loss ----
 
 /**
- * §과부화 3단계 개편: 100 초과는 더 이상 즉사 조건이 아니다(상태이상 카드 삽입으로 대체) —
- * HP 0 이하만 패배로 판정한다.
+ * 패배 조건은 HP 0 이하 하나뿐이다.
  * @param {CombatState} state @returns {CombatState}
  */
 export function checkWinLoss(state) {
@@ -670,19 +616,15 @@ export function playCard(state, instanceId, targetId) {
   if (!removal) return state;
   const { card, piles: pilesAfterRemoval } = removal;
   const def = CARD_DEFINITIONS[card.defId];
-  const stage = getStage(state.overload);
+  const stage = getStage(state.overloadActive);
   const resolved = resolveCard(def, stage);
 
-  const rawOverload = gainOverload(state.overload, def.overloadGain || 0, state.overloadGainMultiplier);
-  const clamped = clampOverloadAndInsertStatusCards(rawOverload, pilesAfterRemoval, state.rngState);
   let s = {
     ...state,
-    piles: clamped.piles,
-    overload: clamped.overload,
-    rngState: clamped.rngState,
+    piles: pilesAfterRemoval,
     player: {
       ...state.player,
-      energy: state.player.energy - getEffectiveCost(def, stage, state.player.powers, state.player.statuses),
+      energy: state.player.energy - getEffectiveCost(def, stage, state.player.statuses),
       loaded: def.ammoCost ? state.player.loaded - def.ammoCost : state.player.loaded,
     },
   };

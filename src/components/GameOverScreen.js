@@ -3,8 +3,8 @@ import { snapshotSignal } from '../state/runState.js';
 import { RUN_COLLAPSE_TIME, TOTAL_NODES } from '../data/facilityLayout.js';
 import { computeInventoryScore, computeContractOutcome, startNewRun } from './runEndHelpers.js';
 
-// 'meltdown' phase는 과부화 3단계 개편에서 사라졌다(overloadEngine.js) — 죽은 분기를 남겨두면
-// 화면이 존재하지 않는 사인을 말할 수 있는 것처럼 읽힌다(리뷰 B7).
+// 사인은 둘뿐이다 — 죽은 분기를 남겨두면 화면이 존재하지 않는 사인을 말할 수 있는 것처럼
+// 읽힌다(리뷰 B7).
 function causeOfDeath(facilityRunState) {
   if (facilityRunState?.phase === 'collapsed') return '시설 붕괴';
   return '전투 불능';

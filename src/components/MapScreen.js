@@ -19,14 +19,14 @@ import {
 } from '../engine/runEngine.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
 import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION } from '../data/facilityLayout.js';
-import { computeFloorOverload, computeOverloadGainMultiplier, getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
+import { getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
   SECTOR_IDS, SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR, ADJACENT_SECTOR_IDS,
   LOCKDOWN_EXIT_CLOSE_WINDOW, CONTRACT_DETONATE_MIN_HOPS,
 } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
 import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE, CAPABILITY_KOREAN } from '../data/capabilityDisplay.js';
-import { OverloadGauge } from './OverloadGauge.js';
+import { OverloadToggle } from './OverloadToggle.js';
 import { InventoryPopup } from './InventoryPopup.js';
 import { Tooltip } from './Tooltip.js';
 import { PlayLog } from './PlayLog.js';
@@ -103,7 +103,7 @@ function ladderNote(forecast) {
   // 층계 가감을 받지 않으므로, 층계표를 그대로 베끼면 버튼이 없는 대가를 말하게 된다.
   const timeDelta = forecast.parts.filter((part) => part.label === '능력').reduce((acc, part) => acc + part.delta, 0);
   if (timeDelta !== 0) parts.push(`시간 ${timeDelta > 0 ? '+' : ''}${timeDelta}칸`);
-  // 소음과 과부화는 **총량**이다. `+`를 붙이면 "지금보다 2 더"로 읽히지만 실제로는 "이 행동이
+  // 소음은 **총량**이다. `+`를 붙이면 "지금보다 2 더"로 읽히지만 실제로는 "이 행동이
   // 낼 소음이 2"라는 뜻이다. 층계가 그 값을 바꿨을 때만 기본값과의 차이를 괄호로 덧붙인다.
   const amount = (label, value, baseValue) => {
     const delta = value - baseValue;
@@ -111,7 +111,6 @@ function ladderNote(forecast) {
     return `${label} ${value}(기본 ${baseValue} ${delta > 0 ? '+' : '−'} ${STEP_LABELS[step]} ${Math.abs(delta)})`;
   };
   if (cost.noise !== 0 || forecast.baseNoise !== 0) parts.push(amount('소음', cost.noise, forecast.baseNoise));
-  if (cost.overload !== 0 || forecast.baseOverload !== 0) parts.push(amount('과부화', cost.overload, forecast.baseOverload));
   if (cost.hpCost) parts.push(`HP -${cost.hpCost}`);
   if (cost.durabilityLoss) parts.push(`장비 내구도 -${cost.durabilityLoss}`);
   if (cost.duration != null) parts.push(`지속 ${cost.duration}칸`);
@@ -175,7 +174,7 @@ const LADDER_EXPLAINER = html`<div>
     불가(−3 이하) 시도 불가
   </div>
   <div style=${{ marginTop: '5px', opacity: 0.85 }}>
-    통화는 Capability마다 다릅니다 — Hacking은 과부화, Force는 소음과 장비 내구도, Stealth는 강한 흔적과 경계도, Mobility는 HP, Deception은 효과 지속, Perception은 시간.
+    통화는 Capability마다 다릅니다 — Hacking은 구역 경계도, Force는 소음과 장비 내구도, Stealth는 강한 흔적과 경계도, Mobility는 HP, Deception은 효과 지속, Perception은 시간.
   </div>
 </div>`;
 
@@ -203,14 +202,13 @@ function ActionButton({ run, actionId, opts = {}, label, tip, onClick, disabled,
 }
 
 /**
- * 유료 버튼 라벨의 유일한 규칙 — `이름 · N칸 · 소음 M · 과부화 K`. 0인 통화는 적지 않는다.
+ * 유료 버튼 라벨의 유일한 규칙 — `이름 · N칸 · 소음 M`. 0인 통화는 적지 않는다.
  * 버튼마다 다른 순서로 적으면 두 버튼을 나란히 놓고 비교할 수 없다.
  * @param {import('../engine/actionCosts.js').ActionForecast} forecast @param {string} label
  */
 function actionButtonLabel(forecast, label) {
   const parts = [label, `${forecast.timeCost}칸`];
   if (forecast.noise) parts.push(`소음 ${forecast.noise}`);
-  if (forecast.overload) parts.push(`과부화 ${forecast.overload}`);
   return parts.join(' · ');
 }
 
@@ -265,7 +263,7 @@ function capabilityActionSummary(key, raw) {
   const step = { surplus: '여유', standard: '표준', strained: '무리', severe: '위태', impossible: '불가' }[capabilityStep(raw, 1)];
   const common = `표준 요구치 1 기준 현재 단계는 '${step}'입니다.`;
   if (key === 'hacking') {
-    return `전자 잠금 특수 엣지 개방, 카메라·접속 인터페이스·발전기 조작, 구역 통제실 장악, 정보 계약의 확보와 송출에 쓰입니다. 모자라면 과부화로 값을 치릅니다. 탈출구 개방 대기 시간도 이 값이 높을수록 짧아집니다. ${common}`;
+    return `전자 잠금 특수 엣지 개방, 카메라·접속 인터페이스·발전기 조작, 구역 통제실 장악, 정보 계약의 확보와 송출에 쓰입니다. 모자라면 구역 경계도가 올라가는 것으로 값을 치릅니다. 탈출구 개방 대기 시간도 이 값이 높을수록 짧아집니다. ${common}`;
   }
   if (key === 'force') {
     return `물리 잠금 특수 엣지 개방, 카메라·발전기 파괴, 전원 차단, 파괴 계약에 쓰입니다. 모자라면 소음이 커지고 장착 장비의 내구도가 깎입니다. ${common}`;
@@ -939,11 +937,9 @@ export function MapScreen() {
             </div>
           <//>
           <${MapClock} run=${run} countdowns=${countdowns} />
-          <${Tooltip} content="현재 장착 장비가 만드는 과부화 바닥선 위로는 전투/현장 행동으로 계속 쌓입니다. 100을 넘겨도 런은 종료되지 않지만, 초과분은 전투 중 상태이상 카드로 전환됩니다.">
-            <div style=${{ display: 'flex', alignItems: 'center', width: '130px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
-              <${OverloadGauge} overload=${ps.overload} floor=${run.overloadFloor} compact=${true} />
-            </div>
-          <//>
+          <div style=${{ display: 'flex', alignItems: 'center', width: '130px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
+            <${OverloadToggle} active=${ps.overloadActive} compact=${true} />
+          </div>
           <${Tooltip} content=${`인벤토리 용량(${ps.inventory.capacity}칸)을 넘는 아이템은 "짐"이 되어 전투 중 과적 카드로 덱에 섞입니다. 용량 안으로 정리하세요.`}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)' }}>
               <${IconBox} /><span>인벤토리 <strong>${ps.inventory.items.length}</strong>/${ps.inventory.capacity}${burdenCount > 0 ? ` (짐 ${burdenCount})` : ''}</span>
@@ -1418,7 +1414,7 @@ export function MapScreen() {
                       <${ActionButton}
                         run=${run} actionId="wait"
                         label="대기"
-                        tip="시계를 1칸 진행시킵니다. HP·과부화·경계도는 회복되지 않습니다 — 개방·쿨다운·적 위치를 기다리는 용도입니다."
+                        tip="시계를 1칸 진행시킵니다. HP·경계도는 회복되지 않습니다 — 개방·쿨다운·적 위치를 기다리는 용도입니다."
                         onClick=${() => runCommand({ type: 'WAIT' })}
                       />
                       </div>
@@ -1900,7 +1896,7 @@ export function MapScreen() {
                             key=${eq.instanceId} run=${run} actionId="fieldEquipment" opts=${{ contract: fa }}
                             disabled=${disabled}
                             label=${`${label} 사용${needsTarget ? '…' : ''}`}
-                            tip=${`${EQUIPMENT_DEFS[eq.equipmentId]?.name || eq.equipmentId} 능동 효과. ${FIELD_TARGET_LABELS[fa.targetKind] || fa.targetKind}. 과부화 +${fa.overloadGain}, 재사용 대기 ${fa.cooldown}칸${fa.duration ? `, 지속 ${fa.duration}칸` : ''}.${fa.targetKind === 'edge' ? ' 지도에서 강조된 엣지를 직접 클릭해 지정할 수 있습니다.' : ''}`}
+                            tip=${`${EQUIPMENT_DEFS[eq.equipmentId]?.name || eq.equipmentId} 능동 효과. ${FIELD_TARGET_LABELS[fa.targetKind] || fa.targetKind}. 재사용 대기 ${fa.cooldown}칸${fa.duration ? `, 지속 ${fa.duration}칸` : ''}.${fa.targetKind === 'edge' ? ' 지도에서 강조된 엣지를 직접 클릭해 지정할 수 있습니다.' : ''}`}
                             disabledNote=${onCooldown ? `재사용 대기 중 — ${leftTicksText(run.fieldCooldowns[eq.instanceId] || 0, run.time)}.` : ''}
                             onClick=${handleClick}
                           />

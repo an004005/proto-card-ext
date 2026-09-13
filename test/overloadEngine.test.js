@@ -1,43 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getStage, isLethalOverload, gainOverload, reduceOverload, applyStageScale } from '../src/engine/overloadEngine.js';
+import { getStage, applyStageScale } from '../src/engine/overloadEngine.js';
 
-test('getStage buckets match the 3-stage overload redesign: 0-29 normal, 30-69 boosted, 70+ boosted+penalty', () => {
-  assert.equal(getStage(0), 0);
-  assert.equal(getStage(29), 0);
-  assert.equal(getStage(30), 1);
-  assert.equal(getStage(69), 1);
-  assert.equal(getStage(70), 2);
-  assert.equal(getStage(99), 2);
-  assert.equal(getStage(100), 2);
-  assert.equal(getStage(130), 2); // exceeding 100 stays at stage 2 — combatEngine.js handles the excess via status cards, not a higher stage
+test('getStage is the toggle itself — ON is 단계 1, OFF is 단계 0 (ADR-0080)', () => {
+  assert.equal(getStage(false), 0);
+  assert.equal(getStage(true), 1);
 });
 
-test('isLethalOverload is true at and only at >= 100', () => {
-  assert.equal(isLethalOverload(99), false);
-  assert.equal(isLethalOverload(100), true);
-  assert.equal(isLethalOverload(150), true);
-});
-
-test('gainOverload adds and respects implant⑤ multiplier', () => {
-  assert.equal(gainOverload(10, 5), 15);
-  assert.equal(gainOverload(10, 10, 0.5), 15);
-});
-
-test('reduceOverload never drops below the equipped floor', () => {
-  assert.equal(reduceOverload(50, 20, 25), 30);
-  assert.equal(reduceOverload(30, 20, 25), 25); // would go to 10, clamped to floor
-});
-
-test('applyStageScale: +25% rounded at stage 1-2, raw value at stage 0 (§4.2)', () => {
+test('applyStageScale: +25% rounded at stage 1, raw value at stage 0 (§4.2)', () => {
   assert.equal(applyStageScale(6, 0, true), 6);
   assert.equal(applyStageScale(6, 1, true), 8); // 7.5 -> round -> 8
-  assert.equal(applyStageScale(6, 2, true), 8);
   assert.equal(applyStageScale(9, 1, true), 11); // 11.25 -> round -> 11
   assert.equal(applyStageScale(10, 1, true), 13); // 12.5 -> round-half-up -> 13
 });
 
 test('applyStageScale leaves non-scaling values untouched regardless of stage', () => {
   assert.equal(applyStageScale(0, 1, false), 0);
-  assert.equal(applyStageScale(5, 2, false), 5);
+  assert.equal(applyStageScale(5, 1, false), 5);
 });

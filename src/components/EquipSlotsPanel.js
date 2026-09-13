@@ -2,7 +2,6 @@ import { html } from '../lib.js';
 import { Tooltip } from './Tooltip.js';
 import { EquipmentTooltipContent } from './EquipmentTooltipContent.js';
 import { describeCapabilityModifiers } from '../data/capabilityDisplay.js';
-import { describeImplantCost } from '../data/itemDisplay.js';
 import { MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 
@@ -53,13 +52,10 @@ export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped 
           `;
           const capLine = describeCapabilityModifiers(sl.equipmentId);
           const capNote = capLine ? html`<div style=${{ fontSize: '10px', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--color-neutral-700)', opacity: 0.9 }}>${capLine}</div>` : null;
-          // 임플란트의 대가(과부화 바닥·획득 배수)는 장점과 같은 칸에 반드시 함께 선다(리뷰 B4).
-          const costLine = describeImplantCost(sl.equipmentId);
-          const costNote = costLine ? html`<div style=${{ fontSize: '10px', marginTop: '6px', color: 'var(--color-negative, #dc2626)', fontWeight: 700 }}>${costLine}</div>` : null;
-          const notes = html`${costNote}${capNote}`;
+          const notes = capNote;
           if (sl.cardList) return html`<${Tooltip} key=${sl.key} width=${260} content=${html`<div><${EquipmentTooltipContent} name=${sl.name} cardList=${sl.cardList} />${notes}</div>`}>${cell}<//>`;
           if (sl.description) return html`<${Tooltip} key=${sl.key} width=${220} content=${html`<div>${sl.description}${notes}</div>`}>${cell}<//>`;
-          if (costNote || capNote) return html`<${Tooltip} key=${sl.key} width=${220} content=${notes}>${cell}<//>`;
+          if (capNote) return html`<${Tooltip} key=${sl.key} width=${220} content=${notes}>${cell}<//>`;
           return html`<div key=${sl.key}>${cell}</div>`;
         })}
       </div>

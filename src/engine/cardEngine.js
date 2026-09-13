@@ -149,20 +149,6 @@ export function insertCardToDiscard(piles, defId) {
 }
 
 /**
- * Used for overload-excess status cards (§과부화 3단계 개편): inserted at a random position in the
- * draw pile so it can come up before the next reshuffle, unlike the discard-pile status cards above.
- * @param {Piles} piles
- * @param {string} defId
- * @param {RngState} rngState
- * @returns {{piles: Piles, rngState: RngState}}
- */
-export function insertCardToDrawRandom(piles, defId, rngState) {
-  const { value: index, state } = nextInt(rngState, piles.drawPile.length + 1);
-  const drawPile = [...piles.drawPile.slice(0, index), createCardInstance(defId), ...piles.drawPile.slice(index)];
-  return { piles: { ...piles, drawPile }, rngState: state };
-}
-
-/**
  * @param {Piles} piles
  * @param {RngState} rngState
  * @returns {{piles: Piles, rngState: RngState}}

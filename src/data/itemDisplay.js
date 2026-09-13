@@ -47,21 +47,3 @@ export function describeItem(item) {
   };
 }
 
-/**
- * 임플란트를 장착할 때 치르는 대가를 한 줄로. 임플란트는 "그냥 좋은 것"이 아니다 — 과부화
- * 바닥을 영구히 올리거나 전투 중 과부화 획득 배수를 올린다. 그 대가가 툴팁에 없으면 화면은
- * 장점만 말하는 셈이 된다(리뷰 B4).
- * @param {string|undefined} equipmentId
- * @returns {string|null}
- */
-export function describeImplantCost(equipmentId) {
-  const def = equipmentId ? IMPLANT_DEFINITIONS[equipmentId] : null;
-  if (!def) return null;
-  const parts = [];
-  if (def.floorOverload > 0) parts.push(`과부화 바닥 +${def.floorOverload}(안정제로도 이 아래로 못 내림)`);
-  const effects = /** @type {{kind: string, multiplier?: number}[]} */ (def.effects || []);
-  const multiplier = effects.find((effect) => effect.kind === 'overloadGainMultiplier');
-  if (multiplier) parts.push(`전투 중 과부화 획득 ×${multiplier.multiplier}`);
-  if (parts.length === 0) return null;
-  return `대가: ${parts.join(' · ')}`;
-}

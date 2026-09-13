@@ -50,7 +50,7 @@
  * @typedef {Object} PlayerState
  * @property {number} hp
  * @property {number} maxHp
- * @property {number} overload
+ * @property {boolean} overloadActive 과부화 토글(ON이면 단계 1). 런 내내 유지되고 전투와 지도를 함께 오간다.
  * @property {Loadout} loadout
  * @property {Inventory} inventory 용량 제한 있음 — 런에 들고 나가는 짐, 과적(짐) 규칙 적용 대상
  * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
@@ -285,9 +285,6 @@
  * @property {string|null} playerNodeId
  * @property {string[]} visitedNodeIds 탐사 안개(§10.2)용 — 시작 노드부터 포함.
  * @property {string[]} openedEdgeIds Capability로 연 'blocked'/'electronic' 특수 엣지.
- * @property {number} overload 0..100+ (100 초과는 전투 상태이상 카드로 처리한다).
- * @property {number} overloadFloor
- * @property {number} overloadGainMultiplier
  * @property {Record<string, NodeObservation>} observations 기본 정찰(§6.2) 및
  *   현재/인접 노드 자동 갱신(§10.2 — gameReducer.js가 매 행동 끝에 기록) 결과. 시야 밖으로 벗어나도
  *   지워지지 않고 "마지막으로 확인한 정보"로 남는다.
@@ -446,7 +443,6 @@
  * @property {number} [requiresLoadedAtMost] Only playable while the current magazine has this many rounds or fewer.
  * @property {boolean} exhausts
  * @property {boolean} scalesWithStage
- * @property {number} overloadGain
  * @property {CardEffect[]} [effects]
  * @property {CardStageRow[]} [stageTable]
  * @property {'variable'|'fixed'} [powerKind]
@@ -468,7 +464,7 @@
  * @property {0|1} disengageProgress
  */
 
-/** @typedef {'assassination'|'melee'|'firearm'|'explosive'|'hack'|'deception'|'escape'|'perception'|'electronic'|'healing'|'stabilize'} MapTrait */
+/** @typedef {'assassination'|'melee'|'firearm'|'explosive'|'hack'|'deception'|'escape'|'perception'|'electronic'|'healing'} MapTrait */
 
 /**
  * @typedef {Object} CardInstance
@@ -573,9 +569,7 @@
  * @typedef {Object} CombatState
  * @property {'setup'|'player_turn'|'enemy_turn'|'victory'|'defeat'} phase
  * @property {number} turn
- * @property {number} overload 전투 중에는 100을 넘는 값으로 저장되지 않는다 — 100 초과분은 상태이상 카드 삽입으로 즉시 clamp됨(§과부화 3단계 개편).
- * @property {number} overloadFloor
- * @property {number} overloadGainMultiplier
+ * @property {boolean} overloadActive 과부화 토글의 사본 — 전투 종료 시 playerState로 되돌아간다.
  * @property {PlayerCombatState} player
  * @property {EnemyState[]} enemies
  * @property {Piles} piles

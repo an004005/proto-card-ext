@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildDeckFromLoadout, computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus,
-  computeOverloadGainMultiplier, getImplantEffect, computeMaxLoadBonus, computeDamagedStatusCardEntries,
+  buildDeckFromLoadout, computeMaxHpBonus, computeInventoryCapacityBonus,
+  getImplantEffect, computeMaxLoadBonus, computeDamagedStatusCardEntries,
   applyDurabilityDecay, MAX_DURABILITY,
 } from '../src/engine/equipmentEngine.js';
 
@@ -99,20 +99,10 @@ test('applyDurabilityDecay is a no-op when nothing decayed this combat', () => {
   assert.deepEqual(result.destroyedItems, []);
 });
 
-test('computeFloorOverload sums only equipped implants\' floor values (§10, not modules)', () => {
-  assert.equal(computeFloorOverload(loadout({ implantIds: ['implant1', 'implant3'] })), 15); // 10 + 5
-  assert.equal(computeFloorOverload(loadout({ implantIds: [] })), 0);
-});
-
 test('computeMaxHpBonus / computeInventoryCapacityBonus read the right implant effects', () => {
   assert.equal(computeMaxHpBonus(loadout({ implantIds: ['implant1'] })), 7);
   assert.equal(computeInventoryCapacityBonus(loadout({ implantIds: ['implant3'] })), 5);
   assert.equal(computeMaxHpBonus(loadout({ implantIds: ['implant3'] })), 0);
-});
-
-test('computeOverloadGainMultiplier applies implant⑤\'s 50% reduction', () => {
-  assert.equal(computeOverloadGainMultiplier(loadout({ implantIds: [] })), 1);
-  assert.equal(computeOverloadGainMultiplier(loadout({ implantIds: ['implant5'] })), 0.5);
 });
 
 test('getImplantEffect finds the matching implant or returns null', () => {

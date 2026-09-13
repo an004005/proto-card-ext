@@ -120,7 +120,7 @@ export function CombatScreen() {
       </div>
 
       <div style=${{ display: 'flex', gap: 'var(--space-4)', justifyContent: 'center', alignItems: 'stretch' }}>
-        <${PlayerStatusBar} player=${player} overload=${combat.overload} overloadFloor=${combat.overloadFloor} animation=${animation?.actor === 'player' ? animation : null} />
+        <${PlayerStatusBar} player=${player} overloadActive=${combat.overloadActive} canToggleOverload=${combat.phase === 'player_turn'} animation=${animation?.actor === 'player' ? animation : null} />
         <div style=${{ width: '2px', background: 'var(--color-divider)', alignSelf: 'stretch' }}></div>
         <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
           ${enemies.map((enemy) => html`
@@ -164,7 +164,7 @@ export function CombatScreen() {
                 <//>
                 ${escapeCards.length > 0 ? html`<span style=${{ color: '#0e7490', fontWeight: 800 }}>손패 이탈 카드 ${escapeCards.length}장 강조됨</span>` : html`<span style=${{ color: 'var(--color-negative, #dc2626)' }}>손패에 이탈 카드 없음 — 다음 드로우까지 버티세요</span>`}
                 <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} disabled=${playbackActive} onClick=${() => dispatch({ type: 'CANCEL_DISENGAGE' })}>이탈 취소</button>
-                <${Tooltip} width=${200} content="진행도를 채우면 전투를 즉시 종료하고 맵으로 돌아갑니다 — 승리 보상은 없지만 HP/과부화는 지금 상태 그대로 유지됩니다.">
+                <${Tooltip} width=${200} content="진행도를 채우면 전투를 즉시 종료하고 맵으로 돌아갑니다 — 승리 보상은 없지만 HP는 지금 상태 그대로 유지됩니다.">
                   <button class="btn btn-primary" style=${{ padding: '4px 10px' }} disabled=${playbackActive || !canDisengage(disengage)} onClick=${() => dispatch({ type: 'RESOLVE_DISENGAGE' })}>이탈 확정</button>
                 <//>
               `
@@ -188,7 +188,7 @@ export function CombatScreen() {
             draggingInstanceId=${draggingCard?.instanceId ?? null}
             onCardDragStart=${(card) => setDraggingCard(card)}
             onCardDragEnd=${() => setDraggingCard(null)}
-            stage=${stage} overload=${combat.overload} powers=${player.powers}
+            stage=${stage} powers=${player.powers}
             inventory=${snapshotSignal.value.playerState.inventory}
             player=${player}
           />

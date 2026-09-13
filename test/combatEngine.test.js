@@ -9,11 +9,11 @@ function entries(defIds) {
   return defIds.map((defId) => ({ defId }));
 }
 
-function makeCombat({ deck, monsterIds, overload = 0, overloadFloor = 0, playerHp = 70, ammo = 8, maxLoad = 999, seed = 1, hpMultiplier }) {
+function makeCombat({ deck, monsterIds, overloadActive = false, playerHp = 70, ammo = 8, maxLoad = 999, seed = 1, hpMultiplier }) {
   const state = createCombatState({
     deckEntries: entries(deck), monsterIds, hpMultiplier,
     playerHp, playerMaxHp: 70, usableAmmo: ammo, maxLoad,
-    overload, overloadFloor, overloadGainMultiplier: 1, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
+    overloadActive, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
     inventoryItemIdsInOrder: [], inventoryCapacity: 30,
     rngState: createRngState(seed),
   });
@@ -35,8 +35,8 @@ test('베기 deals 6 base damage at stage 0 and costs 1 energy', () => {
   assert.equal(state.enemies[0].hp, before - 6);
 });
 
-test('stage 1 scales 베기 damage to 8 (6 * 1.25, rounded up) via §4.2', () => {
-  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], overload: 30 });
+test('과부화 ON(단계 1) scales 베기 damage to 8 (6 * 1.25, rounded up) via §4.2', () => {
+  let state = makeCombat({ deck: Array(10).fill('katana_slash'), monsterIds: ['nibbit'], overloadActive: true });
   const before = state.enemies[0].hp;
   const card = findCard(state, 'katana_slash');
   state = playCard(state, card.instanceId, state.enemies[0].id);
@@ -134,7 +134,7 @@ test('playing a card tagged with equipmentInstanceId can accumulate a 1% durabil
 });
 
 test('역장 방어 locks its armor gain at the stage it was cast, and grants that much armor immediately — no lingering "power" state', () => {
-  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 30 });
+  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overloadActive: true });
   const card = findCard(state, 'module_forcefield_defense');
   state = playCard(state, card.instanceId, null);
   assert.equal(state.player.statuses.armor, 6); // stage1 row, granted once, immediately, on cast
@@ -144,7 +144,7 @@ test('역장 방어 locks its armor gain at the stage it was cast, and grants th
 });
 
 test('역장 방어 only grants armor once — later turn ends just decay the leftover stack, no re-grant', () => {
-  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overload: 30 });
+  let state = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overloadActive: true });
   const card = findCard(state, 'module_forcefield_defense');
   state = playCard(state, card.instanceId, null);
   state = advanceTurn(state); // turn 1 end converts the 6 armor to block (decrementing it to 5); enemy attacks; turn 2 starts
@@ -153,7 +153,7 @@ test('역장 방어 only grants armor once — later turn ends just decay the le
 });
 
 test('신경 강화 adds a live block bonus that tracks the CURRENT stage, not the cast-time stage', () => {
-  let state = makeCombat({ deck: ['module_neural_boost', 'katana_parry', 'katana_parry'], monsterIds: ['nibbit'], overload: 0 });
+  let state = makeCombat({ deck: ['module_neural_boost', 'katana_parry', 'katana_parry'], monsterIds: ['nibbit'], overloadActive: false });
   const power = findCard(state, 'module_neural_boost');
   state = playCard(state, power.instanceId, null); // active at stage 0 -> +1 block bonus
   const before = state.player.block;
@@ -162,50 +162,21 @@ test('신경 강화 adds a live block bonus that tracks the CURRENT stage, not t
   assert.equal(state.player.block - before, 9);
 });
 
-function statusCardCount(state) {
-  return state.piles.drawPile.filter((c) => c.defId === 'overload_status_card').length
-    + state.piles.hand.filter((c) => c.defId === 'overload_status_card').length
-    + state.piles.discardPile.filter((c) => c.defId === 'overload_status_card').length
-    + state.piles.exhaustPile.filter((c) => c.defId === 'overload_status_card').length;
-}
-
-test('overload exceeding 100 clamps to 100 and inserts status cards into the draw pile instead of causing defeat (§과부화 3단계 개편)', () => {
-  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 98, ammo: 99, playerHp: 70 });
-  const card = findCard(state, 'rifle_suppress'); // overloadGain 5 -> raw 103, 3 excess -> ceil(3/10) = 1 status card, clamped to 100
-  state = playCard(state, card.instanceId, null);
-  assert.equal(state.overload, 100);
-  assert.notEqual(state.phase, 'defeat');
-  assert.equal(state.player.hp, 70); // no HP loss from overload alone
-  assert.equal(statusCardCount(state), 1);
+test('과부화 토글을 켜면 단계 표를 쓰는 카드가 1행(과부화)으로 발동한다', () => {
+  const off = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'] });
+  const on = makeCombat({ deck: ['module_forcefield_defense', ...Array(5).fill('katana_slash')], monsterIds: ['nibbit'], overloadActive: true });
+  const offPlayed = playCard(off, findCard(off, 'module_forcefield_defense').instanceId, null);
+  const onPlayed = playCard(on, findCard(on, 'module_forcefield_defense').instanceId, null);
+  assert.equal(offPlayed.player.statuses.armor, 4); // 0행
+  assert.equal(onPlayed.player.statuses.armor, 6); // 1행
 });
 
-test('overload clamped to 100 each time it is exceeded — playing more cards keeps adding status cards as the raw excess recurs', () => {
-  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 98, ammo: 99, playerHp: 70 });
-  const first = findCard(state, 'rifle_suppress');
-  state = playCard(state, first.instanceId, null); // 98 -> raw 103, clamped to 100, 1 status card
-  assert.equal(state.overload, 100);
-  assert.equal(statusCardCount(state), 1);
-  state = { ...state, player: { ...state.player, energy: 99 } }; // stage-2's +1 cost would otherwise starve the second play
-  const second = findCard(state, 'rifle_suppress');
-  state = playCard(state, second.instanceId, null); // 100 -> raw 105, clamped to 100, +1 status card (excess 5 -> ceil(5/10) = 1)
-  assert.equal(state.overload, 100);
-  assert.equal(statusCardCount(state), 2);
-});
-
-test('starting a combat with overload already over 100 clamps to 100 and pre-inserts the matching status-card count into the draw pile', () => {
-  const state = makeCombat({ deck: Array(5).fill('katana_slash'), monsterIds: ['nibbit'], overload: 123 });
-  assert.equal(state.overload, 100); // ceil(23/10) = 3 status cards, then clamped
-  assert.equal(statusCardCount(state), 3);
-  const total = state.piles.drawPile.length + state.piles.discardPile.length + state.piles.hand.length;
-  assert.ok(total >= 5 + 3);
-});
-
-test('stage 2 (70%+ overload) adds +1 to every card cost on top of the existing +25% boost', () => {
-  const state = makeCombat({ deck: Array(5).fill('katana_slash'), monsterIds: ['nibbit'], overload: 70, playerHp: 70 });
+test('과부화는 어떤 카드 코스트에도 가산을 붙이지 않는다 — 단계 표에 적힌 코스트가 전부다', () => {
+  const state = makeCombat({ deck: Array(5).fill('katana_slash'), monsterIds: ['nibbit'], overloadActive: true, playerHp: 70 });
   const card = findCard(state, 'katana_slash');
   const before = state.player.energy;
   const after = playCard(state, card.instanceId, state.enemies[0].id);
-  assert.equal(before - after.player.energy, 2); // base cost 1 + stage-2 penalty 1
+  assert.equal(before - after.player.energy, 1);
 });
 
 test('과적 상태이상 카드는 효과 없이 소멸하며 턴 진행을 막지 않는다', () => {
@@ -272,7 +243,7 @@ test('의식의 짐승 switches to phase 2 once hp drops to (or below) 150/252',
 test('beginEnemyFirst (ambush, §7.3) resolves the first intent before the player ever acts', () => {
   const setup = createCombatState({
     deckEntries: entries(Array(5).fill('katana_slash')), monsterIds: ['vine_shambler'],
-    playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999, overload: 0, overloadFloor: 0, overloadGainMultiplier: 1,
+    playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999, overloadActive: false,
     extraDrawPerTurn: 0, turnStartAoeDamage: 0, inventoryItemIdsInOrder: [], inventoryCapacity: 30,
     rngState: createRngState(1),
   });

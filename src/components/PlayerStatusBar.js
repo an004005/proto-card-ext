@@ -2,7 +2,7 @@ import { html } from '../lib.js';
 import { POWER_LABELS, POWER_DESCRIPTIONS } from '../data/statusEffects.js';
 import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
 import { getStage } from '../engine/overloadEngine.js';
-import { OverloadGauge } from './OverloadGauge.js';
+import { OverloadToggle } from './OverloadToggle.js';
 import { AmmoGauge } from './AmmoGauge.js';
 import { useDamagePopups, DamagePopupLayer } from './DamagePopup.js';
 import { StatusTag } from './StatusTag.js';
@@ -16,9 +16,9 @@ function powerBonus(key, stage) {
   return table ? table[stage] : null;
 }
 
-export function PlayerStatusBar({ player, overload, overloadFloor, animation = null }) {
+export function PlayerStatusBar({ player, overloadActive, canToggleOverload = true, animation = null }) {
   const hpPct = Math.max(0, Math.round((player.hp / player.maxHp) * 100));
-  const stage = getStage(overload);
+  const stage = getStage(overloadActive);
   const statusEntries = Object.entries(player.statuses).filter(([, v]) => v);
   const powerEntries = Object.keys(player.powers || {});
   const hasNextRangedBonus = !!player.temporaryEffects?.nextRangedBonus;
@@ -39,7 +39,7 @@ export function PlayerStatusBar({ player, overload, overloadFloor, animation = n
         </span>
         <${DamagePopupLayer} popups=${popups} />
       </div>
-      <${OverloadGauge} overload=${overload} floor=${overloadFloor} />
+      <${OverloadToggle} active=${overloadActive} disabled=${!canToggleOverload} />
       <${AmmoGauge} loaded=${player.loaded} maxLoad=${player.maxLoad} reserve=${player.reserve} />
       <div style=${{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
         ${player.block > 0 ? html`<span class="tag tag-neutral">방어 ${player.block}</span>` : null}

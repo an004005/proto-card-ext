@@ -22,7 +22,7 @@ function startedCombat(ambush) {
     rngState: run.rngState,
     facilityRunState: { ...run, playerNodeId: run.playerNodeId },
     playerState: {
-      hp: 70, maxHp: 70, overload: 0,
+      hp: 70, maxHp: 70, overloadActive: false,
       loadout: { consumableSlots: [], weapons: [{ id: 'w1', kind: 'equipment', equipmentId: 'katana', durability: 10 }] },
       inventory: { items: [], ammo: 8, capacity: 12 },
     },

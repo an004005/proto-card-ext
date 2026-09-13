@@ -256,17 +256,13 @@ export const STEALTH_CONTEXT_LOCKDOWN = -1;
 // 해킹 수치별로 누적 언락(상위 레벨은 하위 효과를 전부 포함): 1=이 구역 순찰경로 영구 표시,
 // 2=이 구역 경계레벨 감소(감소량 = 해킹 수치 - 1), 3=맵 전체 위협 전원 patrol 전환.
 export const CONTROL_ROOM_HACK_TIME = 8;
-export const CONTROL_ROOM_HACK_OVERLOAD = 5;
 
-// 계약(§3단계, D3·D4·D21). 완료 액션 세 종류의 시간·과부화 비용. 확보(회수 물건 집기·정보
+// 계약(§3단계, D3·D4·D21). 완료 액션 세 종류의 시간 비용. 확보(회수 물건 집기·정보
 // 데이터 추출)는 정찰보다 무겁고 해킹보다는 가볍게, 파괴는 가장 무겁게, 송출은 확보보다
 // 가볍게 잡았다 — 다른 §신규 필드 액션들과 같은 대역(4~9칸)에 맞춘 1차값이다.
 export const CONTRACT_ACQUIRE_TIME = 6;
-export const CONTRACT_ACQUIRE_OVERLOAD = 4;
 export const CONTRACT_DESTROY_TIME = 9;
-export const CONTRACT_DESTROY_OVERLOAD = 8;
 export const CONTRACT_TRANSMIT_TIME = 5;
-export const CONTRACT_TRANSMIT_OVERLOAD = 5;
 
 /**
  * 파괴 계약의 마지막 장(C5). 목표부에서 폭약을 **설치**(CONTRACT_DESTROY_TIME, 여기서 봉쇄
@@ -290,7 +286,6 @@ export const ACCESS_INTERFACE_NODE_CHANCE = 0.16;
 export const CAMERA_STEALTH_THRESHOLD = 3;
 export const CAMERA_ALERT_RANGE = 3;
 export const CAMERA_HACK_TIME = 5;
-export const CAMERA_HACK_OVERLOAD = 3;
 export const CAMERA_HACK_DURATION = 15;
 // Effective Hacking -2/-1/0/1/2/3/4 -> direct graph-hop range (§10.2 문서: "Hacking 1·2·3·4에서
 // 각각 1·2·3·4홉 이내"). Hacking 0 이하는 자격 미달로 아예 시도할 수 없으므로 0. A hacked access
@@ -301,7 +296,6 @@ export const CAMERA_FORCE_TIME = 5;
 export const CAMERA_FORCE_NOISE = 2;
 export const GENERATOR_SECTOR_IDS = ['power', 'labs'];
 export const GENERATOR_HACK_TIME = 5;
-export const GENERATOR_HACK_OVERLOAD = 3;
 export const GENERATOR_FORCE_TIME = 5;
 export const GENERATOR_FORCE_NOISE = 2;
 export const GENERATOR_COMBAT_START_ARMOR = 5;
@@ -428,7 +422,6 @@ export const POWER_CUT_NOISE = 3;
 // 가짜 소음 — Deception만 있으면 어디서든 쓸 수 있는 유인 수단이다. 접속 인터페이스를 요구하는
 // 가짜 목표 송출과 달리 자리를 가리지 않지만, 경계도를 옮기지는 못한다. 시선만 끈다.
 export const FAKE_NOISE_TIME = 3;
-export const FAKE_NOISE_OVERLOAD = 3;
 export const FAKE_NOISE_REQUIREMENT = 1;
 /** 실효 Deception -2/-1/0/1/2/3/4 -> 소음을 심을 수 있는 홉 범위. 1 미만은 자격 미달이라 0이다. */
 export const FAKE_NOISE_RANGE_BY_DECEPTION = [0, 0, 0, 1, 2, 3, 3];
@@ -445,7 +438,6 @@ export const FALSE_BROADCAST_ANY_SECTOR_DECEPTION = 3;
 
 // 가짜 목표 송출(D12) — 경계를 인접 구역으로 옮긴다. 총량은 보존된다.
 export const FALSE_BROADCAST_TIME = 7;
-export const FALSE_BROADCAST_OVERLOAD = 3;
 export const FALSE_BROADCAST_INTENSITY = 2;
 /**
  * Deception — 어설픈 속임수는 오래 못 간다. 심어둔 가짜 목표가 유지되는 시간이며, 소음(5칸)
@@ -483,8 +475,6 @@ export const CAPABILITY_MIN_TIME = 1;
 /** Force — 힘으로 밀어붙이면 시끄럽다. severe에서는 장비도 상한다. */
 export const CAPABILITY_STEP_NOISE_DELTA = { surplus: -1, standard: 0, strained: 1, severe: 2 };
 export const CAPABILITY_STEP_DURABILITY_LOSS = { surplus: 0, standard: 0, strained: 0, severe: 1 };
-/** Hacking — 서툴수록 시스템에 부하가 남는다(D9 역탐지 게이지는 5단계 범위 밖). */
-export const CAPABILITY_STEP_OVERLOAD_DELTA = { surplus: -3, standard: 0, strained: 3, severe: 7 };
 /** Mobility — 무리하면 몸이 상한다. playerState.hp라 커맨드 래퍼에서 반영한다. */
 export const CAPABILITY_STEP_HP_COST = { surplus: 0, standard: 0, strained: 3, severe: 8 };
 /** Stealth — 서툰 침투는 흔적을 남긴다. severe는 그 자리에서 경계까지 올린다(4단계 파이프라인 재사용). */
@@ -525,11 +515,6 @@ export const PRIZE_OPTION_COUNT = 3;
 
 /** @type {Record<1|2|3|4, number>} §7.1 소음 단계 -> 홉 범위 */
 export const NOISE_HOP_RANGE = { 1: 1, 2: 2, 3: 3, 4: Infinity };
-
-// ---- Overload (§8) ----
-
-export const OVERLOAD_MELTDOWN = 100;
-export const OVERLOAD_MIN = 0;
 
 // ---- 공통 접근 모드 (§6.1) ----
 
@@ -588,7 +573,7 @@ export const FREE_OBSERVATION_DETAIL_LEVEL = 1;
 // 이 수치 이상이면 대기 중에도 인접 1홉의 실시간 관측이 끊기지 않는다(대기 관측 차단의 예외).
 export const PERCEPTION_WAIT_OBSERVATION_MIN = 2;
 
-// 대기와 조우 회피. 대기는 HP·과부화·경계도를 회복시키지 않는다 — 개방·쿨다운·적 위치를
+// 대기와 조우 회피. 대기는 HP·경계도를 회복시키지 않는다 — 개방·쿨다운·적 위치를
 // 기다리는 용도다. 묶음 대기는 1칸 대기를 반복하며 새 조우·출구 개방/폐쇄·붕괴에서 즉시 멈춘다.
 export const WAIT_TICK_TIME = 1;
 export const WAIT_BATCH_MAX_TICKS = 5;
@@ -608,9 +593,3 @@ export const FORCE_TIER1_TIME = 5;
 export const FORCE_BASE_NOISE = 2; // §6.3 "Force 기본 소음은 2와 흔적이다."
 export const HACKING_TIER1_TIME = 4;
 export const HACKING_BASE_NOISE = 0;
-// §8.2 "Hacking 1/2/3/4 신속 접근 +3/+6/+9/+12" — MVP는 tier 1만 사용하며, 과부화 상승량
-// 절반 적용(올림)으로 +3 대신 +2다. 안전 접근은 같은 폭만큼 깎여 0이 된다.
-export const HACKING_TIER1_OVERLOAD_GAIN = 2;
-/** 안전 접근이 Hacking 과부화에서 깎는 값 — tier1 상승분과 같아 안전 접근은 부하가 0이다. */
-export const SAFE_OVERLOAD_DISCOUNT = 2;
-export const RUSH_OVERLOAD_GAIN = 3; // §8.2 "강행 접근의 Overload 대가" — 상승량 절반 적용 후 +3

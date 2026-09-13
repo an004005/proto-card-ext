@@ -1,12 +1,11 @@
 import { html } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus } from '../engine/equipmentEngine.js';
+import { computeMaxHpBonus, computeInventoryCapacityBonus } from '../engine/equipmentEngine.js';
 import { BASE_INVENTORY_CAPACITY, BASE_MAX_HP } from '../engine/gameReducer.js';
 import { getUsableAmmo } from '../engine/inventoryEngine.js';
 import { computeCapabilities, effectiveForRequirement } from '../engine/capabilityEngine.js';
 import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE, CAPABILITY_KOREAN } from '../data/capabilityDisplay.js';
-import { OverloadGauge } from './OverloadGauge.js';
 import { DeckInventoryView } from './DeckInventoryView.js';
 import { Tooltip } from './Tooltip.js';
 
@@ -26,7 +25,6 @@ export function LoadoutScreen() {
   const ps = snapshotSignal.value.playerState;
   const loadout = ps.loadout;
 
-  const floor = computeFloorOverload(loadout);
   const maxHp = BASE_MAX_HP + computeMaxHpBonus(loadout);
   const capacity = BASE_INVENTORY_CAPACITY + computeInventoryCapacityBonus(loadout);
   const startingAmmo = getUsableAmmo(ps.inventory);
@@ -45,11 +43,6 @@ export function LoadoutScreen() {
         </div>
 
         <div style=${{ width: '280px', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-3)', background: 'var(--color-surface)' }}>
-            <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.06em', marginBottom: '6px' }}>장착 과부화</div>
-            <${OverloadGauge} overload=${floor} floor=${floor} />
-          </div>
-
           <${StatBox} label="시작 탄환" value=${startingAmmo} />
           <${StatBox} label="최대 체력" value=${maxHp} />
           <${StatBox} label="인벤토리" value=${`${capacity}칸`} />

@@ -1,5 +1,5 @@
 ---
-status: amended — MVP는 tier 1만 구현 (docs/planned.md)
+status: amended — MVP는 tier 1만 구현 (docs/planned.md), 부족분의 통화는 구역 경계도 (ADR-0080)
 ---
 
 # Hacking은 소음 대신 시간과 Overload를 지불한다

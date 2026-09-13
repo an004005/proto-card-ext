@@ -39,7 +39,7 @@ function snapshotOf(run, playerState = {}) {
     rngState: run.rngState,
     facilityRunState: run,
     playerState: {
-      hp: 50, maxHp: 50, overload: 0, loadout: {}, inventory: { items: [], ammo: 0, capacity: 12 }, ...playerState,
+      hp: 50, maxHp: 50, overloadActive: false, loadout: {}, inventory: { items: [], ammo: 0, capacity: 12 }, ...playerState,
     },
   };
 }
@@ -235,13 +235,13 @@ function combatSnapshotAt(time) {
   const combat = beginPlayerFirst(createCombatState({
     deckEntries: Array.from({ length: 10 }, (_, i) => ({ defId: 'katana_slash', instanceId: `c-${i}` })),
     monsterIds: ['nibbit', 'nibbit'], playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999,
-    overload: 0, overloadFloor: 0, overloadGainMultiplier: 1, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
+    overloadActive: false, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
     inventoryItemIdsInOrder: [], inventoryCapacity: 30, rngState: { seed: 1 },
   }));
   return {
     currentScreen: 'combat',
     activeCombatState: combat,
-    playerState: { hp: 70, maxHp: 70, overload: 0, loadout: { consumableSlots: [] }, inventory: { items: [], ammo: 0, capacity: 12 } },
+    playerState: { hp: 70, maxHp: 70, overloadActive: false, loadout: { consumableSlots: [] }, inventory: { items: [], ammo: 0, capacity: 12 } },
     facilityRunState: { ...run, engagedThreatId: 'ghost' },
     combatContext: {
       nodeId: run.playerNodeId, threatId: 'ghost', ammoAtStart: 8, noiseGauge: 0, noiseIntensity: 0,

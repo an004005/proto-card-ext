@@ -41,7 +41,7 @@ export const MODULE_DEFINITIONS = {
  * @type {Object.<string, number[]>}
  */
 export const MODULE_POWER_STAGE_TABLES = {
-  neuralBoost: [1, 2, 2, 1], // 방어력 +N (block bonus)
-  bodyBoost: [1, 2, 2, 1], // 근접 공격력 +N
-  spatialAwareness: [1, 2, 3, 1], // 원거리 공격력 +N
+  neuralBoost: [1, 2], // 방어력 +N (block bonus)
+  bodyBoost: [1, 2], // 근접 공격력 +N
+  spatialAwareness: [1, 2], // 원거리 공격력 +N
 };

@@ -17,7 +17,6 @@ export function ExtractionCompleteScreen() {
       <div style=${{ display: 'flex', gap: 'var(--space-8)', margin: 'var(--space-4) 0', fontSize: '14px' }}>
         <span>붕괴까지 <strong>${Math.max(0, RUN_COLLAPSE_TIME - (run ? run.time : 0))}</strong>칸 남기고 탈출 (시각 ${run ? run.time : 0} / ${RUN_COLLAPSE_TIME})</span>
         <span>최종 체력 HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
-        <span>최종 과부화 <strong>${ps.overload}</strong>/100</span>
         <span>회수 점수 <strong>${score}</strong>cr</span>
       </div>
       ${outcome ? html`
