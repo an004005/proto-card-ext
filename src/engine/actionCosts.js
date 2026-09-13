@@ -100,21 +100,29 @@ export function applyApproachMode(baseTime, baseNoise, mode) {
  * @property {(opts: ActionCostOpts) => ActionCostBase} base
  */
 
+/**
+ * 통로를 지나는 행동(이동·고지대 통과)의 공통 기본 비용. 둘 다 Mobility 전용 시간 규칙을 쓰므로
+ * 한 곳에서만 만든다 — 갈라져 있으면 이동 시간 규칙이 바뀔 때 한쪽만 따라간다.
+ * @param {ActionCostOpts} opts
+ * @returns {ActionCostBase}
+ */
+function moveBase(opts) {
+  const edge = /** @type {{timeCost: number}} */ (opts.edge);
+  return {
+    time: moveTimeCost(edge, opts.value ?? 0),
+    baseTime: edge.timeCost,
+    mobilityDelta: MOBILITY_MOVE_TIME_DELTA[clampIndex(opts.value ?? 0)],
+    timeFloor: MOVE_MIN_TIME,
+  };
+}
+
 /** @type {Record<string, ActionSpec>} */
 export const ACTION_SPECS = {
   move: {
     label: '이동',
     capability: null,
     // 이동은 Mobility 전용 시간 규칙을 쓴다(층계 가감을 얹지 않는다).
-    base: (opts) => {
-      const edge = /** @type {{timeCost: number}} */ (opts.edge);
-      return {
-        time: moveTimeCost(edge, opts.value ?? 0),
-        baseTime: edge.timeCost,
-        mobilityDelta: MOBILITY_MOVE_TIME_DELTA[clampIndex(opts.value ?? 0)],
-        timeFloor: MOVE_MIN_TIME,
-      };
-    },
+    base: moveBase,
   },
   // 고지대 통과 — 이동 그 자체이므로 시간은 이동의 전용 규칙(Mobility 칸 가감)을 그대로 쓰고
   // (`dedicatedTimeRule`: 층계 시간 가감을 또 얹으면 같은 수치에 대가를 두 번 물린다),
@@ -123,16 +131,7 @@ export const ACTION_SPECS = {
     label: '고지대 통과',
     capability: 'mobility',
     required: () => HIGH_GROUND_MOBILITY_REQUIREMENT,
-    base: (opts) => {
-      const edge = /** @type {{timeCost: number}} */ (opts.edge);
-      return {
-        time: moveTimeCost(edge, opts.value ?? 0),
-        baseTime: edge.timeCost,
-        mobilityDelta: MOBILITY_MOVE_TIME_DELTA[clampIndex(opts.value ?? 0)],
-        timeFloor: MOVE_MIN_TIME,
-        dedicatedTimeRule: true,
-      };
-    },
+    base: (opts) => ({ ...moveBase(opts), dedicatedTimeRule: true }),
   },
   // 조우 속이기 — 0칸짜리 선택지라 시간으로 받을 대가가 없다. 층계는 불가 판정만 맡고, 실제
   // 대가는 판정 자체에 붙는다(ENCOUNTER_DECEIVE_STEP_PENALTY, runEngine.deceiveThreat).

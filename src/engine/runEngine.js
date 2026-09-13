@@ -400,19 +400,34 @@ export function nodeContentsAt(run, nodeId) {
   const devices = [];
   for (const camera of run.graph.cameras) {
     if (camera.nodeId !== nodeId) continue;
-    const status = (run.disabledCameraIds || []).includes(camera.id) ? 'destroyed'
-      : (isCameraHackActive(run, camera.id) ? 'hacked' : 'active');
-    devices.push({ kind: 'camera', id: camera.id, status });
+    devices.push({ kind: 'camera', id: camera.id, status: deviceStatus(run, { kind: 'camera', id: camera.id }) });
   }
   for (const entry of run.graph.accessInterfaces) {
     if (entry.nodeId !== nodeId) continue;
-    devices.push({ kind: 'interface', id: entry.id, status: (run.hackedInterfaceIds || []).includes(entry.id) ? 'hacked' : 'active' });
+    devices.push({ kind: 'interface', id: entry.id, status: deviceStatus(run, { kind: 'interface', id: entry.id }) });
   }
   for (const generator of run.graph.generators || []) {
     if (generator.nodeId !== nodeId) continue;
-    devices.push({ kind: 'generator', id: generator.id, status: (run.disabledGeneratorIds || []).includes(generator.id) ? 'destroyed' : 'active' });
+    devices.push({ kind: 'generator', id: generator.id, status: deviceStatus(run, { kind: 'generator', id: generator.id }) });
   }
   return { opportunities, devices };
+}
+
+/**
+ * 장치의 **지금** 상태. 존재는 관측 기록이 정하지만 상태는 언제나 지금 값이다 — 해킹·파괴·무력화는
+ * 전부 플레이어 자신이 한 일이라, 그 노드를 다시 보지 않았다고 해서 모를 수가 없다. 관측 기록을
+ * 만드는 nodeContentsAt과 이미 적힌 기록을 다시 그리는 지도 카드가 같은 함수를 쓴다.
+ * @param {import('./types.js').FacilityRunState} run
+ * @param {{kind: 'camera'|'interface'|'generator', id: string}} device
+ * @returns {'active'|'hacked'|'destroyed'}
+ */
+export function deviceStatus(run, device) {
+  if (device.kind === 'camera') {
+    if ((run.disabledCameraIds || []).includes(device.id)) return 'destroyed';
+    return isCameraHackActive(run, device.id) ? 'hacked' : 'active';
+  }
+  if (device.kind === 'interface') return (run.hackedInterfaceIds || []).includes(device.id) ? 'hacked' : 'active';
+  return (run.disabledGeneratorIds || []).includes(device.id) ? 'destroyed' : 'active';
 }
 
 /**
@@ -589,17 +604,6 @@ export function deceiveThreat(state, threatId, effectiveDeception) {
   const success = effectiveDeception >= threat.alert + penalty.successPenalty;
   // 위태 단계는 성공하든 실패하든 그 위협의 경계가 오른다 — 어설픈 수작은 그 자체로 신호다.
   const alerted = penalty.raisesThreatAlert ? Math.min(3, threat.alert + 1) : threat.alert;
-  if (!success) {
-    // 실패도 한 번을 쓴다 — 실패한 뒤 수치를 바꿀 방법이 런 중에는 없으므로 재시도는 의미가 없다.
-    return {
-      state: {
-        ...state,
-        deceivedThreatIds: used,
-        threats: { ...state.threats, [threatId]: { ...threat, alert: alerted } },
-      },
-      success: false,
-    };
-  }
 
   // 내가 선 자리 말고 인접한 다른 노드 하나로 시선을 던진다. 갈 수 있는 통로로만 던져야
   // 위협이 실제로 그쪽으로 걸어간다.
@@ -609,7 +613,10 @@ export function deceiveThreat(state, threatId, effectiveDeception) {
     .map((e) => (e.from === playerNodeId ? e.to : e.from))
     .filter((nodeId) => nodeId !== threat.nodeId);
   const decoyNodeId = decoys[0] ?? null;
-  if (!decoyNodeId) {
+
+  // 판정에 졌거나 던질 자리가 없으면 결과는 같다 — 한 번을 쓰고 경계만 남긴다. 실패도 한 번을
+  // 쓰는 이유는 실패한 뒤 수치를 바꿀 방법이 런 중에 없어 재시도가 의미 없기 때문이다.
+  if (!success || !decoyNodeId) {
     return {
       state: {
         ...state,
@@ -1670,9 +1677,18 @@ function isEdgeTraversable(state, edge, fromId, effectiveMobility = 0) {
   if (!isEdgeUnlocked(edge, state.openedEdgeIds)) return false;
   // 고지대도 다른 요구치와 같은 층계다(D8) — 모자란 채로 넘을 수 있고 대신 HP를 치른다.
   // 정말 막히는 것은 불가 단계(요구치 3에 대해 0 이하)뿐이다.
-  if (edge.features.includes('highGround')
-    && capabilityStep(highGroundMobility(effectiveMobility), HIGH_GROUND_MOBILITY_REQUIREMENT) === 'impossible') return false;
+  if (edge.features.includes('highGround') && !canClimbHighGround(effectiveMobility)) return false;
   return true;
+}
+
+/**
+ * 그 Mobility로 고지대를 넘을 수 있는가. 층계의 불가 구간(요구치 3에 대해 유효 0 이하)만
+ * 막는다 — 엔진의 통행 판정과 화면·측정 도구가 같은 한 함수를 보게 하려는 것이다.
+ * @param {number} effectiveMobility 원시 실효 Mobility(-2~4). 지형 하한은 안에서 적용한다.
+ * @returns {boolean}
+ */
+export function canClimbHighGround(effectiveMobility) {
+  return capabilityStep(highGroundMobility(effectiveMobility), HIGH_GROUND_MOBILITY_REQUIREMENT) !== 'impossible';
 }
 
 /**

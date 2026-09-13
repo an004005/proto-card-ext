@@ -1,7 +1,7 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal, combatAnimationSignal, combatPlaybackDurationSignal, combatPlaybackActiveSignal } from '../state/runState.js';
-import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadStageSignal } from '../state/combatStateAdapter.js';
+import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadActiveSignal } from '../state/combatStateAdapter.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { isCardPlayable, getCardTargetKind } from '../engine/combatEngine.js';
@@ -38,7 +38,7 @@ export function CombatScreen() {
   const enemies = enemiesSignal.value;
   const player = playerCombatSignal.value;
   const pileCounts = pileCountsSignal.value;
-  const stage = overloadStageSignal.value;
+  const overloadActive = overloadActiveSignal.value;
   const consumableSlots = snapshotSignal.value.playerState.loadout.consumableSlots;
   const combatContext = snapshotSignal.value.combatContext;
   const disengage = combatContext?.disengage;
@@ -201,7 +201,7 @@ export function CombatScreen() {
             draggingInstanceId=${draggingCard?.instanceId ?? null}
             onCardDragStart=${(card) => setDraggingCard(card)}
             onCardDragEnd=${() => setDraggingCard(null)}
-            stage=${stage} powers=${player.powers}
+            overloadActive=${overloadActive} powers=${player.powers}
             inventory=${snapshotSignal.value.playerState.inventory}
             player=${player}
           />

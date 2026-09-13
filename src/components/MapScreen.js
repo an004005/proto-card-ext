@@ -19,6 +19,7 @@ import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
   explainEffectiveStealth, detailIncludes, lockdownClosesExitB, highGroundMobility, nodeContentsAt,
+  deviceStatus, canClimbHighGround,
 } from '../engine/runEngine.js';
 import { ladderNote, StepBadge } from './ladderDisplay.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
@@ -27,7 +28,7 @@ import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION } from '../data/facilityLayout.js'
 import { getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
   SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR,
-  LOCKDOWN_EXIT_CLOSE_WINDOW, CONTRACT_DETONATE_MIN_HOPS,
+  LOCKDOWN_EXIT_CLOSE_WINDOW, CONTRACT_DETONATE_MIN_HOPS, HIGH_GROUND_MOBILITY_REQUIREMENT,
 } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
 import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE, CAPABILITY_KOREAN } from '../data/capabilityDisplay.js';
@@ -41,7 +42,7 @@ import { describeItem, EQUIPMENT_DEFS } from '../data/itemDisplay.js';
 import { EncounterPanel, stealthBreakdownText } from './EncounterPanel.js';
 import { ItemTooltipContent } from './ItemTooltipContent.js';
 import { MapClock, deadlineStyle } from './MapClock.js';
-import { capabilityStep } from '../engine/capabilityCosts.js';
+import { capabilityStep, CAPABILITY_STEP_MIN_GAP } from '../engine/capabilityCosts.js';
 import { forecastAction, describeForecast, forecastUnknownPrizeFarm } from '../engine/actionCosts.js';
 import {
   runCountdowns, upcomingEvents, timersEndingBefore, observableThreatMoves, staleThreatSightings,
@@ -211,11 +212,14 @@ function capabilityActionSummary(key, raw) {
     return `물리 잠금 특수 엣지 개방, 카메라·발전기 파괴, 전원 차단, 파괴 계약에 쓰입니다. 모자라면 소음이 커지고 장착 장비의 내구도가 깎입니다. ${common}`;
   }
   if (key === 'mobility') {
-    const highGround = raw >= 3
+    // 고지대는 지형 판정이라 0 하한을 적용한 값으로 층계를 가른다(highGroundMobility).
+    const R = HIGH_GROUND_MOBILITY_REQUIREMENT;
+    const hgValue = highGroundMobility(raw);
+    const highGround = hgValue >= R
       ? '높은 지형 특수 엣지를 대가 없이 통과합니다.'
-      : raw >= 1
-        ? `높은 지형 특수 엣지는 Mobility 3이 표준입니다 — 지금은 부족분 ${3 - raw}만큼 HP로 값을 치르고 넘습니다.`
-        : '높은 지형 특수 엣지는 Mobility 3이 표준이고, 1 이상이어야 대가를 치르고 넘을 수 있습니다 — 지금은 통과 불가입니다.';
+      : canClimbHighGround(raw)
+        ? `높은 지형 특수 엣지는 Mobility ${R}이 표준입니다 — 지금은 부족분 ${R - hgValue}만큼 HP로 값을 치르고 넘습니다.`
+        : `높은 지형 특수 엣지는 Mobility ${R}이 표준이고, ${R + CAPABILITY_STEP_MIN_GAP} 이상이어야 대가를 치르고 넘을 수 있습니다 — 지금은 통과 불가입니다.`;
     const disengage = raw >= 2 ? '전투 이탈 시작 시 진행도 +1을 받습니다.' : 'Mobility 2부터 전투 이탈 보너스를 받습니다.';
     return `이동 시간이 이 값에 따라 줄어듭니다. 회수 계약 확보에도 쓰이며, 모자라면 HP로 값을 치릅니다. ${highGround} ${disengage} ${common}`;
   }
@@ -460,7 +464,7 @@ function movementRiskForecast(run, edge, destinationNodeId, mobility) {
 }
 
 const ZOOM_MIN = 0.5;
-// 160여 노드가 한 캔버스에 들어가면 한 방의 글자·표식이 몇 픽셀밖에 안 된다. 3배로는 그것을
+// 100여 노드가 한 캔버스에 들어가면 한 방의 글자·표식이 몇 픽셀밖에 안 된다. 3배로는 그것을
 // 읽을 수 없어 상한을 6배까지 올렸다 — 휠 한 칸(1.1배)과 +/− 버튼은 그대로다.
 const ZOOM_MAX = 6;
 // 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — CAMERA_HACK_DURATION(15칸)보다
@@ -509,19 +513,6 @@ const DEVICE_STATUS_LABELS = {
   interface: { active: '접속 인터페이스 미해킹', hacked: '접속 인터페이스 해킹됨', destroyed: '접속 인터페이스 파괴됨' },
   generator: { active: '배터리 발전기 작동 중', hacked: '배터리 발전기 해킹됨', destroyed: '배터리 발전기 무력화됨' },
 };
-
-/**
- * 장치의 **지금** 상태. 존재는 관측 기록이 정하지만 상태는 지금 값을 읽는다 — 해킹·파괴·무력화는
- * 전부 플레이어 자신이 한 일이라, 그 노드를 다시 보지 않았다고 해서 모를 수가 없다.
- */
-function deviceStatusNow(run, device) {
-  if (device.kind === 'camera') {
-    if ((run.disabledCameraIds || []).includes(device.id)) return 'destroyed';
-    return isCameraHackActive(run, device.id) ? 'hacked' : 'active';
-  }
-  if (device.kind === 'interface') return (run.hackedInterfaceIds || []).includes(device.id) ? 'hacked' : 'active';
-  return (run.disabledGeneratorIds || []).includes(device.id) ? 'destroyed' : 'active';
-}
 
 /**
  * 카드의 현장 기회 한 행. 기회의 **존재와 남은 횟수**는 관측이 닿으면 보이고(내용물), 확보 대상의
@@ -647,7 +638,7 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
       tone: 'plain',
       title: '장치',
       chips: contents.devices.map((device) => {
-        const status = deviceStatusNow(run, device);
+        const status = deviceStatus(run, device);
         return {
           label: DEVICE_STATUS_LABELS[device.kind]?.[status] || device.kind,
           // 아직 작동하는 카메라만 붉게 둔다 — 지나가면 걸리는 유일한 장치다.
@@ -991,7 +982,7 @@ export function MapScreen() {
   };
   const handleCanvasMouseUp = () => { dragRef.current.dragging = false; };
   // 호버는 rAF 한 프레임에 한 번만 반영한다(scheduleHover) — 마우스를 한 번 훑으면
-  // onMouseMove가 수십 번 오는데, 그때마다 200여 노드 지도를 다시 그리면 눈에 띄게 끊긴다.
+  // onMouseMove가 수십 번 오는데, 그때마다 100여 노드 지도를 다시 그리면 눈에 띄게 끊긴다.
   const showHover = (ev, text) => scheduleHover({ x: ev.clientX, y: ev.clientY, text });
   /** 노드 호버만은 문장이 아니라 카드다(NodeTooltipCard) — 엣지·화살표는 그대로 문자열을 쓴다. */
   const showNodeHover = (ev, description) => scheduleHover({ x: ev.clientX, y: ev.clientY, node: description });

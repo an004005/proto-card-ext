@@ -87,6 +87,16 @@ export function EncounterPanel({ run, capabilities }) {
         ? `성공합니다 — Deception ${deception} ≥ 성공 기준 ${deceiveBar}. 추적은 유지되지만 목표가 옆 노드로 옮겨갑니다.`
         : `실패합니다 — Deception ${deception} < 성공 기준 ${deceiveBar}. 속이려다 들켜 열세로 내려갑니다.`}${
         penaltyText ? ` 층계 ${deceiveLadder?.label} — ${penaltyText}(성공 기준은 이 위협의 경계 ${threat.alert}에 벌점을 더한 값입니다).` : ''}`;
+  // 우위와 동률이 같은 버튼을 내놓는다 — 마크업을 두 벌 두면 한쪽만 고쳐지고 두 층이 서로
+  // 다른 예고를 적게 된다.
+  const deceiveOption = () => html`
+    <button class="btn btn-secondary" style=${{ width: '100%' }} disabled=${!canDeceive}
+      title=${deceiveTip}
+      onClick=${() => dispatch({ type: 'ENCOUNTER_DECEIVE' })}>
+      속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})${canDeceive && deceiveLadder && deceiveLadder.step !== 'standard' ? html` <${StepBadge} ladder=${deceiveLadder} />` : null}
+    </button>
+    <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-2px' }}>${deceiveTip}</div>
+  `;
   const opSymbol = stealth > perception ? '>' : stealth === perception ? '=' : '<';
   const info = TIER_INFO[encounter.tier];
   // 열세는 버튼이 하나도 없는 안내문이라 지도를 계속 가린다 — 읽은 뒤에는 접을 수 있어야 한다.
@@ -134,12 +144,7 @@ export function EncounterPanel({ run, capabilities }) {
           <button class="btn btn-danger" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_AMBUSH' })}>기습 — 적 전원 스턴 부여 (0칸)</button>
           <button class="btn btn-secondary" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_IGNORE' })}>무시 — 이 자리에서 다른 행동 (0칸)</button>
           <button class="btn btn-secondary" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_EVADE' })}>회피 — 추적 해제 (${EVADE_TICKS}칸)</button>
-          <button class="btn btn-secondary" style=${{ width: '100%' }} disabled=${!canDeceive}
-            title=${deceiveTip}
-            onClick=${() => dispatch({ type: 'ENCOUNTER_DECEIVE' })}>
-            속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})${canDeceive && deceiveLadder && deceiveLadder.step !== 'standard' ? html` <${StepBadge} ladder=${deceiveLadder} />` : null}
-          </button>
-          <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-2px' }}>${deceiveTip}</div>
+          ${deceiveOption()}
         </div>
       ` : null}
 
@@ -148,12 +153,7 @@ export function EncounterPanel({ run, capabilities }) {
           <button class="btn btn-secondary" disabled style=${{ width: '100%' }}>무시 — 사용 불가</button>
           <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-4px' }}>동률 상태에서는 무시할 수 없습니다. 회피는 ${EVADE_TICKS}칸이 들고, 같은 위협은 다음 유료 행동이 끝날 때 다시 판정합니다.</div>
           <button class="btn btn-secondary" style=${{ width: '100%', marginTop: '4px' }} onClick=${() => dispatch({ type: 'ENCOUNTER_EVADE' })}>회피 — 추적 해제 (${EVADE_TICKS}칸)</button>
-          <button class="btn btn-secondary" style=${{ width: '100%' }} disabled=${!canDeceive}
-            title=${deceiveTip}
-            onClick=${() => dispatch({ type: 'ENCOUNTER_DECEIVE' })}>
-            속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})${canDeceive && deceiveLadder && deceiveLadder.step !== 'standard' ? html` <${StepBadge} ladder=${deceiveLadder} />` : null}
-          </button>
-          <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-2px' }}>${deceiveTip}</div>
+          ${deceiveOption()}
         </div>
       ` : null}
 

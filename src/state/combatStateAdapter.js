@@ -2,16 +2,12 @@
 // directly. All values are re-derived automatically whenever snapshotSignal changes.
 import { computed } from '../lib.js';
 import { snapshotSignal } from './runState.js';
-import { getStage } from '../engine/overloadEngine.js';
 
 export const combatStateSignal = computed(() => snapshotSignal.value.activeCombatState);
 export const handSignal = computed(() => combatStateSignal.value?.piles.hand ?? []);
 export const enemiesSignal = computed(() => combatStateSignal.value?.enemies ?? []);
 export const playerCombatSignal = computed(() => combatStateSignal.value?.player ?? null);
-export const overloadStageSignal = computed(() => {
-  const combat = combatStateSignal.value;
-  return combat ? getStage(combat.overloadActive) : 0;
-});
+export const overloadActiveSignal = computed(() => !!combatStateSignal.value?.overloadActive);
 export const combatSummarySignal = computed(() => snapshotSignal.value.combatSummary);
 export const pileCountsSignal = computed(() => {
   const combat = combatStateSignal.value;

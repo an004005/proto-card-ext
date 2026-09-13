@@ -76,6 +76,12 @@ function clampNoise(value) {
 }
 
 /**
+ * 층계의 바닥 — 요구치 R에 대해 `R + CAPABILITY_STEP_MIN_GAP`(= R−2)이 아직 할 수 있는 마지막
+ * 값이고, 그보다 낮으면 불가다. 화면이 "몇 이상이어야 하는가"를 적을 때도 이 상수를 본다.
+ */
+export const CAPABILITY_STEP_MIN_GAP = -2;
+
+/**
  * 요구치 대비 실효 수치의 차이로 층계를 가른다.
  *
  * 여기서는 `effectiveForRequirement`의 `max(0, value)` clamp를 쓰지 않는다. 그 clamp는 이분법
@@ -91,11 +97,11 @@ function clampNoise(value) {
  */
 export function capabilityStep(effectiveValue, required = 1) {
   const gap = effectiveValue - required;
+  if (gap < CAPABILITY_STEP_MIN_GAP) return 'impossible';
   if (gap >= 1) return 'surplus';
   if (gap === 0) return 'standard';
   if (gap === -1) return 'strained';
-  if (gap === -2) return 'severe';
-  return 'impossible';
+  return 'severe';
 }
 
 /** 아무것도 치르지 않는 형태. impossible은 행동 자체가 일어나지 않으므로 비용이 없다. */

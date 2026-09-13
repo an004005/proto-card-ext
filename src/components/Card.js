@@ -210,10 +210,12 @@ export function CardDetailTooltip({ def, cost, type, overloadActive = false, ite
 
 export function Card({
   card, playable = true, armed = false, width = 140, onClick,
-  draggable = false, onDragStart, onDragEnd, stage = 0, powers = {}, inventory = null,
+  draggable = false, onDragStart, onDragEnd, overloadActive = false, powers = {}, inventory = null,
   statuses = {}, player = null,
 }) {
   const def = CARD_DEFINITIONS[card.defId];
+  // 과부화는 불리언 하나가 진실이다 — 단계는 여기서 한 번만 만든다(getStage).
+  const stage = getStage(overloadActive);
   const type = TYPE_INFO[def.type] || TYPE_INFO.skill;
   const classNames = ['hand-card', !playable && 'hand-card-disabled', armed && 'hand-card-armed']
     .filter(Boolean).join(' ');
@@ -225,7 +227,7 @@ export function Card({
   const escapeProgress = def.mapTags?.disengageProgress || 0;
 
   return html`
-    <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overloadActive=${stage === 1} item=${item} powers=${powers} statuses=${statuses} player=${player} />`}>
+    <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overloadActive=${overloadActive} item=${item} powers=${powers} statuses=${statuses} player=${player} />`}>
       <div
         class=${classNames}
         style=${{

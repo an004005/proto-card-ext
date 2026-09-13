@@ -331,7 +331,7 @@ export const MOBILITY_MOVE_TIME_DELTA = [2, 1, 0, -1, -2, -3, -4];
 export const MOVE_MIN_TIME = 2;
 
 // 초기 위협 배치 — 구역 정원이다. 뽑힌 구역만 채워지므로 한 런의 총 위협 수는 조합에 따라
-// 다르다(입구 3 + 나머지 세 구역의 합, 대략 17~24).
+// 다르다(입구 3 + 나머지 세 구역의 합, 12~16).
 export const THREAT_COUNT_BY_SECTOR = {
   entrance: 3, labs: 3, hangar: 3, security: 4, power: 5, waste: 4, comms: 3, residential: 3,
 };

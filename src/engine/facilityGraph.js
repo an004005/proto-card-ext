@@ -84,7 +84,7 @@ export function selectRunSectorIds(rngState) {
   const sectorIds = drawn.length === rest.length
     ? [START_SECTOR_ID, ...drawn]
     : [START_SECTOR_ID, rest[0], DEEPEST_SECTOR_ID, ...rest.slice(1)];
-  return { sectorIds: /** @type {any} */ (sectorIds), rngState: state };
+  return { sectorIds: /** @type {import('./types.js').FacilitySectorId[]} */ (sectorIds), rngState: state };
 }
 
 /**
@@ -97,26 +97,21 @@ export function sectorRingPairs(sectorIds) {
 }
 
 /**
- * 링에서 이 구역과 맞닿은 구역들. 구역이 넷이면 이웃은 둘이고 맞은편 하나는 이웃이 아니다.
- * @param {readonly string[]} sectorIds 링 순서
+ * 런 전체가 쓰는 유일한 구역 인접 정의 — 링에서 이 구역과 맞닿은 구역들이다. 구역이 넷이면
+ * 이웃은 둘이고 맞은편 하나는 이웃이 아니다. 경계도 이동(D12 가짜 목표 송출), 통제실 해킹
+ * 3단계의 이웃 구역 완화, 정보 계약의 송출 구역 판정이 전부 이것을 본다.
+ * @param {{sectorIds: readonly string[]}} graph
  * @param {string} sectorId
  * @returns {import('./types.js').FacilitySectorId[]}
  */
-export function adjacentSectorIdsIn(sectorIds, sectorId) {
+export function adjacentSectorIds(graph, sectorId) {
+  const sectorIds = graph.sectorIds;
   const i = sectorIds.indexOf(sectorId);
   if (i < 0) return [];
   const n = sectorIds.length;
-  return /** @type {any} */ ([...new Set([sectorIds[(i + n - 1) % n], sectorIds[(i + 1) % n]])]);
-}
-
-/**
- * 런 전체가 쓰는 유일한 구역 인접 정의 — 경계도 이동(D12 가짜 목표 송출), 통제실 해킹 3단계의
- * 이웃 구역 완화, 정보 계약의 송출 구역 판정이 전부 이것을 본다.
- * @param {{sectorIds: readonly string[]}} graph
- * @param {string} sectorId
- */
-export function adjacentSectorIds(graph, sectorId) {
-  return adjacentSectorIdsIn(graph.sectorIds, sectorId);
+  return /** @type {import('./types.js').FacilitySectorId[]} */ (
+    [...new Set([sectorIds[(i + n - 1) % n], sectorIds[(i + 1) % n]])]
+  );
 }
 
 // Derived from endpoints rather than a mutable counter — a module-level counter would make the

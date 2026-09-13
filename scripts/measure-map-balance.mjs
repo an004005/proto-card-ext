@@ -13,17 +13,15 @@ import process from 'node:process';
 
 import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import { moveTimeCost, forecastAction, actionTimeCost } from '../src/engine/actionCosts.js';
-import { effectiveForRequirement } from '../src/engine/capabilityEngine.js';
-import { capabilityStep } from '../src/engine/capabilityCosts.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
-import { lockdownClosesExitB } from '../src/engine/runEngine.js';
+import { lockdownClosesExitB, canClimbHighGround } from '../src/engine/runEngine.js';
 import {
   RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, LOCKDOWN_EXIT_CLOSE_WINDOW,
   EXIT_REQUEST_TIME, EXIT_OPEN_WAIT_BY_HACKING, EXIT_OPEN_WINDOW,
   EDGE_TIME_MIN, EDGE_TIME_MAX, EXIT_AB_MIN_DISTANCE, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
   CORPSE_DISPOSAL_TIME,
   COMBAT_ROUND_TIME_COST, THREAT_MOVE_INTERVAL, REINFORCEMENT_INTERVAL,
-  FORCE_TIER1_TIME, HACKING_TIER1_TIME, HIGH_GROUND_MOBILITY_REQUIREMENT,
+  FORCE_TIER1_TIME, HACKING_TIER1_TIME,
 } from '../src/data/facilityLayout.js';
 
 /** 측정에 쓰는 Mobility 값. 이동 비용이 바뀌고, 고지대는 층계 불가 구간(유효 0 이하)에서만 길이 끊긴다. */
@@ -114,7 +112,7 @@ function buildArcs(graph, mobility, allowOpening) {
     arcs.get(from).push({ to, cost });
   };
   for (const edge of graph.edges) {
-    if (edge.features.includes('highGround') && capabilityStep(effectiveForRequirement(mobility), HIGH_GROUND_MOBILITY_REQUIREMENT) === 'impossible') continue;
+    if (edge.features.includes('highGround') && !canClimbHighGround(mobility)) continue;
     const locked = edge.features.includes('blocked') || edge.features.includes('electronic');
     let extra = 0;
     if (locked) {
@@ -141,7 +139,7 @@ function buildLegacyArcs(graph, mobility) {
     arcs.get(from).push({ to, cost });
   };
   for (const edge of graph.edges) {
-    if (edge.features.includes('highGround') && capabilityStep(effectiveForRequirement(mobility), HIGH_GROUND_MOBILITY_REQUIREMENT) === 'impossible') continue;
+    if (edge.features.includes('highGround') && !canClimbHighGround(mobility)) continue;
     if (edge.features.includes('blocked') || edge.features.includes('electronic')) continue;
     const a = byId.get(edge.from);
     const b = byId.get(edge.to);
