@@ -19,7 +19,8 @@
 
 ## 잠입 콘텐츠
 
-- Capability별 추가 잠입 퍼즐의 대상, 보상, 시간·소음·과부화 비용
+- Capability별 추가 잠입 퍼즐의 대상, 보상, 시간·소음 비용
+- 원거리 카메라 파괴 행동 — `remote-camera-destruction.md`
 
 ## 맵 시간
 

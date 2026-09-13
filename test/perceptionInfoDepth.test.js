@@ -61,7 +61,7 @@ test('정보 깊이는 관측 기록에 detailLevel로 남고, 깊이별로 읽�
     const scouted = scout(run, perception);
     const record = scouted.observations[scouted.playerNodeId];
     assert.equal(record.detailLevel, info.level, `Perception ${perception}의 깊이가 표와 다르다`);
-    for (const field of ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext', 'prizeGrade', 'prizeAxis', 'concealment', 'cameras', 'evidence']) {
+    for (const field of ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext', 'prizeGrade', 'prizeAxis', 'concealment', 'evidence']) {
       const expected = info.threat.includes(field) || info.extra.includes(field);
       assert.equal(detailIncludes(info.level, field), expected, `${field}@Perception ${perception}`);
     }
@@ -161,6 +161,45 @@ test('Perception 2 이상이면 대기 중에도 인접 1홉 실시간 관측이
 
   const watchful = refreshLocalObservations(waited, 2);
   assert.ok(adjacent.some((id) => watchful.observations[id]?.observedAt === watchful.time), 'Perception 2는 대기 중에도 인접을 본다');
+});
+
+test('정찰은 Perception과 무관하게 노드의 내용물을 기록한다 — 보급품·확보 대상·장치', () => {
+  const run = makeRun(1);
+  const hops = bfsHopDistances(run.graph.edges, run.playerNodeId);
+  const inRange = (nodeId) => (hops.get(nodeId) ?? Infinity) <= perceptionInfo(0).reconHops;
+
+  const supply = run.graph.opportunities.find((o) => o.grade !== 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
+  const prize = run.graph.opportunities.find((o) => o.grade === 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
+  const camera = run.graph.cameras.find((c) => inRange(c.nodeId));
+  assert.ok(supply && prize && camera, '시드 1의 2홉 안에 보급품·확보 대상·카메라가 하나씩은 있어야 이 검사가 성립한다');
+
+  // 정찰 전에는 아무것도 없다 — 인접 무료 관측이 닿는 자리는 빼고 본다.
+  const far = [supply, prize, camera].filter((entry) => (hops.get(entry.nodeId) ?? 0) === 2);
+  for (const entry of far) {
+    assert.equal(run.observations[entry.nodeId]?.contents, undefined, '정찰 전에 내용물이 이미 적혀 있다');
+  }
+
+  // Perception 0(가장 얕은 정찰)으로도 내용물은 전부 적힌다 — Perception이 가르는 것은 깊이뿐이다.
+  const scouted = scout(run, 0);
+  assert.ok(
+    scouted.observations[supply.nodeId].contents.opportunities.some((o) => o.id === supply.id && o.usesRemaining === supply.usesRemaining),
+    '보급품이 남은 횟수까지 기록돼야 한다',
+  );
+  assert.ok(
+    scouted.observations[prize.nodeId].contents.opportunities.some((o) => o.id === prize.id && o.grade === 'prize'),
+    '확보 대상의 존재가 기록돼야 한다',
+  );
+  const recorded = scouted.observations[camera.nodeId].contents.devices.find((d) => d.id === camera.id);
+  assert.deepEqual(recorded, { kind: 'camera', id: camera.id, status: 'active' }, '카메라는 Perception 3 없이도 기록된다');
+});
+
+test('무료 인접 관측도 내용물을 적는다 — 현재 노드와 인접 1홉', () => {
+  const run = makeRun(1);
+  const refreshed = refreshLocalObservations(run, 0);
+  const contents = refreshed.observations[run.playerNodeId].contents;
+  assert.ok(contents, '서 있는 자리의 내용물이 없다');
+  const expectedIds = run.graph.opportunities.filter((o) => o.nodeId === run.playerNodeId && o.usesRemaining > 0).map((o) => o.id);
+  assert.deepEqual(contents.opportunities.map((o) => o.id), expectedIds);
 });
 
 test('정보 깊이 표의 레벨은 오름차순이고 항목은 누적이다', () => {
