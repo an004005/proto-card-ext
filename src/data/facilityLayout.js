@@ -405,12 +405,32 @@ export const INVESTIGATE_DECAY_TICKS = 8;
 export const PURSUIT_DECAY_ALERT = 2;
 
 // 구역 경계도는 시간으로 감소하지 않는다(ADR-0069, ADR-0073). 저절로 회복되는 페널티는 결정을
-// 만들지 않는다 — 낮추려면 통제실을 장악해야 한다.
+// 만들지 않는다 — 낮추려면 통제실을 장악해야 한다. 압력 게이지도 마찬가지로 시간으로 빠지지
+// 않고, 단계를 낮추는 수습이 걸릴 때 그 구역 게이지가 0으로 지워진다(ADR-0082).
 
 // ---- 인과 고리와 수습 (§4단계, D12·D13·D14) ----
 
-// 경계도 상승은 어느 원인이든 한 단계씩이다(escalateSectorAlert). 카메라 감지·시체 발견·강한
-// 흔적 발견이 모두 같은 폭으로 올리므로 원인별 상수를 따로 두지 않는다.
+// 경계도는 단계가 아니라 **압력 게이지**로 오른다(ADR-0082). 한 번의 실수가 통째로 한 단계를
+// 올리면 "아무 일도 없음"과 "+1" 사이에 중간이 없어서, 작은 실수도 큰 실수처럼 느껴지고 큰
+// 실수는 값이 싸 보인다. 원인마다 압력을 얹고, 게이지가 가득 차야 단계가 1 오른다.
+// 전투 소음 게이지(NOISE_GAUGE_CAPACITY)와 같은 모양이다 — 같은 시설 안에서 "쌓이다 터진다"는
+// 감각을 두 화면이 공유한다.
+export const ALERT_GAUGE_CAPACITY = 10;
+/**
+ * 원인별 압력. 정원 10 대비로 읽는다 — 카메라 감지·시체 발견은 혼자서도 절반 넘게 채우고,
+ * 강한 흔적 하나나 서툰 손놀림은 두 번 겹쳐야 한 단계가 된다. 허탕 조사는 가장 싸다: 위협이
+ * 소음을 쫓다 헛물을 켜는 것은 플레이어의 실수라기보다 시설의 일상이다.
+ * 같은 노드에서 시체와 강한 흔적이 함께 발견되면 둘 다 더해져(6+4) 정확히 한 단계가 오른다.
+ * @type {Record<'cameraDetection'|'corpseFound'|'strongTraceFound'|'failedInvestigation'|'botchedAction', number>}
+ */
+export const ALERT_PRESSURE = {
+  cameraDetection: 6,
+  corpseFound: 6,
+  strongTraceFound: 4,
+  failedInvestigation: 3,
+  // 층계 위태(Stealth·Hacking −2 이하)로 그 자리에서 들키는 것.
+  botchedAction: 4,
+};
 
 // 시체(D13) — 전투에서 이긴 노드에 남는다. 위협이 밟으면 신고되어 경계도가 오르고 그 지점으로
 // 조사가 몰린다. 치우는 것은 선택이며 기본은 그냥 두고 가는 것이다.

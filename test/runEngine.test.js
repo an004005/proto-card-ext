@@ -20,7 +20,7 @@ import {
   REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
   NOISE_DURATION, CAMERA_FORCE_TIME, GENERATOR_FORCE_TIME,
   MOVE_MIN_TIME, MOBILITY_MOVE_TIME_DELTA, CAPABILITY_STEP_TIME_DELTA, CAPABILITY_STEP_HP_COST,
-  CONTRACT_DETONATE_TIME, CONTRACT_DETONATE_MIN_HOPS,
+  CONTRACT_DETONATE_TIME, CONTRACT_DETONATE_MIN_HOPS, ALERT_PRESSURE,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
 
@@ -398,8 +398,8 @@ test('a direct sighting immediately puts a threat into pursuit, overriding noise
   assert.equal(state.threats[threatId].lastKnownPlayerNodeId, someOtherNode);
 });
 
-// #12 같은 소음/가짜 목표 사건은 여러 위협 마커가 조사해도 구역 경계도를 한 번만 올린다.
-test('sector alert rises by exactly 1 per resolved event, not per investigating marker', () => {
+// #12 같은 소음/가짜 목표 사건은 여러 위협 마커가 조사해도 구역 경계 게이지를 한 번만 올린다.
+test('sector alert pressure rises exactly once per resolved event, not per investigating marker', () => {
   let state = makeRun(4);
   // Move the player node away from everywhere so no investigation ever "finds" the player.
   state = { ...state, playerNodeId: 'nowhere' };
@@ -411,15 +411,16 @@ test('sector alert rises by exactly 1 per resolved event, not per investigating 
   const sectorId = Object.values(state.threats)[0].sectorId;
   const sectorThreat = Object.values(state.threats).find((t) => t.sectorId === sectorId);
   state = reportNoise(state, sectorThreat.nodeId, 3, state.time);
-  const before = state.sectorAlerts[sectorId].level;
+  const before = state.sectorAlerts[sectorId].pressure;
   state = advanceTime(state, 30);
-  const after = state.sectorAlerts[sectorId].level;
-  assert.equal(after, before + 1, 'a single noise event must resolve to exactly +1, not more');
+  const after = state.sectorAlerts[sectorId].pressure;
+  assert.equal(after, before + ALERT_PRESSURE.failedInvestigation, '허탕 조사 하나는 딱 그만큼만 채운다');
+  assert.equal(state.sectorAlerts[sectorId].level, 0, '게이지 하나로는 단계가 오르지 않는다');
   assert.equal(state.sectorAlerts[sectorId].resolvedEventIds.length, 1);
 
   // advancing further without any new stimulus must not escalate it again.
   state = advanceTime(state, 60);
-  assert.equal(state.sectorAlerts[sectorId].level, after);
+  assert.equal(state.sectorAlerts[sectorId].pressure, after);
 });
 
 test('sector alert never decays with time — only a control room can bring it down (ADR-0073)', () => {
@@ -430,12 +431,13 @@ test('sector alert never decays with time — only a control room can bring it d
   const sectorThreat = Object.values(state.threats).find((t) => t.sectorId === sectorId);
   state = reportNoise(state, sectorThreat.nodeId, 3, state.time);
   state = advanceTime(state, 30);
-  const escalated = state.sectorAlerts[sectorId].level;
+  const escalated = state.sectorAlerts[sectorId].pressure;
   assert.ok(escalated >= 1);
 
   // 저절로 회복되는 페널티는 결정을 만들지 않는다 — 아무리 조용히 오래 있어도 내려가지 않는다.
+  // 게이지도 시간으로 빠지지 않는다(ADR-0082).
   state = advanceTime(state, 200);
-  assert.equal(state.sectorAlerts[sectorId].level, escalated, 'alert holds across hundreds of 칸');
+  assert.equal(state.sectorAlerts[sectorId].pressure, escalated, 'alert holds across hundreds of 칸');
   assert.equal(state.sectorAlerts[sectorId].resolvedEventIds.length, 1);
 
   // 조용한 구역은 애초에 오르지 않았으므로 0 그대로다.
@@ -734,14 +736,14 @@ test('hackControlRoom level 2 lowers this sector alert by (hacking - 1), and lev
   const landmark = graph.landmarks[0];
   const neighbors = adjacentSectorIds(graph, landmark.sectorId);
   let state = { ...createRunState(graph, 2), playerNodeId: landmark.nodeId };
-  const raised = { level: 3, resolvedEventIds: [] };
+  const raised = { level: 3, pressure: 0, resolvedEventIds: [] };
   state = {
     ...state,
     sectorAlerts: {
       ...state.sectorAlerts,
       [landmark.sectorId]: raised,
       [neighbors[0]]: { ...raised },
-      [neighbors[1]]: { level: 0, resolvedEventIds: [] },
+      [neighbors[1]]: { level: 0, pressure: 0, resolvedEventIds: [] },
     },
   };
   // 예전 3단계는 맵 전체 위협을 patrol로 되돌렸다 — 그 효과가 사라졌는지도 같이 본다.

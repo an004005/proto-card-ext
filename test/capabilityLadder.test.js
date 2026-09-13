@@ -8,7 +8,7 @@ import {
   createRunState, destroyCamera, hackAccessInterface, acquireContractGoods, openSpecialEdge,
 } from '../src/engine/runEngine.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
-import { CAMERA_FORCE_TIME } from '../src/data/facilityLayout.js';
+import { CAMERA_FORCE_TIME, ALERT_PRESSURE } from '../src/data/facilityLayout.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -56,12 +56,13 @@ test('Hacking pays in the sector alert, and a surplus actually costs less than t
   assert.equal(standard.sectorAlerts[sectorId].level, 0, '요구치를 맞췄으면 들키지 않는다');
 
   const strained = hackAccessInterface(state, 'iface', 0);
-  assert.equal(strained.sectorAlerts[sectorId].level, 0, 'strained는 아직 경계까지 올리지 않는다');
+  assert.equal(strained.sectorAlerts[sectorId].pressure, 0, 'strained는 아직 경계 게이지를 올리지 않는다');
   assert.ok(strained.time > standard.time);
   assert.equal(strained.pendingHpLoss, 0, 'Hacking은 HP로 받지 않는다');
 
   const severe = hackAccessInterface(state, 'iface', -1);
-  assert.equal(severe.sectorAlerts[sectorId].level, 1, '크게 모자라면 그 자리에서 들킨다');
+  assert.equal(severe.sectorAlerts[sectorId].level, 0, '한 번 들켰다고 단계가 바로 오르지는 않는다(ADR-0082)');
+  assert.equal(severe.sectorAlerts[sectorId].pressure, ALERT_PRESSURE.botchedAction, '크게 모자라면 그 자리에서 들켜 게이지가 찬다');
 
   const surplus = hackAccessInterface(state, 'iface', 3);
   assert.ok(surplus.time < standard.time, '여유가 있으면 더 빨리 끝난다');
@@ -91,7 +92,8 @@ test('Stealth pays in a strong trace, and a severe shortfall raises the sector a
   assert.equal(strained.sectorAlerts[sectorId].level, 0, '아직은 발견되기를 기다리는 단계다');
 
   const severe = acquireContractGoods(at, -1, -1);
-  assert.equal(severe.sectorAlerts[sectorId].level, 1, '크게 모자라면 그 자리에서 바로 들킨다');
+  assert.equal(severe.sectorAlerts[sectorId].pressure, ALERT_PRESSURE.botchedAction, '크게 모자라면 그 자리에서 바로 들켜 게이지가 찬다');
+  assert.equal(severe.sectorAlerts[sectorId].level, 0, '게이지가 가득 차야 단계가 오른다(ADR-0082)');
 });
 
 test('the impossible band is what stays locked — and it starts three below the requirement', () => {

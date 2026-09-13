@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0075 (조사 주기 정수 칸)
+status: amended by ADR-0075 (조사 주기 정수 칸), ADR-0082 (상승은 단계가 아니라 압력)
 ---
 
 # 조사에 실패한 소음은 구역 경계도를 올린다

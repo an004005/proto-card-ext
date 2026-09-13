@@ -203,6 +203,7 @@ function buildWorkbook() {
     ['맵', '시설 붕괴', FACILITY.RUN_COLLAPSE_TIME, '이 시각에 도달하면 런 종료(마감과 같은 시각 도착은 늦은 것)', 'src/data/facilityLayout.js'],
     ['맵', '통로 비용', `${FACILITY.EDGE_TIME_MIN}~${FACILITY.EDGE_TIME_MAX}칸`, '맵 생성 시 기하 거리로 한 번 정수화하고 이후 변하지 않는다', 'src/engine/facilityGraph.js'],
     ['맵', '위협 이동 간격', `순찰 ${FACILITY.THREAT_MOVE_INTERVAL.patrol} / 조사·경계 ${FACILITY.THREAT_MOVE_INTERVAL.investigate} / 추적 ${FACILITY.THREAT_MOVE_INTERVAL.pursuit}`, `봉쇄 중에는 고정표로 각각 ${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.patrol}/${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.investigate}/${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.pursuit}`, 'src/data/facilityLayout.js'],
+    ['맵', '구역 경계 게이지', `정원 ${FACILITY.ALERT_GAUGE_CAPACITY}`, `원인마다 압력이 쌓이고 정원을 채우면 단계가 1 오르며 남은 양은 이월된다(3에서 멈춘다). 카메라 감지 +${FACILITY.ALERT_PRESSURE.cameraDetection} / 시체 발견 +${FACILITY.ALERT_PRESSURE.corpseFound} / 강한 흔적 발견 +${FACILITY.ALERT_PRESSURE.strongTraceFound} / 층계 위태 +${FACILITY.ALERT_PRESSURE.botchedAction} / 허탕 조사 +${FACILITY.ALERT_PRESSURE.failedInvestigation}. 단계를 낮추는 수습은 그 구역 게이지를 0으로 지운다`, 'src/data/facilityLayout.js'],
     ['맵', '구역 증원 주기', `${FACILITY.REINFORCEMENT_INTERVAL} / 봉쇄 ${FACILITY.REINFORCEMENT_LOCKDOWN_INTERVAL}`, '구역별 독립 시계. 로스터의 빈자리만 채운다', 'src/data/facilityLayout.js'],
     ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '요청·개방 여부와 무관하게 영구 폐쇄', 'src/data/facilityLayout.js'],
     ['탈출', 'B 비활성', FACILITY.EXIT_B_DISABLED_AT, `요청·개방 여부와 무관하게 영구 폐쇄. 회수·파괴 계약의 봉쇄 시 min(기존, 봉쇄+${FACILITY.LOCKDOWN_EXIT_CLOSE_WINDOW})로 당겨진다. 정보 계약의 봉쇄는 앞당기지 않는다`, 'src/data/facilityLayout.js'],
