@@ -113,3 +113,74 @@ test('Mobility pays in HP, and the reducer settles that off playerState', async 
   assert.equal(after.playerState.hp, 43, '쌓인 HP 청구서가 실제로 빠진다');
   assert.equal(after.facilityRunState.pendingHpLoss, 0, '그리고 두 번 청구되지 않도록 비워진다');
 });
+
+test('고지대 통과는 층계다 — Mobility의 통화(HP)로만 받고, 시간은 이동의 전용 규칙 그대로다', async () => {
+  const { forecastAction, moveTimeCost } = await import('../src/engine/actionCosts.js');
+  const { CAPABILITY_STEP_HP_COST, HIGH_GROUND_MOBILITY_REQUIREMENT } = await import('../src/data/facilityLayout.js');
+  const edge = { timeCost: 6, features: ['highGround'] };
+
+  const standard = forecastAction('traverseHighGround', { edge, value: HIGH_GROUND_MOBILITY_REQUIREMENT });
+  assert.equal(standard.step, 'standard');
+  assert.equal(standard.cost.hpCost, 0);
+  assert.equal(standard.timeCost, moveTimeCost(edge, 3), '시간은 이동과 같은 값이다 — 층계 가감을 또 얹지 않는다');
+
+  const strained = forecastAction('traverseHighGround', { edge, value: 2 });
+  assert.equal(strained.step, 'strained');
+  assert.equal(strained.cost.hpCost, CAPABILITY_STEP_HP_COST.strained);
+  assert.equal(strained.timeCost, moveTimeCost(edge, 2));
+  assert.equal(strained.cost.noise, 0, 'Mobility는 소음으로 받지 않는다');
+  assert.equal(strained.cost.overload, 0, '과부화로도 받지 않는다');
+
+  const severe = forecastAction('traverseHighGround', { edge, value: 1 });
+  assert.equal(severe.step, 'severe');
+  assert.equal(severe.cost.hpCost, CAPABILITY_STEP_HP_COST.severe);
+
+  assert.equal(forecastAction('traverseHighGround', { edge, value: 0 }).blocked, true, '0은 불가 구간이다(요구치 3 − 3)');
+});
+
+test('조우 속이기의 층계는 시간이 아니라 판정에 붙는다 — 0칸짜리 선택지라서', async () => {
+  const { forecastAction } = await import('../src/engine/actionCosts.js');
+  const { ENCOUNTER_DECEIVE_STEP_PENALTY, ENCOUNTER_DECEIVE_REQUIREMENT } = await import('../src/data/facilityLayout.js');
+
+  for (const [value, step] of [[3, 'surplus'], [2, 'standard'], [1, 'strained'], [0, 'severe']]) {
+    const forecast = forecastAction('encounterDeceive', { value });
+    assert.equal(forecast.step, step);
+    assert.equal(forecast.timeCost, 0, '어느 단계에서도 0칸이다');
+    assert.equal(forecast.required, ENCOUNTER_DECEIVE_REQUIREMENT);
+  }
+  assert.equal(forecastAction('encounterDeceive', { value: -1 }).blocked, true);
+
+  assert.equal(ENCOUNTER_DECEIVE_STEP_PENALTY.standard.successPenalty, 0);
+  assert.equal(ENCOUNTER_DECEIVE_STEP_PENALTY.strained.successPenalty, 1);
+  assert.equal(ENCOUNTER_DECEIVE_STEP_PENALTY.severe.raisesThreatAlert, true);
+});
+
+test('고지대의 HP 대가도 커맨드 래퍼에서 playerState로 정산된다', async () => {
+  const { gameReducer } = await import('../src/engine/gameReducer.js');
+  const { CAPABILITY_STEP_HP_COST } = await import('../src/data/facilityLayout.js');
+  const base = makeRun(21);
+  const edge = base.graph.edges.find((e) => e.from === base.playerNodeId || e.to === base.playerNodeId);
+  const destination = edge.from === base.playerNodeId ? edge.to : edge.from;
+  const run = {
+    ...base,
+    graph: { ...base.graph, edges: base.graph.edges.map((e) => (e.id === edge.id ? { ...e, features: ['highGround'] } : e)) },
+  };
+  // Mobility 2(무리) 로드아웃 — 요구치 3에 하나 모자라므로 넘어는 가되 HP를 치른다.
+  const loadout = {
+    weapons: [], modules: [{ id: 'm1', equipmentId: 'module_sandevistan' }], consumableSlots: [], implantIds: [],
+  };
+  const snapshot = {
+    currentScreen: 'map',
+    rngState: run.rngState,
+    facilityRunState: run,
+    playerState: { hp: 50, maxHp: 50, overload: 0, loadout, inventory: { items: [], ammo: 0, capacity: 12 } },
+  };
+  const after = gameReducer(snapshot, { type: 'MOVE_TO_NODE', nodeId: destination });
+  assert.equal(after.facilityRunState.playerNodeId, destination, '모자란 채로도 넘어간다');
+  assert.equal(after.playerState.hp, 50 - CAPABILITY_STEP_HP_COST.strained, 'HP 대가가 실제로 빠진다');
+  assert.equal(after.facilityRunState.pendingHpLoss, 0, '그리고 두 번 청구되지 않도록 비워진다');
+
+  // Mobility 0(빈 로드아웃)은 불가 구간이라 커맨드가 통째로 no-op이 된다.
+  const bare = { ...snapshot, playerState: { ...snapshot.playerState, loadout: { weapons: [], modules: [], consumableSlots: [], implantIds: [] } } };
+  assert.equal(gameReducer(bare, { type: 'MOVE_TO_NODE', nodeId: destination }), bare);
+});

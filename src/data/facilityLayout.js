@@ -186,6 +186,14 @@ export const SPECIAL_EDGE_CATEGORY_WEIGHTS = [
 // 물리 자물쇠라 Force로만 열린다. Hacking으로 열 수 있는 문의 비율이 이 값이다.
 export const SPECIAL_EDGE_SECOND_TAG_CHANCE = 0.4;
 
+/**
+ * 고지대 엣지를 넘는 표준 Mobility. 다른 요구치와 똑같이 층계(D8)로 판정한다 — 예전에는 이
+ * 하나만 이분 게이트라 "3이면 되고 2면 안 되는" 체크박스였고, 그래서 Mobility 2 빌드에는
+ * 지도의 일부가 통째로 없는 길이었다. 지금은 부족분을 HP로 치르고 넘는다(Mobility 2는 무리,
+ * 1은 위태). 판정에는 `effectiveForRequirement`의 0 하한을 그대로 쓰므로 0 이하는 전부 불가다.
+ */
+export const HIGH_GROUND_MOBILITY_REQUIREMENT = 3;
+
 export const LANDMARKS_BY_SECTOR = {
   entrance: { id: 'security_records_room', name: '보안 기록실', approaches: ['perception', 'hacking', 'force'] },
   labs: { id: 'quarantine_vault', name: '격리 표본고', approaches: ['stealth', 'force', 'hacking'] },
@@ -430,8 +438,14 @@ export const POWER_CUT_NOISE = 3;
 export const FAKE_NOISE_TIME = 3;
 export const FAKE_NOISE_OVERLOAD = 3;
 export const FAKE_NOISE_REQUIREMENT = 1;
-/** 실효 Deception -2/-1/0/1/2/3/4 -> 소음을 심을 수 있는 홉 범위. 1 미만은 자격 미달이라 0이다. */
-export const FAKE_NOISE_RANGE_BY_DECEPTION = [0, 0, 0, 1, 2, 3, 3];
+/**
+ * 실효 Deception -2/-1/0/1/2/3/4 -> 소음을 심을 수 있는 홉 범위.
+ *
+ * 요구치(1)에 못 미쳐도 심을 수는 있다 — 층계(D8)가 대가를 시간으로 받고, 사거리는 최소인
+ * 1홉으로 주저앉는다. 불가 구간(-2)만 0이며 그 값은 실제로 조회되지 않는다: 그 전에
+ * `requireActionCost('fakeNoise')`가 막는다.
+ */
+export const FAKE_NOISE_RANGE_BY_DECEPTION = [0, 1, 1, 1, 2, 3, 3];
 /** 이 수치 이상이면 심는 소음의 강도가 1이 아니라 2다 — 더 멀리까지 들린다. */
 export const FAKE_NOISE_STRONG_DECEPTION = 3;
 export const FAKE_NOISE_INTENSITY = 1;
@@ -439,6 +453,21 @@ export const FAKE_NOISE_STRONG_INTENSITY = 2;
 
 // 조우 속이기 — 동률 조우에서 회피 대신 고를 수 있다. 위협당 한 번뿐이고 칸을 쓰지 않는다.
 export const ENCOUNTER_DECEIVE_REQUIREMENT = 2;
+/**
+ * 조우 속이기의 층계 대가. 0칸짜리 행동이라 시간으로는 받을 수 없고(시간 가감을 얹으면 "0칸
+ * 선택지"라는 성격 자체가 사라진다), Deception의 통화인 지속도 이 한 번짜리 행동에는 붙일
+ * 자리가 없다. 그래서 대가를 **판정 자체**에서 받는다:
+ *
+ * - 무리(Deception 1): 속임수가 엉성해 성공 기준이 1 높아진다(그 위협의 경계 + 1 이상 필요).
+ * - 위태(Deception 0): 위와 같고, 시도 자체가 들통나 성공·실패와 무관하게 그 위협의 경계가 1 오른다.
+ * - 불가(Deception -1 이하): 시도할 수 없다.
+ */
+export const ENCOUNTER_DECEIVE_STEP_PENALTY = {
+  surplus: { successPenalty: 0, raisesThreatAlert: false },
+  standard: { successPenalty: 0, raisesThreatAlert: false },
+  strained: { successPenalty: 1, raisesThreatAlert: false },
+  severe: { successPenalty: 1, raisesThreatAlert: true },
+};
 
 // 가짜 목표 송출을 인접 구역이 아니라 아무 구역으로나 쏠 수 있게 되는 수치.
 export const FALSE_BROADCAST_ANY_SECTOR_DECEPTION = 3;

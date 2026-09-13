@@ -23,7 +23,7 @@ import {
 } from './facilityReducer.js';
 import {
   playCardCommand, endTurnCommand, useConsumable, beginDisengageCommand, cancelDisengageCommand,
-  resolveDisengageCommand, getDeckEntries,
+  resolveDisengageCommand, getDeckEntries, debugWinCombatCommand,
 } from './combatReducer.js';
 import { selectReward, confirmRewards } from './rewardReducer.js';
 import {
@@ -83,6 +83,8 @@ export function gameReducer(snapshot, command) {
     case 'USE_FIELD_EQUIPMENT': return useFieldEquipmentCommand(snapshot, command.instanceId, command.targetId);
     case 'PLAY_CARD': return playCardCommand(snapshot, command.instanceId, command.targetId);
     case 'END_TURN': return endTurnCommand(snapshot);
+    // 디버그 전용(CombatScreen의 'DEBUG 즉시 승리'). 정상 승리와 같은 처리 경로를 탄다.
+    case 'DEBUG_WIN_COMBAT': return debugWinCombatCommand(snapshot);
     case 'USE_CONSUMABLE': return useConsumable(snapshot, command.itemId);
     case 'BEGIN_DISENGAGE': return beginDisengageCommand(snapshot);
     case 'CANCEL_DISENGAGE': return cancelDisengageCommand(snapshot);

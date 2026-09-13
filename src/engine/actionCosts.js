@@ -25,6 +25,7 @@ import {
   CONTRACT_ACQUIRE_TIME, CONTRACT_ACQUIRE_OVERLOAD, CONTRACT_DESTROY_TIME, CONTRACT_DESTROY_OVERLOAD,
   CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD, CONTRACT_DETONATE_TIME,
   FAKE_NOISE_TIME, FAKE_NOISE_OVERLOAD, FAKE_NOISE_REQUIREMENT,
+  HIGH_GROUND_MOBILITY_REQUIREMENT, ENCOUNTER_DECEIVE_REQUIREMENT,
   TRACE_CLEANUP_TIME_BY_PERCEPTION, POWER_CUT_TIME, POWER_CUT_NOISE,
   FALSE_BROADCAST_TIME, FALSE_BROADCAST_DURATION_BY_STEP,
   MOBILITY_MOVE_TIME_DELTA, MOVE_MIN_TIME, CAPABILITY_STEP_TIME_DELTA, CAPABILITY_MIN_TIME,
@@ -115,6 +116,32 @@ export const ACTION_SPECS = {
         timeFloor: MOVE_MIN_TIME,
       };
     },
+  },
+  // 고지대 통과 — 이동 그 자체이므로 시간은 이동의 전용 규칙(Mobility 칸 가감)을 그대로 쓰고
+  // (`dedicatedTimeRule`: 층계 시간 가감을 또 얹으면 같은 수치에 대가를 두 번 물린다),
+  // 부족분은 Mobility의 통화인 HP로만 받는다. 요구치 3이라 0 이하가 불가 구간이 된다.
+  traverseHighGround: {
+    label: '고지대 통과',
+    capability: 'mobility',
+    required: () => HIGH_GROUND_MOBILITY_REQUIREMENT,
+    base: (opts) => {
+      const edge = /** @type {{timeCost: number}} */ (opts.edge);
+      return {
+        time: moveTimeCost(edge, opts.value ?? 0),
+        baseTime: edge.timeCost,
+        mobilityDelta: MOBILITY_MOVE_TIME_DELTA[clampIndex(opts.value ?? 0)],
+        timeFloor: MOVE_MIN_TIME,
+        dedicatedTimeRule: true,
+      };
+    },
+  },
+  // 조우 속이기 — 0칸짜리 선택지라 시간으로 받을 대가가 없다. 층계는 불가 판정만 맡고, 실제
+  // 대가는 판정 자체에 붙는다(ENCOUNTER_DECEIVE_STEP_PENALTY, runEngine.deceiveThreat).
+  encounterDeceive: {
+    label: '조우 속이기',
+    capability: 'deception',
+    required: () => ENCOUNTER_DECEIVE_REQUIREMENT,
+    base: () => ({ time: 0 }),
   },
   recon: { label: '기본 정찰', capability: null, base: () => ({ time: BASIC_RECON_TIME }) },
   wait: { label: '대기', capability: null, base: () => ({ time: WAIT_TICK_TIME }) },
@@ -280,6 +307,9 @@ export function forecastAction(actionId, opts = {}) {
   const value = opts.value ?? 0;
   const cost = resolveCapabilityCost(kind, value, required, base);
   if (cost.step !== 'impossible') {
+    // 전용 시간 규칙을 쓰는 층계 행동(고지대 통과)은 그 규칙의 내역을 대신 낸다 — 여기서
+    // 빠뜨리면 `고지대 통과 4칸`만 남고 왜 4칸인지가 화면에서 사라진다.
+    if (base.mobilityDelta) parts.push({ label: 'Mobility', delta: base.mobilityDelta });
     if (!base.dedicatedTimeRule && CAPABILITY_STEP_TIME_DELTA[cost.step]) {
       parts.push({ label: '능력', delta: CAPABILITY_STEP_TIME_DELTA[cost.step] });
     }

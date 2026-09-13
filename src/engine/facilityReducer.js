@@ -11,7 +11,7 @@ import {
   acquireContractGoods, destroyContractTarget, detonateContractCharge, acquireContractIntel, transmitContractIntel,
   disposeCorpse, scheduleTask, taskCompleted, waitOneTick, evadeThreat,
 } from './runEngine.js';
-import { WAIT_BATCH_MAX_TICKS, ENCOUNTER_DECEIVE_REQUIREMENT } from '../data/facilityLayout.js';
+import { WAIT_BATCH_MAX_TICKS } from '../data/facilityLayout.js';
 import { actionTimeCost } from './actionCosts.js';
 import { cleanTraces, cutPower, broadcastFalseTarget, plantFakeNoise } from './recovery.js';
 import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
@@ -629,7 +629,8 @@ export function encounterDeceiveCommand(snapshot) {
   const threat = run.threats[encounter.threatId];
   if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
   const capabilities = computeCapabilities(snapshot.playerState.loadout);
-  if (capabilities.deception < ENCOUNTER_DECEIVE_REQUIREMENT) return snapshot;
+  // 요구치 미달은 여기서 거르지 않는다 — 층계(D8)의 불가 판정만 막고, 그 판정은 deceiveThreat
+  // 안의 사양표가 한다. 화면의 예고와 커맨드가 다른 기준을 쓰면 버튼이 조용히 아무 일도 안 한다.
   if ((run.deceivedThreatIds || []).includes(threat.id)) return snapshot;
 
   let result;

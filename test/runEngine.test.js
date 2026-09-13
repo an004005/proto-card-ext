@@ -6,7 +6,7 @@ import {
   openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment, isAtOpenExit,
   hackCamera, hackAccessInterface, destroyCamera, cameraHackRange, disableGenerator,
   useConcealment, effectiveStealthWithConcealment, refreshActiveRecon, hackControlRoom,
-  isOnFloorPlan, isNodeCharted,
+  isOnFloorPlan, isNodeCharted, canTraverseEdge,
   getSectorLandmarkArrowTarget,
   acquireContractGoods, destroyContractTarget, detonateContractCharge, acquireContractIntel, transmitContractIntel,
 } from '../src/engine/runEngine.js';
@@ -19,7 +19,7 @@ import {
   TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_EXIT_CLOSE_WINDOW,
   ADJACENT_SECTOR_IDS, REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
   NOISE_DURATION, CAMERA_FORCE_TIME, GENERATOR_FORCE_TIME,
-  MOVE_MIN_TIME, MOBILITY_MOVE_TIME_DELTA, CAPABILITY_STEP_TIME_DELTA,
+  MOVE_MIN_TIME, MOBILITY_MOVE_TIME_DELTA, CAPABILITY_STEP_TIME_DELTA, CAPABILITY_STEP_HP_COST,
   CONTRACT_DETONATE_TIME, CONTRACT_DETONATE_MIN_HOPS,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
@@ -260,15 +260,33 @@ test('moveToAdjacentNode requires an edge, costs the traversed edge\'s own (geom
   assert.throws(() => moveToAdjacentNode(state, nonNeighbor));
 });
 
-test('high-ground edges require Mobility 3 and Mobility scales movement time', () => {
+test('high-ground edges are a ladder, not a gate — Mobility 3 is the standard and HP pays the shortfall', () => {
   let state = makeRun(21);
   const edge = state.graph.edges.find((entry) => entry.from === state.playerNodeId || entry.to === state.playerNodeId);
   const destination = edge.from === state.playerNodeId ? edge.to : edge.from;
   state = { ...state, graph: { ...state.graph, edges: state.graph.edges.map((entry) => entry.id === edge.id ? { ...entry, features: ['highGround'] } : entry) } };
-  assert.throws(() => moveToAdjacentNode(state, destination, 2, 3), /reachable/);
-  const fast = moveToAdjacentNode(state, destination, 3, 3);
-  // Mobility는 저장된 통로 비용에 칸을 더하고 뺄 뿐이다(ADR-0075) — 배율이 아니다.
-  assert.equal(fast.time, Math.max(MOVE_MIN_TIME, edge.timeCost + MOBILITY_MOVE_TIME_DELTA[3 + 2]));
+  const highGroundEdge = state.graph.edges.find((entry) => entry.id === edge.id);
+
+  // 표준(3): 대가 없음. Mobility는 저장된 통로 비용에 칸을 더하고 뺄 뿐이다(ADR-0075).
+  const standard = moveToAdjacentNode(state, destination, 3, 3);
+  assert.equal(standard.time, Math.max(MOVE_MIN_TIME, edge.timeCost + MOBILITY_MOVE_TIME_DELTA[3 + 2]));
+  assert.equal(standard.pendingHpLoss || 0, 0, '요구치를 맞췄으면 몸은 멀쩡하다');
+
+  // 무리(2)와 위태(1): 넘을 수는 있고 HP로 값을 치른다. 시간은 이동의 전용 규칙 그대로다.
+  const strained = moveToAdjacentNode(state, destination, 2, 3);
+  assert.equal(strained.pendingHpLoss, CAPABILITY_STEP_HP_COST.strained);
+  assert.equal(strained.time, Math.max(MOVE_MIN_TIME, edge.timeCost + MOBILITY_MOVE_TIME_DELTA[2 + 2]), '층계 시간 가감을 중복으로 받지 않는다');
+  const severe = moveToAdjacentNode(state, destination, 1, 3);
+  assert.equal(severe.pendingHpLoss, CAPABILITY_STEP_HP_COST.severe);
+
+  // 불가(0 이하): 0 하한이 걸리므로 -2~0이 전부 같은 불가 구간이다.
+  for (const mobility of [0, -1, -2]) {
+    assert.equal(canTraverseEdge(state, highGroundEdge, mobility), false, `Mobility ${mobility}은 고지대를 넘지 못한다`);
+    assert.throws(() => moveToAdjacentNode(state, destination, mobility, 3), /reachable/);
+  }
+  for (const mobility of [1, 2, 3, 4]) {
+    assert.equal(canTraverseEdge(state, highGroundEdge, mobility), true, `Mobility ${mobility}은 대가를 치르고 넘는다`);
+  }
 });
 
 test('an unhacked camera detects Stealth below 3 and directs nearby threats to the player', () => {

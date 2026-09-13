@@ -14,6 +14,7 @@ import process from 'node:process';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { moveTimeCost, forecastAction, actionTimeCost } from '../src/engine/actionCosts.js';
 import { effectiveForRequirement } from '../src/engine/capabilityEngine.js';
+import { capabilityStep } from '../src/engine/capabilityCosts.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { lockdownClosesExitB } from '../src/engine/runEngine.js';
 import {
@@ -22,10 +23,10 @@ import {
   EDGE_TIME_MIN, EDGE_TIME_MAX, EXIT_AB_MIN_DISTANCE, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
   CORPSE_DISPOSAL_TIME,
   COMBAT_ROUND_TIME_COST, THREAT_MOVE_INTERVAL, REINFORCEMENT_INTERVAL,
-  FORCE_TIER1_TIME, HACKING_TIER1_TIME, ADJACENT_SECTOR_IDS,
+  FORCE_TIER1_TIME, HACKING_TIER1_TIME, ADJACENT_SECTOR_IDS, HIGH_GROUND_MOBILITY_REQUIREMENT,
 } from '../src/data/facilityLayout.js';
 
-/** 측정에 쓰는 Mobility 값. 이동 비용만 바뀌고 통과 가능 여부도 바뀐다(highGround는 3 이상). */
+/** 측정에 쓰는 Mobility 값. 이동 비용이 바뀌고, 고지대는 층계 불가 구간(유효 0 이하)에서만 길이 끊긴다. */
 export const MOBILITY_VALUES = [-2, 0, 2, 4];
 
 /** 기본 로드아웃 = 모든 Capability 0. 문 개방·계약 행동 비용은 전부 이 값으로 계산한다. */
@@ -113,7 +114,7 @@ function buildArcs(graph, mobility, allowOpening) {
     arcs.get(from).push({ to, cost });
   };
   for (const edge of graph.edges) {
-    if (edge.features.includes('highGround') && effectiveForRequirement(mobility) < 3) continue;
+    if (edge.features.includes('highGround') && capabilityStep(effectiveForRequirement(mobility), HIGH_GROUND_MOBILITY_REQUIREMENT) === 'impossible') continue;
     const locked = edge.features.includes('blocked') || edge.features.includes('electronic');
     let extra = 0;
     if (locked) {
@@ -140,7 +141,7 @@ function buildLegacyArcs(graph, mobility) {
     arcs.get(from).push({ to, cost });
   };
   for (const edge of graph.edges) {
-    if (edge.features.includes('highGround') && effectiveForRequirement(mobility) < 3) continue;
+    if (edge.features.includes('highGround') && capabilityStep(effectiveForRequirement(mobility), HIGH_GROUND_MOBILITY_REQUIREMENT) === 'impossible') continue;
     if (edge.features.includes('blocked') || edge.features.includes('electronic')) continue;
     const a = byId.get(edge.from);
     const b = byId.get(edge.to);
