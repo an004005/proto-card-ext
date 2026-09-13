@@ -211,6 +211,7 @@
 /**
  * @typedef {Object} SectorAlertState
  * @property {0|1|2|3} level
+ * @property {number} pressure 0..ALERT_GAUGE_CAPACITY-1. 원인마다 쌓이고, 가득 차면 level이 1 오르고 남은 양만 남는다(ADR-0082). 단계를 낮추는 수습이 걸리면 0이 된다.
  * @property {string[]} resolvedEventIds 같은 소음 사건의 중복 상승 방지.
  */
 

@@ -178,8 +178,8 @@ test('가짜 목표의 부족 단계(지속 8칸)는 완료 시각 C부터 8칸�
     playerNodeId: entry.nodeId,
     sectorAlerts: {
       ...base.sectorAlerts,
-      [sectorId]: { level: 2, resolvedEventIds: [] },
-      [targetSectorId]: { level: 0, resolvedEventIds: [] },
+      [sectorId]: { level: 2, pressure: 0, resolvedEventIds: [] },
+      [targetSectorId]: { level: 0, pressure: 0, resolvedEventIds: [] },
     },
   };
 

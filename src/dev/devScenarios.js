@@ -192,7 +192,7 @@ function withRecovery(snapshot, run) {
         { id: 'dev_e1', nodeId, tier: 1, createdBySectorId: sectorId },
         { id: 'dev_e2', nodeId, tier: 2, createdBySectorId: sectorId },
       ],
-      sectorAlerts: { ...moved.sectorAlerts, [sectorId]: { level: 2, resolvedEventIds: [] } },
+      sectorAlerts: { ...moved.sectorAlerts, [sectorId]: { level: 2, pressure: 0, resolvedEventIds: [] } },
     },
   };
 }
@@ -221,7 +221,7 @@ function withAlertHigh(snapshot, run) {
     ...snapshot,
     facilityRunState: {
       ...run,
-      sectorAlerts: { ...run.sectorAlerts, [sectorId]: { level: 3, resolvedEventIds: ['dev_a', 'dev_b', 'dev_c'] } },
+      sectorAlerts: { ...run.sectorAlerts, [sectorId]: { level: 3, pressure: 0, resolvedEventIds: ['dev_a', 'dev_b', 'dev_c'] } },
       revealedPatrolRouteSectorIds: [...new Set([...run.revealedPatrolRouteSectorIds, sectorId])],
       // 교대까지 코앞인 상태를 보려는 시나리오다. 맵 시간은 정수 칸이므로(ADR-0075) 간격을
       // 나누지 않고 몇 칸 뒤인지를 그대로 쓴다.

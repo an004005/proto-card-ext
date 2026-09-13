@@ -23,7 +23,7 @@ import {
   RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
-  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE,
+  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE,
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
@@ -121,7 +121,7 @@ export function createRunState(graph, seed, runConfig = {}) {
 
   /** @type {Record<string, import('./types.js').SectorAlertState>} */
   const sectorAlerts = {};
-  for (const sectorId of graph.sectorIds) sectorAlerts[sectorId] = { level: 0, resolvedEventIds: [] };
+  for (const sectorId of graph.sectorIds) sectorAlerts[sectorId] = { level: 0, pressure: 0, resolvedEventIds: [] };
 
   // D17: 런 시작 시점의 정보 공개. 계약 난이도가 정하는 값이고(3단계에서 계약이 이 자리를
   // 채운다), 구현은 관측 집합에 미리 넣어 두는 것뿐이라 정찰·지도 임플란트와 같은 경로를 쓴다.
@@ -687,16 +687,32 @@ function sectorOfNode(nodeId) {
   return /** @type {import('./types.js').FacilitySectorId} */ (nodeId.split('_')[0]);
 }
 
-/** @param {import('./types.js').FacilityRunState} state @param {import('./types.js').FacilitySectorId} sectorId @param {string} eventId */
-function escalateSectorAlert(state, sectorId, eventId) {
+/**
+ * 구역 경계 압력을 얹는다(ADR-0082). 한 원인이 곧장 한 단계를 올리는 게 아니라 게이지를
+ * 채우고, 가득 차면 단계가 1 오르며 넘친 만큼은 다음 단계로 이월된다 — 큰 사건의 초과분이
+ * 버려지면 "이미 찼으니 지금 더 크게 사고 쳐도 같다"가 되어버린다.
+ * 최대 단계(3)에서는 채울 것이 없으므로 게이지를 0에 고정한다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').FacilitySectorId} sectorId
+ * @param {string} eventId 같은 사건의 중복 상승 방지 키.
+ * @param {number} amount ALERT_PRESSURE의 원인별 압력.
+ */
+export function escalateSectorAlert(state, sectorId, eventId, amount) {
   const current = state.sectorAlerts[sectorId];
   if (current.resolvedEventIds.includes(eventId)) return state.sectorAlerts;
   // 전원 차단(D12) 중인 구역은 경계가 오르지 않는다. 기록도 남기지 않으므로 복구된 뒤에
   // 같은 원인이 다시 발견되면 그때는 오른다 — "막는" 것이 아니라 "멈추는" 것이다.
   if (state.powerCuts.some((cut) => cut.sectorId === sectorId && cut.expiresAt > state.time)) return state.sectorAlerts;
+  let level = current.level;
+  let pressure = (current.pressure || 0) + amount;
+  while (pressure >= ALERT_GAUGE_CAPACITY && level < 3) {
+    level = /** @type {0|1|2|3} */ (level + 1);
+    pressure -= ALERT_GAUGE_CAPACITY;
+  }
+  if (level >= 3) pressure = 0;
   return {
     ...state.sectorAlerts,
-    [sectorId]: { level: /** @type {0|1|2|3} */ (Math.min(3, current.level + 1)), resolvedEventIds: [...current.resolvedEventIds, eventId] },
+    [sectorId]: { level, pressure, resolvedEventIds: [...current.resolvedEventIds, eventId] },
   };
 }
 
@@ -813,21 +829,19 @@ function discoverAtNode(state, nodeId, sectorId) {
   if (!corpse && traces.length === 0) return state;
 
   let next = state;
-  let raisesAlert = false;
 
+  // 시체와 강한 흔적이 한 자리에서 함께 발견되면 압력도 함께 더해진다(6+4=10 — 정확히 한 단계).
+  // 두 사건이 따로 기록되므로 중복 방지 키도 따로다.
   if (corpse) {
     next = { ...next, corpses: next.corpses.filter((c) => c.id !== corpse.id) };
-    raisesAlert = true;
+    next = { ...next, sectorAlerts: escalateSectorAlert(next, sectorId, corpse.id, ALERT_PRESSURE.corpseFound) };
   }
   if (traces.length > 0) {
     const traceIds = new Set(traces.map((t) => t.id));
     next = { ...next, evidence: next.evidence.filter((e) => !traceIds.has(e.id)) };
-    if (traces.some((t) => t.tier >= EVIDENCE_TIER_RAISING_ALERT)) raisesAlert = true;
-  }
-
-  if (raisesAlert) {
-    const eventId = corpse ? corpse.id : `trace_${nodeId}_${next.time}`;
-    next = { ...next, sectorAlerts: escalateSectorAlert(next, sectorId, eventId) };
+    if (traces.some((t) => t.tier >= EVIDENCE_TIER_RAISING_ALERT)) {
+      next = { ...next, sectorAlerts: escalateSectorAlert(next, sectorId, `trace_${nodeId}_${next.time}`, ALERT_PRESSURE.strongTraceFound) };
+    }
   }
 
   // 발견 지점으로 조사가 몰린다 — 소음 사건을 재사용한다(D13 "그 지점으로 조사가 몰린다").
@@ -1090,7 +1104,7 @@ function resolveArrival(state, threat, target) {
     // 허탕도 그 자리가 속한 구역에 보고한다 — 소음을 심을 때 처리 완료 목록에 등록하는 구역과
     // 같아야 이중계산 방지가 실제로 걸린다.
     const sectorAlerts = state.playerNodeId !== threat.nodeId
-      ? escalateSectorAlert(state, sectorOfNode(threat.nodeId), target.eventId)
+      ? escalateSectorAlert(state, sectorOfNode(threat.nodeId), target.eventId, ALERT_PRESSURE.failedInvestigation)
       : state.sectorAlerts;
     return {
       threat: {
@@ -1273,15 +1287,17 @@ const TASK_COMPLETIONS = {
     let next = state.revealedPatrolRouteSectorIds.includes(sectorId)
       ? state
       : { ...state, revealedPatrolRouteSectorIds: [...state.revealedPatrolRouteSectorIds, sectorId] };
+    // 단계를 낮추는 수습은 그 구역의 압력 게이지도 0으로 지운다(ADR-0082). 반쯤 찬 게이지를
+    // 남겨두면 장악한 구역이 다음 작은 사건 하나에 곧바로 다시 올라, 수습한 값이 사라진다.
     if (level >= 2) {
       const current = next.sectorAlerts[sectorId];
-      next = { ...next, sectorAlerts: { ...next.sectorAlerts, [sectorId]: { ...current, level: /** @type {0|1|2|3} */ (Math.max(0, current.level - (level - 1))) } } };
+      next = { ...next, sectorAlerts: { ...next.sectorAlerts, [sectorId]: { ...current, level: /** @type {0|1|2|3} */ (Math.max(0, current.level - (level - 1))), pressure: 0 } } };
     }
     if (level >= 3) {
       let sectorAlerts = next.sectorAlerts;
       for (const neighborId of adjacentSectorIds(next.graph, sectorId)) {
         const neighbor = sectorAlerts[neighborId];
-        sectorAlerts = { ...sectorAlerts, [neighborId]: { ...neighbor, level: /** @type {0|1|2|3} */ (Math.max(0, neighbor.level - 1)) } };
+        sectorAlerts = { ...sectorAlerts, [neighborId]: { ...neighbor, level: /** @type {0|1|2|3} */ (Math.max(0, neighbor.level - 1)), pressure: 0 } };
       }
       next = { ...next, sectorAlerts };
     }
@@ -1353,7 +1369,9 @@ const TASK_COMPLETIONS = {
         ...state,
         sectorAlerts: {
           ...state.sectorAlerts,
-          [sectorId]: { ...current, level: /** @type {0|1|2|3} */ (current.level - 1) },
+          // 옮기는 단위는 **단계**다(ADR-0073 총량 보존은 단계 단위로 성립한다). 이쪽은
+          // 단계를 내주면서 반쯤 찬 게이지도 지워지고, 받는 쪽 게이지는 건드리지 않는다.
+          [sectorId]: { ...current, level: /** @type {0|1|2|3} */ (current.level - 1), pressure: 0 },
           [targetSectorId]: { ...target, level: /** @type {0|1|2|3} */ (target.level + 1) },
         },
       }
@@ -1447,7 +1465,7 @@ function applyTaskCost(state, cost, nodeId) {
       next = { ...next, evidence: [...next.evidence, { id: idForNewEntry(next, next.evidence, 'evidence'), nodeId, tier: 2, createdBySectorId: sectorId }] };
     }
     if (cost.raisesAlert) {
-      next = { ...next, sectorAlerts: escalateSectorAlert(next, sectorId, `botch_${nodeId}_${next.time}`) };
+      next = { ...next, sectorAlerts: escalateSectorAlert(next, sectorId, `botch_${nodeId}_${next.time}`, ALERT_PRESSURE.botchedAction) };
     }
     // 작업 소음은 **완료 시**에 난다. 시작 시각에 내면 작업이 NOISE_DURATION보다 길 때 자기
     // 행동 안에서 만료돼 아무도 듣지 못한다 — 시끄러운 실패가 오히려 조용해지는 뒤집힌 결과다.
@@ -1742,7 +1760,7 @@ function applyCameraDetection(state, nodeId, effectiveStealth) {
   const sectorId = /** @type {import('./types.js').FacilitySectorId} */ (nodeId.split('_')[0]);
   const detectionId = `camera_${camera.id}_${state.time}`;
   const withThreats = { ...state, threats, lastCameraDetection: { cameraId: camera.id, nodeId, detectedAt: state.time } };
-  return { ...withThreats, sectorAlerts: escalateSectorAlert(withThreats, sectorId, detectionId) };
+  return { ...withThreats, sectorAlerts: escalateSectorAlert(withThreats, sectorId, detectionId, ALERT_PRESSURE.cameraDetection) };
 }
 
 // 이동 비용은 비용 사양표(actionCosts.js)가 들고 있다 — UI 예고와 엔진 청구가 같은 함수를

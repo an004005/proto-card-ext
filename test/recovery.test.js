@@ -11,7 +11,7 @@ import { createRunState, advanceTime, openSpecialEdge } from '../src/engine/runE
 import { cleanTraces, cutPower, broadcastFalseTarget } from '../src/engine/recovery.js';
 import {
   TRACE_CLEANUP_TIME_BY_PERCEPTION, POWER_CUT_DURATION, POWER_CUT_TIME,
-  FALSE_BROADCAST_TIME,
+  FALSE_BROADCAST_TIME, ALERT_PRESSURE,
 } from '../src/data/facilityLayout.js';
 import { adjacentSectorIds } from '../src/engine/facilityGraph.js';
 
@@ -93,6 +93,7 @@ test('cutPower freezes the sector alert until it expires, and blocks hacking ele
   };
   const during = advanceTime(investigating, cut.time + 1);
   assert.equal(during.sectorAlerts[sectorId].level, 0, '전원 차단 중에는 경계가 오르지 않는다');
+  assert.equal(during.sectorAlerts[sectorId].pressure, 0, '게이지도 차지 않는다');
 
   // 전자식 자물쇠는 전원이 없으면 해킹으로 열 수 없다 — Force로 뜯는 길은 남는다.
   const lock = cut.graph.edges.find((e) => (e.from === cut.playerNodeId || e.to === cut.playerNodeId)
@@ -111,7 +112,7 @@ test('broadcastFalseTarget conserves total alert: it moves one level to an adjac
 
   const raised = {
     ...base,
-    sectorAlerts: { ...base.sectorAlerts, [sectorId]: { level: 2, resolvedEventIds: [] } },
+    sectorAlerts: { ...base.sectorAlerts, [sectorId]: { level: 2, pressure: 0, resolvedEventIds: [] } },
   };
   assert.throws(() => broadcastFalseTarget(raised, -2, neighborId), /deception/);
   const far = Object.keys(base.sectorAlerts).find((id) => id !== sectorId && !adjacentSectorIds(base.graph, sectorId).includes(id));
@@ -149,5 +150,5 @@ test('the power cut wears off and the sector can be escalated again', () => {
     threats: { [threat.id]: { ...threat, nodeId: source, nextMoveAt: expiry, mode: 'investigate' } },
   };
   const after = advanceTime(investigating, later);
-  assert.equal(after.sectorAlerts[sectorId].level, 1, '전원이 복구되면 다시 오른다');
+  assert.equal(after.sectorAlerts[sectorId].pressure, ALERT_PRESSURE.failedInvestigation, '전원이 복구되면 게이지가 다시 찬다');
 });

@@ -5,6 +5,7 @@
 // 하나도 만들지 않는다 — 입력은 언제나 엔진이 실제로 청구할 값(actionCosts.forecastAction)이다.
 import { html } from '../lib.js';
 import { CAPABILITY_LABELS } from '../data/capabilityDisplay.js';
+import { ALERT_GAUGE_CAPACITY, ALERT_PRESSURE } from '../data/facilityLayout.js';
 import { Tooltip } from './Tooltip.js';
 
 export const STEP_LABELS = { surplus: '여유', standard: '표준', strained: '무리', severe: '위태', impossible: '불가' };
@@ -55,7 +56,7 @@ export function ladderNote(forecast, extra = '') {
   if (cost.durabilityLoss) parts.push(`장비 내구도 -${cost.durabilityLoss}`);
   if (cost.duration != null) parts.push(`지속 ${cost.duration}칸`);
   if (cost.leavesStrongTrace) parts.push('강한 흔적이 남음');
-  if (cost.raisesAlert) parts.push('이 구역 경계도 +1');
+  if (cost.raisesAlert) parts.push(`이 구역 경계 게이지 +${ALERT_PRESSURE.botchedAction}/${ALERT_GAUGE_CAPACITY}`);
   if (extra) parts.push(extra);
   return {
     step,

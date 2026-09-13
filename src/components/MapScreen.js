@@ -24,7 +24,7 @@ import {
 import { ladderNote, StepBadge } from './ladderDisplay.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
 import { adjacentSectorIds } from '../engine/facilityGraph.js';
-import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION } from '../data/facilityLayout.js';
+import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE } from '../data/facilityLayout.js';
 import { getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
   SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR,
@@ -36,6 +36,7 @@ import { OverloadToggle } from './OverloadToggle.js';
 import { InventoryPopup } from './InventoryPopup.js';
 import { Tooltip } from './Tooltip.js';
 import { NodeTooltipCard } from './NodeTooltipCard.js';
+import { ThinGauge } from './ThinGauge.js';
 import { PlayLog } from './PlayLog.js';
 import { HistoryControls } from './HistoryControls.js';
 import { describeItem, EQUIPMENT_DEFS } from '../data/itemDisplay.js';
@@ -651,7 +652,7 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
   // 시체·흔적의 위치는 가 본 자리이거나 Perception 4의 정찰 사거리 안에서만 보인다.
   const evidenceVisible = debugReveal || run.visitedNodeIds.includes(n.id) || detailIncludes(observedDetail, 'evidence');
   if (evidenceVisible && run.corpses?.some((c) => c.nodeId === n.id)) {
-    rows.push({ kind: 'trace', tone: 'trace', title: '시체가 남아 있음', detail: '위협이 밟으면 신고되어 이 구역 경계도가 오른다' });
+    rows.push({ kind: 'trace', tone: 'trace', title: '시체가 남아 있음', detail: `위협이 밟으면 신고되어 이 구역 경계 게이지가 +${ALERT_PRESSURE.corpseFound} 오른다` });
   }
   if (evidenceVisible) {
     const traces = (run.evidence || []).filter((e) => e.nodeId === n.id);
@@ -661,7 +662,7 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
         kind: 'trace',
         tone: 'trace',
         title: `내 흔적 ${traces.length}개${strong ? ` · 강한 흔적 ${strong}개` : ''}`,
-        detail: strong ? '발견되면 이 구역 경계도가 오른다' : '약한 흔적 — 조사만 끌어온다',
+        detail: strong ? `발견되면 이 구역 경계 게이지가 +${ALERT_PRESSURE.strongTraceFound} 오른다` : '약한 흔적 — 조사만 끌어온다',
       });
     }
   }
@@ -1177,8 +1178,8 @@ export function MapScreen() {
                   </div>
                 `)}
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>⇄</span>구역 출입구(관문). 인접 구역으로 넘어가는 유일한 일반 통로이자 증원이 들어오는 자리</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>†</span>전투에서 이긴 자리에 남은 시체. 위협이 밟으면 신고되어 경계도가 오른다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#b45309', fontWeight: 800 }}>˙N</span>내가 남긴 흔적 수. 강한 흔적이 발견되면 경계도가 오른다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>†</span>전투에서 이긴 자리에 남은 시체. 위협이 밟으면 신고되어 경계 게이지가 오른다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#b45309', fontWeight: 800 }}>˙N</span>내가 남긴 흔적 수. 강한 흔적이 발견되면 경계 게이지가 오른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▲N</span>포착된 위협 그룹 수(시야 밖에서는 그룹 수 없이 ▲만)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '2px dashed var(--color-accent-2-700)' }}></span>미개방 특수 엣지(인접 시 클릭해 개방)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '3px dotted var(--color-neutral-900)' }}></span>임시 장벽 활성(적 이동 차단, 시한부)</div>
@@ -1419,14 +1420,29 @@ export function MapScreen() {
           <div style=${{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--color-divider)' }}>
             <h4 style=${{ margin: '0 0 6px' }}>현재 위치</h4>
             <div style=${{ fontSize: '15px', fontWeight: 800 }}>${currentSectorId ? SECTOR_NAMES[currentSectorId] : '-'}</div>
-            <${Tooltip} align="left" content="구역 경계 단계(0~3) — 조사하고도 원인을 못 찾거나, 카메라에 걸리거나, 남긴 시체·강한 흔적이 발견될 때마다 1씩 오릅니다. 저절로 내려가지 않으며(수습 수단으로만 낮춥니다), 높을수록 그 구역 위협들이 더 쉽게 추적 모드로 전환되고 증원이 빨리 옵니다.">
-              <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', width: 'fit-content' }}>
-                경계도 ${currentSectorAlert ? currentSectorAlert.level : '-'}/3${(() => {
+            ${(() => {
     const cut = (run.powerCuts || []).find((c) => c.sectorId === currentSectorId && c.expiresAt > run.time);
-    return cut ? ` · 전원 차단 중(${leftTicksText(cut.expiresAt, run.time)} · 그동안 상승 멈춤)` : '';
-  })()}
+    const cutText = cut ? `전원 차단 중(${leftTicksText(cut.expiresAt, run.time)} · 그동안 상승 멈춤)` : '';
+    const p = ALERT_PRESSURE;
+    const tip = `구역 경계 단계(0~3)와 그 아래 압력 게이지(0~${ALERT_GAUGE_CAPACITY}).`
+      + ` 카메라에 걸리면 +${p.cameraDetection}, 남긴 시체가 발견되면 +${p.corpseFound}, 강한 흔적이 발견되면 +${p.strongTraceFound},`
+      + ` 층계 위태로 그 자리에서 들키면 +${p.botchedAction}, 위협이 조사하고도 원인을 못 찾으면 +${p.failedInvestigation}입니다.`
+      + ` 게이지가 가득 차면 단계가 1 오르고 남은 양은 다음 단계로 이월됩니다.`
+      + ` 단계는 저절로 내려가지 않고 수습 수단으로만 내려가며, 그때 게이지는 0이 됩니다.`
+      + ` 전원 차단 중인 구역은 압력이 오르지 않습니다.`
+      + ` 단계가 높을수록 그 구역 위협들이 더 쉽게 추적 모드로 전환되고 증원이 빨리 옵니다.`;
+    return html`
+              <div style=${{ marginTop: '4px' }}>
+                <${ThinGauge}
+                  label=${`경계도 ${currentSectorAlert ? currentSectorAlert.level : '-'}/3`}
+                  value=${currentSectorAlert ? currentSectorAlert.pressure : 0} max=${ALERT_GAUGE_CAPACITY}
+                  valueText=${`${currentSectorAlert ? currentSectorAlert.pressure : 0}/${ALERT_GAUGE_CAPACITY}`}
+                  tip=${tip} tipWidth=${280} width="100%" color="var(--color-accent-600)"
+                />
+                ${cutText ? html`<div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)' }}>${cutText}</div>` : null}
               </div>
-            <//>
+            `;
+  })()}
             ${currentSectorId && run.revealedPatrolRouteSectorIds.includes(currentSectorId) && run.reinforcements?.[currentSectorId] ? html`
               <${Tooltip} align="left" content="통제실을 장악해 이 구역의 교대 일정이 보입니다. 증원은 구역 관문(⇄)으로 들어오며, 전투로 비운 자리만 채웁니다.">
                 <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', width: 'fit-content' }}>다음 증원 ${inTicksText(run.reinforcements[currentSectorId].nextAt, run.time)}</div>
@@ -1844,12 +1860,12 @@ export function MapScreen() {
                           const full = (run.sectorAlerts[target]?.level || 0) >= 3;
                           const tip = full
                             ? `${SECTOR_NAMES[target]}은 이미 경계도 3입니다 — 더 받을 수 없어 넘길 수 없습니다.`
-                            : `이 구역 경계도를 1 낮추고 ${SECTOR_NAMES[target]}에 그만큼 넘깁니다. 총량은 그대로이고, 그쪽으로 위협의 시선까지 옮겨갑니다.`;
+                            : `이 구역 경계도를 1 낮추고 ${SECTOR_NAMES[target]}에 그만큼 넘깁니다. 총량은 그대로이고, 그쪽으로 위협의 시선까지 옮겨갑니다. 이 구역의 경계 게이지는 0이 됩니다.`;
                           return html`
                             <${ActionButton}
                               key=${target} run=${run} actionId="falseBroadcast" opts=${{ value: capabilities.deception }} disabled=${full}
                               label=${`가짜 목표 → ${SECTOR_NAMES[target]}`}
-                              tip=${`${tip} 대상 구역 경계도는 현재 ${run.sectorAlerts[target]?.level || 0}/3입니다.`}
+                              tip=${`${tip} 대상 구역 경계도는 현재 ${run.sectorAlerts[target]?.level || 0}/3(게이지 ${run.sectorAlerts[target]?.pressure || 0}/${ALERT_GAUGE_CAPACITY})입니다.`}
                               onClick=${() => runCommand({ type: 'BROADCAST_FALSE_TARGET', targetSectorId: target })}
                             />
                           `;

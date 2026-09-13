@@ -17,7 +17,7 @@ import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import {
   RUN_COLLAPSE_TIME, COMBAT_ROUND_TIME_COST, BASIC_RECON_TIME,
   FALSE_BROADCAST_TIME, FALSE_BROADCAST_DURATION_BY_STEP, BASIC_RECON_HOP_RANGE,
-  INVESTIGATION_MEMORY_DURATION,
+  INVESTIGATION_MEMORY_DURATION, ALERT_PRESSURE,
 } from '../src/data/facilityLayout.js';
 
 /** 플레이어 노드에서 잠기지 않은 통로로 이어진 이웃 하나. */
@@ -104,10 +104,10 @@ test('a discovery is reported to the sector it happened in, not to the finder’
   const after = advanceTime(state, state.time + 1);
 
   assert.equal(after.corpses.length, 0, '시체는 신고되어 사라진다');
-  assert.equal(after.sectorAlerts[hostSectorId].level, 1, '시체가 있던 구역의 경계도가 오른다');
-  assert.equal(after.sectorAlerts[visitor.sectorId].level, 0, '발견자의 본적 구역은 오르지 않는다');
+  assert.equal(after.sectorAlerts[hostSectorId].pressure, ALERT_PRESSURE.corpseFound, '시체가 있던 구역의 경계 게이지가 오른다');
+  assert.equal(after.sectorAlerts[visitor.sectorId].pressure, 0, '발견자의 본적 구역은 오르지 않는다');
   // 이중계산 방지 등록도 같은 구역에 들어가야 한다 — 그러지 않으면 조사하러 온 위협이 허탕치며
-  // 한 번 더 올려 시체 하나가 두 단계를 만든다.
+  // 한 번 더 올려 시체 하나가 두 번 값을 치른다.
   const investigation = after.noiseEvents[after.noiseEvents.length - 1];
   assert.ok(after.sectorAlerts[hostSectorId].resolvedEventIds.includes(investigation.id), '조사 소음은 그 구역에서 이미 처리된 것으로 등록된다');
 });
@@ -122,8 +122,8 @@ test('a false broadcast cannot dump alert into a sector that is already at maxim
     playerNodeId: entry.nodeId,
     sectorAlerts: {
       ...base.sectorAlerts,
-      [sectorId]: { level: 3, resolvedEventIds: [] },
-      [neighborId]: { level: 3, resolvedEventIds: [] },
+      [sectorId]: { level: 3, pressure: 0, resolvedEventIds: [] },
+      [neighborId]: { level: 3, pressure: 0, resolvedEventIds: [] },
     },
   };
   // 상한에 찬 곳으로 넘기면 +1이 잘려 사라진다 — 옮기는 수단이 지우는 수단이 되므로 막는다.
@@ -348,8 +348,8 @@ test('a false broadcast whose target filled up while it ran moves nothing — to
     playerNodeId: entry.nodeId,
     sectorAlerts: {
       ...base.sectorAlerts,
-      [sectorId]: { level: 2, resolvedEventIds: [] },
-      [targetSectorId]: { level: 2, resolvedEventIds: [] },
+      [sectorId]: { level: 2, pressure: 0, resolvedEventIds: [] },
+      [targetSectorId]: { level: 2, pressure: 0, resolvedEventIds: [] },
     },
   };
   // 예약 시점에는 둘 다 조건을 만족한다. 작업이 도는 동안 대상 구역이 상한에 차면, 완료 시각에
@@ -369,7 +369,7 @@ test('a false broadcast whose target filled up while it ran moves nothing — to
 
   const raisedMidway = {
     ...run,
-    sectorAlerts: { ...run.sectorAlerts, [targetSectorId]: { level: 3, resolvedEventIds: [] } },
+    sectorAlerts: { ...run.sectorAlerts, [targetSectorId]: { level: 3, pressure: 0, resolvedEventIds: [] } },
   };
   const before = raisedMidway.sectorAlerts[sectorId].level + raisedMidway.sectorAlerts[targetSectorId].level;
   const done = scheduleTask(raisedMidway, {
