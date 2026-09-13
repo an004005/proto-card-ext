@@ -11,8 +11,9 @@ import { createRunState, advanceTime, openSpecialEdge } from '../src/engine/runE
 import { cleanTraces, cutPower, broadcastFalseTarget } from '../src/engine/recovery.js';
 import {
   TRACE_CLEANUP_TIME_BY_PERCEPTION, POWER_CUT_DURATION, POWER_CUT_TIME,
-  FALSE_BROADCAST_TIME, ADJACENT_SECTOR_IDS, 
+  FALSE_BROADCAST_TIME,
 } from '../src/data/facilityLayout.js';
+import { adjacentSectorIds } from '../src/engine/facilityGraph.js';
 
 /**
  * 위협이 하나도 없는 조용한 런 — 수습 수단 자체의 효과를 보는 테스트의 기본값이다(같은 뜻의
@@ -104,7 +105,7 @@ test('cutPower freezes the sector alert until it expires, and blocks hacking ele
 test('broadcastFalseTarget conserves total alert: it moves one level to an adjacent sector and plants a decoy there', () => {
   const base = atInterface(quietRun(1));
   const sectorId = base.playerNodeId.split('_')[0];
-  const neighborId = ADJACENT_SECTOR_IDS[sectorId][0];
+  const neighborId = adjacentSectorIds(base.graph, sectorId)[0];
 
   assert.throws(() => broadcastFalseTarget(base, 3, neighborId), /no alert to move/);
 
@@ -113,7 +114,7 @@ test('broadcastFalseTarget conserves total alert: it moves one level to an adjac
     sectorAlerts: { ...base.sectorAlerts, [sectorId]: { level: 2, resolvedEventIds: [] } },
   };
   assert.throws(() => broadcastFalseTarget(raised, -2, neighborId), /deception/);
-  const far = Object.keys(base.sectorAlerts).find((id) => id !== sectorId && !ADJACENT_SECTOR_IDS[sectorId].includes(id));
+  const far = Object.keys(base.sectorAlerts).find((id) => id !== sectorId && !adjacentSectorIds(base.graph, sectorId).includes(id));
   assert.throws(() => broadcastFalseTarget(raised, 2, far), /not adjacent/);
   // Deception 3부터는 인접이 아니라 아무 구역으로나 던질 수 있다.
   const thrown = broadcastFalseTarget(raised, 3, far);

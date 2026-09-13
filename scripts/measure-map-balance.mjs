@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import process from 'node:process';
 
-import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import { moveTimeCost, forecastAction, actionTimeCost } from '../src/engine/actionCosts.js';
 import { effectiveForRequirement } from '../src/engine/capabilityEngine.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
@@ -22,7 +22,7 @@ import {
   EDGE_TIME_MIN, EDGE_TIME_MAX, EXIT_AB_MIN_DISTANCE, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
   CORPSE_DISPOSAL_TIME,
   COMBAT_ROUND_TIME_COST, THREAT_MOVE_INTERVAL, REINFORCEMENT_INTERVAL,
-  FORCE_TIER1_TIME, HACKING_TIER1_TIME, ADJACENT_SECTOR_IDS,
+  FORCE_TIER1_TIME, HACKING_TIER1_TIME,
 } from '../src/data/facilityLayout.js';
 
 /** 측정에 쓰는 Mobility 값. 이동 비용만 바뀌고 통과 가능 여부도 바뀐다(highGround는 3 이상). */
@@ -217,6 +217,7 @@ function contractCompletionActionCost(type) {
 export function measureSeed(seed) {
   const { graph, usedFallback } = generateFacilityGraph(seed);
   const exitNodeIds = Object.fromEntries(graph.exits.map((e) => [e.exitId, e.nodeId]));
+  const runContractDefs = CONTRACT_DEFS.filter((def) => graph.sectorIds.includes(def.sectorId));
   const landmarkBySector = Object.fromEntries(graph.landmarks.map((l) => [l.sectorId, l.nodeId]));
 
   /** 통로 비용 히스토그램(2~13). */
@@ -266,8 +267,10 @@ export function measureSeed(seed) {
     };
 
     // 계약별 왕복: 시작 -> 목표부 -> 가장 가까운 사용 가능 출구.
+    // 한 런은 네 구역만 쓰므로(ADR-0081) 그 구역에 목표부가 있는 계약만 잰다 — 나머지는 이
+    // 시드에서 제안되지도 않는다.
     const contracts = {};
-    for (const def of CONTRACT_DEFS) {
+    for (const def of runContractDefs) {
       const objectiveNodeId = landmarkBySector[def.sectorId];
       const toObjective = distOf(walk, objectiveNodeId);
       const actionCost = contractObjectiveCost(def.type);
@@ -277,7 +280,7 @@ export function measureSeed(seed) {
       const fromObjective = Number.isFinite(toObjective) ? dijkstra(walkArcs, objectiveNodeId) : new Map();
       // 정보 계약은 목표부를 떠난 뒤 **목표부 구역에 인접한 구역**의 랜드마크를 반드시
       // 들른다(C5) — 출구별로 그 우회가 가장 싼 랜드마크를 골라 더한다. 그 외 유형은 우회가 없다.
-      const intelSectorIds = ADJACENT_SECTOR_IDS[def.sectorId] || [];
+      const intelSectorIds = adjacentSectorIds(graph, def.sectorId);
       const detourLandmarks = def.type === 'intel'
         ? graph.landmarks.filter((l) => intelSectorIds.includes(l.sectorId)).map((l) => l.nodeId)
         : [];
@@ -340,6 +343,7 @@ export function measureSeed(seed) {
 
   return {
     seed, usedFallback,
+    sectorIds: graph.sectorIds,
     exitPlacement: graph.exitPlacement,
     nodeCount: graph.nodes.length,
     edgeCount: graph.edges.length,
@@ -527,27 +531,33 @@ export function formatReport(result) {
 
   // 2. 계약 왕복
   out.push('## 6. 계약 왕복 — 시작 -> 목표부 -> 가장 가까운 사용 가능 출구 [목표부 위치는 시작 시점 공개]');
-  const cWidths = [20, 8, 10, 8, 12, 10, 16, 12, 12];
+  const cWidths = [26, 8, 10, 8, 12, 10, 16, 12, 12];
   for (const m of MOBILITY_VALUES) {
     out.push(`Mobility ${m}`);
     out.push(row(['계약', '유형', '->목표부', '행동', '확보시각', 'B다리', '최선 합계(중앙)', '최선 출구', 'B 마감내'], cWidths));
     for (const def of CONTRACT_DEFS) {
-      const toObj = stats(pick((r) => r.byMobility[m].contracts[def.id].toObjective));
-      const acq = stats(pick((r) => r.byMobility[m].contracts[def.id].acquiredAt));
-      const bLeg = stats(pick((r) => r.byMobility[m].contracts[def.id].legs.B.leg));
-      const total = stats(pick((r) => r.byMobility[m].contracts[def.id].bestTotal));
+      // 계약마다 "그 목표부 구역이 뽑힌 시드"만 모아 잰다 — 구역 추첨 때문에 계약별 표본 수가
+      // 다르므로 몇 개 시드로 낸 값인지도 같이 적는다.
+      const present = rs.filter((r) => r.byMobility[m].contracts[def.id]);
+      if (present.length === 0) continue;
+      const seedPick = (fn) => present.map(fn);
+      const toObj = stats(seedPick((r) => r.byMobility[m].contracts[def.id].toObjective));
+      const acq = stats(seedPick((r) => r.byMobility[m].contracts[def.id].acquiredAt));
+      const bLeg = stats(seedPick((r) => r.byMobility[m].contracts[def.id].legs.B.leg));
+      const total = stats(seedPick((r) => r.byMobility[m].contracts[def.id].bestTotal));
       const bestCounts = {};
-      for (const r of rs) {
+      for (const r of present) {
         const best = r.byMobility[m].contracts[def.id].bestExit;
         const key = best || '없음';
         bestCounts[key] = (bestCounts[key] || 0) + 1;
       }
-      const bOk = rs.filter((r) => r.byMobility[m].contracts[def.id].bLockdownReachable).length;
+      const bOk = present.filter((r) => r.byMobility[m].contracts[def.id].bLockdownReachable).length;
       out.push(row([
-        def.name, def.type, num(toObj.median, 1), rs[0].byMobility[m].contracts[def.id].actionCost,
+        `${def.name} (${present.length}시드)`, def.type, num(toObj.median, 1),
+        present[0].byMobility[m].contracts[def.id].actionCost,
         num(acq.median, 1), num(bLeg.median, 1), num(total.median, 1),
         Object.entries(bestCounts).map(([k, v]) => `${k}:${v}`).join(' '),
-        `${bOk}/${rs.length}`,
+        `${bOk}/${present.length}`,
       ], cWidths));
     }
     out.push('');

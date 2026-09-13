@@ -5,7 +5,7 @@
 // 청구되며, 완료한 것은 그 시각 C부터 산다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, basicRecon, useOpportunity, requestExtraction, waitOneTick, evadeThreat,
   openSpecialEdge,
@@ -15,7 +15,7 @@ import { gameReducer } from '../src/engine/gameReducer.js';
 import {
   PRIZE_FARM_TIME, PRIZE_FARM_NOISE, BASIC_RECON_TIME, POWER_CUT_TIME, EXIT_REQUEST_TIME,
   WAIT_BATCH_MAX_TICKS, ENCOUNTER_EVADE_TIME, FALSE_BROADCAST_DURATION_BY_STEP, FALSE_BROADCAST_TIME,
-  ADJACENT_SECTOR_IDS, THREAT_MOVE_INTERVAL, COMBAT_ENEMY_AMBUSH_TIME_COST,
+  THREAT_MOVE_INTERVAL, COMBAT_ENEMY_AMBUSH_TIME_COST,
 } from '../src/data/facilityLayout.js';
 
 /** 위협이 하나도 없는 조용한 런 — 중단 규칙을 보는 테스트만 위협을 직접 심는다. */
@@ -136,10 +136,17 @@ test('작업 시작 때 같은 노드에 있던 위협도 떠났다 돌아오면
 });
 
 test('중단된 작업은 과부화·쿨다운·개방을 하나도 남기지 않는다', () => {
-  const base = quietRun(18);
-  const blocked = base.graph.edges.find((e) => e.features.includes('blocked') && e.features.includes('electronic')
-    && (e.from === base.playerNodeId || e.to === base.playerNodeId));
-  assert.ok(blocked, '이 시드는 시작 노드에 전자식 차단 엣지를 둔다');
+  // 구역 추첨(ADR-0081)으로 어느 시드가 시작 노드에 전자식 차단 엣지를 두는지가 달라지므로,
+  // 고정 시드 대신 그런 시드를 찾아 쓴다.
+  let base = null;
+  let blocked = null;
+  for (let seed = 0; seed < 200 && !blocked; seed++) {
+    const candidate = quietRun(seed);
+    const edge = candidate.graph.edges.find((e) => e.features.includes('blocked') && e.features.includes('electronic')
+      && (e.from === candidate.playerNodeId || e.to === candidate.playerNodeId));
+    if (edge) { base = candidate; blocked = edge; }
+  }
+  assert.ok(blocked, '시작 노드에 전자식 차단 엣지를 두는 시드가 있어야 한다');
   const run = withIncomingThreat(base, 1);
 
   const after = openSpecialEdge(run, blocked.id, 'hacking', 0, 'normal');
@@ -165,7 +172,7 @@ test('가짜 목표의 부족 단계(지속 8칸)는 완료 시각 C부터 8칸�
   const base = quietRun(7);
   const entry = base.graph.accessInterfaces[0];
   const sectorId = entry.nodeId.split('_')[0];
-  const targetSectorId = ADJACENT_SECTOR_IDS[sectorId][0];
+  const targetSectorId = adjacentSectorIds(base.graph, sectorId)[0];
   const raised = {
     ...base,
     playerNodeId: entry.nodeId,

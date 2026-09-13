@@ -26,7 +26,8 @@ import {
 } from '../src/engine/mapTimeline.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
-import { ADJACENT_SECTOR_IDS, RUN_COLLAPSE_TIME, CONTRACT_DETONATE_MIN_HOPS } from '../src/data/facilityLayout.js';
+import { RUN_COLLAPSE_TIME, CONTRACT_DETONATE_MIN_HOPS } from '../src/data/facilityLayout.js';
+import { adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
 
 /** 목표부에서 그 노드까지의 홉수 — 기폭 지점 고르기용. */
@@ -116,10 +117,16 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
     act: (run) => useFieldEquipment(run, 'ff1', barrier, someEdge.id),
   });
 
-  // 특수 엣지 — 층계 × 접근이 함께 걸리는 유일한 자리.
-  const edgeRun = quietRun(6);
-  const blocked = edgeRun.graph.edges.find((e) => e.features.includes('blocked')
-    && (e.from === edgeRun.playerNodeId || e.to === edgeRun.playerNodeId));
+  // 특수 엣지 — 층계 × 접근이 함께 걸리는 유일한 자리. 구역 추첨(ADR-0081) 때문에 어느
+  // 시드가 시작 노드에 잠긴 엣지를 두는지는 고정이 아니라, 찾아서 쓴다.
+  let edgeRun = null;
+  let blocked = null;
+  for (let seed = 0; seed < 200 && !blocked; seed++) {
+    const candidate = quietRun(seed);
+    const edge = candidate.graph.edges.find((e) => e.features.includes('blocked')
+      && (e.from === candidate.playerNodeId || e.to === candidate.playerNodeId));
+    if (edge) { edgeRun = candidate; blocked = edge; }
+  }
   assert.ok(blocked, '층계 × 접근을 볼 특수 엣지가 있는 시드여야 한다');
   for (const mode of ['safe', 'normal', 'rush']) {
     for (const force of [-1, 0, 1, 3]) {
@@ -161,7 +168,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
     });
     cases.push({ name: `전원 차단 F=${value}`, actionId: 'cutPower', opts: { value }, run: atInterface, act: (run) => cutPower(run, value) });
     const interfaceSectorId = interfaceEntry.nodeId.split('_')[0];
-    const targetSectorId = ADJACENT_SECTOR_IDS[interfaceSectorId][0];
+    const targetSectorId = adjacentSectorIds(atInterface.graph, interfaceSectorId)[0];
     cases.push({
       name: `가짜 목표 D=${value}`,
       actionId: 'falseBroadcast',
@@ -180,9 +187,12 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
 
   // 계약 — 세 종류 모두, 층계 여러 수치로.
   for (const value of [0, 1, 3]) {
-    const retrieval = CONTRACT_DEFS.find((c) => c.type === 'retrieval');
-    const destroy = CONTRACT_DEFS.find((c) => c.type === 'destroy');
-    const intel = CONTRACT_DEFS.find((c) => c.type === 'intel');
+    // 구역이 런마다 뽑히므로(ADR-0081) 이 런에 목표부 구역이 있는 계약만 고를 수 있다.
+    const inRun = (type) => CONTRACT_DEFS.find((c) => c.type === type && base.graph.sectorIds.includes(c.sectorId));
+    const retrieval = inRun('retrieval');
+    const destroy = inRun('destroy');
+    const intel = inRun('intel');
+    assert.ok(retrieval && destroy && intel, '픽스처 시드는 세 유형의 계약을 다 담는 구역 조합이어야 한다');
     const contractRun = (def) => {
       const objective = base.graph.landmarks.find((l) => l.sectorId === def.sectorId);
       return { ...base, playerNodeId: objective.nodeId, contract: { ...def, status: 'accepted' } };
@@ -192,7 +202,9 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
     cases.push({ name: `정보 확보 H=${value}`, actionId: 'contractIntel', opts: { value }, run: contractRun(intel), act: (run) => acquireContractIntel(run, value) });
     // C5: 송출은 목표부가 아닌 **다른 구역** 랜드마크에서만 된다.
     const acquired = contractRun(intel);
-    const otherLandmark = base.graph.landmarks.find((l) => l.sectorId !== intel.sectorId);
+    // 송출은 목표부 구역의 **링 이웃** 랜드마크에서만 된다(C5).
+    const transmitSectorIds = adjacentSectorIds(base.graph, intel.sectorId);
+    const otherLandmark = base.graph.landmarks.find((l) => transmitSectorIds.includes(l.sectorId));
     cases.push({
       name: `정보 송출 H=${value}`,
       actionId: 'contractTransmit',

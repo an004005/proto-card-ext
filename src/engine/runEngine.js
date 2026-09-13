@@ -24,7 +24,7 @@ import {
   RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
-  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, SECTOR_IDS,
+  SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE,
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
@@ -40,10 +40,11 @@ import {
   CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD, LOCKDOWN_EXIT_CLOSE_WINDOW,
   LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL,
   CORPSE_DISPOSAL_TIME, DISCOVERY_NOISE_INTENSITY,
-  EVIDENCE_TIER_RAISING_ALERT, REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL, ADJACENT_SECTOR_IDS,
+  EVIDENCE_TIER_RAISING_ALERT, REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
   WAIT_TICK_TIME, ENCOUNTER_EVADE_TIME, BASIC_RECON_HOP_RANGE, CONTRACT_DETONATE_MIN_HOPS,
   PERCEPTION_INFO_TABLE, FREE_OBSERVATION_DETAIL_LEVEL, PERCEPTION_WAIT_OBSERVATION_MIN,
 } from '../data/facilityLayout.js';
+import { adjacentSectorIds } from './facilityGraph.js';
 
 
 // 모듈 레벨 카운터는 같은 프로세스에서 같은 seed로 여러 번 플레이하면(예: 헤드리스 테스트가
@@ -121,7 +122,7 @@ export function createRunState(graph, seed, overloadConfig = {}) {
 
   /** @type {Record<string, import('./types.js').SectorAlertState>} */
   const sectorAlerts = {};
-  for (const sectorId of SECTOR_IDS) sectorAlerts[sectorId] = { level: 0, resolvedEventIds: [] };
+  for (const sectorId of graph.sectorIds) sectorAlerts[sectorId] = { level: 0, resolvedEventIds: [] };
 
   // D17: 런 시작 시점의 정보 공개. 계약 난이도가 정하는 값이고(3단계에서 계약이 이 자리를
   // 채운다), 구현은 관측 집합에 미리 넣어 두는 것뿐이라 정찰·지도 임플란트와 같은 경로를 쓴다.
@@ -196,7 +197,7 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     // 전투 중인 위협 — 그동안 맵에서 움직이지 않는다(planned §8).
     engagedThreatId: null,
     // 구역마다 독립된 교대 시계. 통제실을 장악하면 그 구역의 다음 시각이 보인다(D14).
-    reinforcements: Object.fromEntries(SECTOR_IDS.map((id) => [id, { nextAt: REINFORCEMENT_INTERVAL, alertSeen: 0 }])),
+    reinforcements: Object.fromEntries(graph.sectorIds.map((id) => [id, { nextAt: REINFORCEMENT_INTERVAL, alertSeen: 0 }])),
     powerCuts: [],
   };
 }
@@ -856,7 +857,7 @@ function spawnReinforcement(state, sectorId) {
  */
 function tickReinforcements(state, tickTime) {
   let next = state;
-  for (const sectorId of SECTOR_IDS) {
+  for (const sectorId of next.graph.sectorIds) {
     const clock = next.reinforcements[sectorId];
     // 경계 "레벨"을 본다. resolvedEventIds의 길이는 처리 완료로 미리 등록해 둔 사건(발견 소음,
     // 심어둔 미끼)까지 세어버려서, 실제로 경계가 오르지 않았는데도 증원을 앞당긴다.
@@ -1228,7 +1229,7 @@ const TASK_COMPLETIONS = {
     }
     if (level >= 3) {
       let sectorAlerts = next.sectorAlerts;
-      for (const neighborId of ADJACENT_SECTOR_IDS[sectorId] || []) {
+      for (const neighborId of adjacentSectorIds(next.graph, sectorId)) {
         const neighbor = sectorAlerts[neighborId];
         sectorAlerts = { ...sectorAlerts, [neighborId]: { ...neighbor, level: /** @type {0|1|2|3} */ (Math.max(0, neighbor.level - 1)) } };
       }
@@ -2031,7 +2032,7 @@ function activateLockdown(run) {
   // 봉쇄에 들어가는 순간 각 구역의 다음 교대를 min(기존, 현재+45)으로 당긴다 — 이미 90칸
   // 주기의 끝자락에 있던 구역이 봉쇄 때문에 오히려 늦게 채워지는 일이 없게 한다.
   const reinforcements = { ...run.reinforcements };
-  for (const sectorId of SECTOR_IDS) {
+  for (const sectorId of run.graph.sectorIds) {
     const clock = reinforcements[sectorId];
     reinforcements[sectorId] = { ...clock, nextAt: Math.min(clock.nextAt, run.time + REINFORCEMENT_LOCKDOWN_INTERVAL) };
   }
@@ -2172,7 +2173,7 @@ export function transmitContractIntel(state, effectiveHacking) {
   }
   const landmark = state.graph.landmarks.find((l) => l.nodeId === state.playerNodeId);
   if (!landmark) throw new RuleViolation('not at a sector control room');
-  if (!isContractIntelTransmitSector(contract.sectorId, landmark.sectorId)) {
+  if (!isContractIntelTransmitSector(state.graph, contract.sectorId, landmark.sectorId)) {
     throw new RuleViolation('intel must be transmitted from a landmark in a sector adjacent to the objective');
   }
   const cost = requireActionCost('contractTransmit', { value: effectiveHacking });
@@ -2180,12 +2181,14 @@ export function transmitContractIntel(state, effectiveHacking) {
 }
 
 /** 목표부 구역이 objectiveSectorId인 정보 계약을 sectorId의 랜드마크에서 송출할 수 있는가.
- * 인접 정의는 구역 링(ADJACENT_SECTOR_IDS) 하나뿐이라 가짜 목표 송출·통제실 해킹과 같은 이웃을 쓴다.
+ * 인접 정의는 이 런의 구역 링(facilityGraph.js adjacentSectorIds) 하나뿐이라 가짜 목표 송출·
+ * 통제실 해킹과 같은 이웃을 쓴다.
+ * @param {{sectorIds: readonly string[]}} graph
  * @param {import('./types.js').FacilitySectorId} objectiveSectorId
  * @param {import('./types.js').FacilitySectorId} sectorId
  * @returns {boolean} */
-export function isContractIntelTransmitSector(objectiveSectorId, sectorId) {
-  return (ADJACENT_SECTOR_IDS[objectiveSectorId] || []).includes(sectorId);
+export function isContractIntelTransmitSector(graph, objectiveSectorId, sectorId) {
+  return adjacentSectorIds(graph, objectiveSectorId).includes(sectorId);
 }
 
 /** 지금 서 있는 자리가 정보 송출이 가능한 랜드마크인가 — 화면과 엔진이 같은 판정을 쓴다.
@@ -2195,7 +2198,7 @@ export function canTransmitContractIntelHere(state) {
   const contract = state.contract;
   if (!contract || contract.type !== 'intel' || contract.status !== 'acquired' || !state.playerNodeId) return false;
   const landmark = state.graph.landmarks.find((l) => l.nodeId === state.playerNodeId);
-  return !!landmark && isContractIntelTransmitSector(contract.sectorId, landmark.sectorId);
+  return !!landmark && isContractIntelTransmitSector(state.graph, contract.sectorId, landmark.sectorId);
 }
 
 /**

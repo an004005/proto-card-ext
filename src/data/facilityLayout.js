@@ -1,12 +1,19 @@
-// 206-node extraction facility layout config (docs/extraction-map-implementation-spec.md §4).
+// Extraction facility layout config (docs/extraction-map-implementation-spec.md §4).
 // Data only — no generation logic here (that's src/engine/facilityGraph.js).
 
-// 구역을 하나의 큰 링(원환) 위에 순서대로 배치한다 — entrance가 시작점, 링에서 정반대(4칸
-// 떨어진) 위치에 power를 둬서 "가장 깊고 위험한 구역"이 항상 시작점에서 (양쪽 어느 방향으로
-// 가든) 가장 멀도록 만든다. 인접한 구역끼리만 노드가 기하학적으로 가깝게 배치되므로(아래
-// buildBaseGraph 참고), 이 순서가 곧 실제 이동 난이도 순서가 된다.
+// 여덟 구역 **정의 전체**다. 한 런은 이 중 RUN_SECTOR_COUNT개만 쓴다(ADR-0081) — 시작점인
+// entrance는 항상 들어가고 나머지 세 개를 런 시드로 뽑는다(facilityGraph.js
+// selectRunSectorIds). 그러니 이 배열의 순서는 더 이상 링 순서가 아니라 후보 목록의 순서일
+// 뿐이고, 실제 링 순서는 런마다 graph.sectorIds가 갖는다.
 /** @type {import('../engine/types.js').FacilitySectorId[]} */
-export const SECTOR_IDS = ['entrance', 'labs', 'hangar', 'security', 'power', 'waste', 'comms', 'residential'];
+export const ALL_SECTOR_IDS = ['entrance', 'labs', 'hangar', 'security', 'power', 'waste', 'comms', 'residential'];
+
+/** 한 런이 쓰는 구역 수. 링이 4칸이므로 각 구역은 이웃 둘과 맞닿고 맞은편 하나와는 떨어진다. */
+export const RUN_SECTOR_COUNT = 4;
+/** 항상 뽑히는 시작 구역 — 시작점·격자 허브이고, 링 0번 자리를 고정으로 차지한다. */
+export const START_SECTOR_ID = 'entrance';
+/** 뽑히면 링에서 시작 구역 정반대(인덱스 2)에 놓이는 구역 — "가장 깊고 위험한 곳이 가장 멀다". */
+export const DEEPEST_SECTOR_ID = 'power';
 
 export const SECTOR_NAMES = {
   entrance: '입구·관리동',
@@ -78,7 +85,14 @@ export const SECTOR_LAYOUTS = {
   },
 };
 
-export const TOTAL_NODES = SECTOR_IDS.reduce((sum, id) => sum + SECTOR_LAYOUTS[id].nodeCount, 0);
+/**
+ * 주어진 구역 조합의 노드 총수. 구역이 런마다 달라지므로 상수가 아니다 — 네 구역 조합은
+ * 대략 90~125개 사이에 떨어진다(여덟 구역 전부였던 시절은 206개였다).
+ * @param {readonly string[]} sectorIds
+ */
+export function totalNodesFor(sectorIds) {
+  return sectorIds.reduce((sum, id) => sum + SECTOR_LAYOUTS[id].nodeCount, 0);
+}
 
 // Mobility 0 기준 "평균적인" 일반 복도 시간 비용(칸) — 실제 엣지 시간은 두 노드의 기하학적
 // 거리에 비례해 가감된다(EDGE_TIME_PER_LENGTH_UNIT 이하 참고). 이 값은 그 스케일을 맞추는
@@ -137,10 +151,9 @@ export const EDGE_TIME_MAX = 13;
 // 차수가 높은 노드에는 특수 엣지가 더 붙지 않는다.
 export const BASE_EDGE_DEGREE_HARD_CAP = 4;
 
-// 링에서 인접한 구역 쌍(마지막-첫 구역도 순환으로 연결) — 구역 내부 특수 엣지와는 별도로,
-// 이 쌍들 사이에만 "구역을 넘는" 특수 엣지를 놓는다(§4.2 확장).
-/** @type {[string, string][]} */
-export const SECTOR_ADJACENCY = SECTOR_IDS.map((s, i) => [s, SECTOR_IDS[(i + 1) % SECTOR_IDS.length]]);
+// 링에서 인접한 구역 쌍은 런마다 다르므로 상수가 아니다 — facilityGraph.js sectorRingPairs가
+// graph.sectorIds에서 만든다. 구역 내부 특수 엣지와는 별도로, 그 쌍들 사이에만 "구역을 넘는"
+// 특수 엣지를 놓는다(§4.2 확장).
 
 // 탈출구 A와 B 사이의 최소 거리(칸, ADR-0076). 시작점 기준 거리 범위도 A<열쇠<B 순서도 두지
 // 않는다 — 세 출구는 서로 다른 구역에, 시작 구역(입구·관리동)을 빼고 무작위로 놓이고, 이 값만
@@ -148,11 +161,14 @@ export const SECTOR_ADJACENCY = SECTOR_IDS.map((s, i) => [s, SECTOR_IDS[(i + 1) 
 // 걸어갈 수 있는 간선뿐이며(baselineWalkDistances), 방향에 따라 값이 다르므로 두 방향 중 짧은
 // 쪽을 쓴다.
 //
-// 초기값, 플레이테스트로 조절. 120칸은 A 폐쇄 430의 약 28%이고 봉쇄 유예
-// LOCKDOWN_EXIT_CLOSE_WINDOW(125)보다 조금 짧다 — 목표 확보 뒤 A 대신 B로 갈아타는 것이 이론상
-// 가능한 상한에 걸치는 거리다. 무작위 후보 쌍의 약 60%가 이 값을 넘기므로 재배치도 거의
-// 실패하지 않는다.
-export const EXIT_AB_MIN_DISTANCE = 120;
+// 초기값, 플레이테스트로 조절. 한 런이 네 구역만 쓰게 되면서(ADR-0081) 링이 절반으로 줄어
+// 걸어서 잴 수 있는 최대 거리 자체가 작아졌다 — 옛 값 120은 시드의 43%에서 재배치 상한
+// (EXIT_PLACEMENT_MAX_ATTEMPTS) 안에 **도달 자체가 불가능**해 relaxed가 예외가 아니라 기본이
+// 되어 버렸다(실측: 200시드의 최대 도달 A–B 중앙값 124, 하위 25%는 109). 90칸은 그 분포에서
+// 시드의 93%가 넘기는 값이라 "보장"이라는 말이 다시 성립한다. 동시에 A 폐쇄 430의 약 21%,
+// 봉쇄 유예 LOCKDOWN_EXIT_CLOSE_WINDOW(125)보다 짧으므로 "목표 확보 뒤 A 대신 B로 갈아탈 수
+// 있다"는 원래의 뜻도 그대로다.
+export const EXIT_AB_MIN_DISTANCE = 90;
 
 // 위 조건을 만족하는 조합을 찾는 재배치 시도 횟수. 넘기면 그 시드에서 가장 먼 후보 쌍을
 // 택하고(생성 실패로 치지 않는다) graph.exitPlacement.relaxed 로 표시한다.
@@ -162,11 +178,11 @@ export const EXIT_PLACEMENT_MAX_ATTEMPTS = 24;
 export const SPECIAL_EDGES_PER_SECTOR_MIN = 4;
 export const SPECIAL_EDGES_PER_SECTOR_MAX = 6;
 
-// 구역 "사이" 특수 엣지 — SECTOR_ADJACENCY의 각 쌍마다, 두 구역 풀에서 각각 하나씩 뽑아 잇는다.
+// 구역 "사이" 특수 엣지 — 링에서 맞닿은 각 쌍마다, 두 구역 풀에서 각각 하나씩 뽑아 잇는다.
 export const CROSS_SECTOR_SPECIAL_EDGES_MIN = 2;
 export const CROSS_SECTOR_SPECIAL_EDGES_MAX = 3;
 
-// 원거리 지름길 — 링에서 서로 인접하지 않은(=SECTOR_ADJACENCY에 없는) 구역 쌍을 잇는 특수
+// 원거리 지름길 — 링에서 서로 인접하지 않은 구역 쌍을 잇는 특수
 // 엣지. 아주 소수만 둔다(전체 그래프에 걸쳐 이 개수만큼, 구역 쌍마다가 아니다) — 없어도 되는
 // 도박성 지름길이라, 많으면 "인접 구역만 연결된다"는 설계 의도 자체가 흐려진다.
 export const LONG_RANGE_SPECIAL_EDGES_MIN = 2;
@@ -312,8 +328,8 @@ export const MOBILITY_MOVE_TIME_DELTA = [2, 1, 0, -1, -2, -3, -4];
 /** 아무리 빨라도 통로 하나는 2칸이다 — 짧은 통로에서는 Mobility 추가 이득이 없다. */
 export const MOVE_MIN_TIME = 2;
 
-// 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 3 / 실험 5 / 격납고 5 / 보안 6 /
-// 동력 7 / 폐기물 6 / 통신 4 / 거주 4 (총 40).
+// 초기 위협 배치 — 구역 정원이다. 뽑힌 구역만 채워지므로 한 런의 총 위협 수는 조합에 따라
+// 다르다(입구 3 + 나머지 세 구역의 합, 대략 17~24).
 export const THREAT_COUNT_BY_SECTOR = {
   entrance: 3, labs: 5, hangar: 5, security: 6, power: 7, waste: 6, comms: 4, residential: 4,
 };
@@ -337,8 +353,11 @@ export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
 // 맵 시간의 단위는 정수 "칸" 하나뿐이다(ADR-0075). 아래 값은 전부 칸이며, 런타임에서 이 값에
 // 배율을 곱해 소수를 만들지 않는다.
 
-// 시작점에서 가장 먼 출구까지의 실측 중앙값(Mobility 0, 개방 없이 220칸 안팎) 대비 약 3배.
-// 가장 먼 탈출구를 찍고 돌아 나올 여유는 있되, 시설 전체를 훑고 나갈 만큼은 아니게 잡은 값이다.
+// 원래 의도는 "시작점에서 가장 먼 출구까지의 실측 중앙값 대비 약 3배" — 가장 먼 탈출구를 찍고
+// 돌아 나올 여유는 있되 시설 전체를 훑고 나갈 만큼은 아니게 잡은 값이다. 구역이 여덟에서
+// 넷으로 줄면서(ADR-0081) 그 중앙값이 220칸 안팎에서 90칸 안팎으로 줄었고, 지금은 배수가 약
+// 8배다. 즉 이 값은 더 이상 그 의도대로 조여 주지 않는다 — 붕괴가 아니라 출구 폐쇄(430·670)와
+// 봉쇄가 실질 마감이다. 재보정은 플레이테스트 뒤로 미룬다(scripts/measure-map-balance.mjs).
 export const RUN_COLLAPSE_TIME = 700; // §2.3 t>=RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
 
 export const EXIT_A_DISABLED_AT = 430;
@@ -455,14 +474,11 @@ export const FALSE_BROADCAST_INTENSITY = 2;
  */
 export const FALSE_BROADCAST_DURATION_BY_STEP = { surplus: 19, standard: 15, strained: 8, severe: 4 };
 
-// 구역 링(SECTOR_IDS) 위에서 서로 맞닿은 구역. 경계도를 옮기거나(D12 가짜 목표 송출) 인접
-// 구역까지 낮출 때(통제실 해킹 3단계) 쓰는 유일한 인접 정의다 — 기하학적 배치가 이 링 순서를
-// 그대로 따르므로(SECTOR_RING_RADIUS 참고) 링 이웃이 곧 실제로 걸어서 넘어가는 이웃이다.
-/** @type {Record<string, import('../engine/types.js').FacilitySectorId[]>} */
-export const ADJACENT_SECTOR_IDS = Object.fromEntries(SECTOR_IDS.map((id, i) => [
-  id,
-  [SECTOR_IDS[(i + SECTOR_IDS.length - 1) % SECTOR_IDS.length], SECTOR_IDS[(i + 1) % SECTOR_IDS.length]],
-]));
+// 구역 링 위에서 서로 맞닿은 구역은 런마다 다르므로 여기 상수로 둘 수 없다 —
+// facilityGraph.js adjacentSectorIds(graph, sectorId)가 유일한 인접 정의다. 경계도를
+// 옮기거나(D12 가짜 목표 송출) 인접 구역까지 낮출 때(통제실 해킹 3단계) 그 하나를 쓴다. 기하학적
+// 배치가 링 순서를 그대로 따르므로(SECTOR_RING_RADIUS 참고) 링 이웃이 곧 실제로 걸어서 넘어가는
+// 이웃이다.
 
 // ---- Capability 층계 (§5단계, D8) ----
 // 요구치 R, 실효 A의 차이로 단계가 갈린다. A ≥ R+1 surplus / A = R standard /

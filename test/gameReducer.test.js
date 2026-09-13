@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TOTAL_NODES } from '../src/data/facilityLayout.js';
+import { totalNodesFor } from '../src/data/facilityLayout.js';
 import { gameReducer } from '../src/engine/gameReducer.js';
 import { isCardPlayable } from '../src/engine/combatEngine.js';
 import { MAP_EQUIP_TIME_COST, MAP_CONSUMABLE_TIME_COST } from '../src/engine/facilityReducer.js';
@@ -211,7 +211,7 @@ test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seed
   assert.equal(warehouseItems.filter((i) => i.kind === 'consumable').length, 3);
   assert.deepEqual(warehouseItems.filter((i) => i.kind === 'ammo').map((i) => i.amount), [10, 6]);
   assert.equal(warehouseItems.length, 23);
-  assert.equal(s.facilityRunState.graph.nodes.length, TOTAL_NODES);
+  assert.equal(s.facilityRunState.graph.nodes.length, totalNodesFor(s.facilityRunState.graph.sectorIds));
   assert.equal(s.facilityRunState.playerNodeId, s.facilityRunState.graph.startNodeId);
 });
 

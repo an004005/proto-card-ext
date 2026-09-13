@@ -15,6 +15,18 @@ function makeRun(seed = 1) {
   return createRunState(graph, seed);
 }
 
+/**
+ * 그 계약의 목표부 구역이 실제로 뽑힌 첫 시드의 런 — 구역이 런마다 넷만 들어가므로(ADR-0081)
+ * 고정 시드가 특정 계약의 구역을 담고 있다고 가정할 수 없다.
+ */
+function runWithContractSector(seed, contract) {
+  for (let s = seed; s < seed + 200; s++) {
+    const { graph } = generateFacilityGraph(s);
+    if (graph.sectorIds.includes(contract.sectorId)) return createRunState(graph, s);
+  }
+  throw new Error(`no seed near ${seed} draws ${contract.sectorId}`);
+}
+
 test('Force pays in noise and equipment durability, not in overload', () => {
   const base = makeRun(21);
   const state = { ...base, graph: { ...base.graph, cameras: [{ id: 'cam', nodeId: base.playerNodeId }] } };
@@ -53,13 +65,16 @@ test('Hacking pays in overload, and a surplus actually costs less than the stand
 });
 
 test('Stealth pays in a strong trace, and a severe shortfall raises the sector alert on the spot', () => {
-  const base = makeRun(1);
   const contract = CONTRACT_DEFS.find((c) => c.type === 'retrieval');
+  const base = runWithContractSector(1, contract);
   const landmark = base.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
   const at = {
     ...base,
     playerNodeId: landmark.nodeId,
     contract: { ...contract, status: 'accepted' },
+    // 카메라는 층계와 무관한 두 번째 경계도 상승원이다 — 목표부에 카메라가 놓이는 시드에서
+    // "층계 대가로 몇 단계가 올랐는가"가 흐려지므로 이 테스트에서는 비운다.
+    graph: { ...base.graph, cameras: [] },
   };
   const sectorId = landmark.nodeId.split('_')[0];
 
@@ -91,8 +106,8 @@ test('the impossible band is what stays locked — and it starts three below the
 
 test('Mobility pays in HP, and the reducer settles that off playerState', async () => {
   const { gameReducer } = await import('../src/engine/gameReducer.js');
-  const base = makeRun(1);
   const contract = CONTRACT_DEFS.find((c) => c.type === 'retrieval');
+  const base = runWithContractSector(1, contract);
   const landmark = base.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
   const at = { ...base, playerNodeId: landmark.nodeId, contract: { ...contract, status: 'accepted' } };
 

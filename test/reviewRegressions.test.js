@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gameReducer } from '../src/engine/gameReducer.js';
-import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, useOpportunity, applyCapabilityCost, scheduleTask, basicRecon,
   refreshLocalObservations, observationSuspended, prizeGradeKnown, waitOneTick, moveToAdjacentNode,
@@ -15,7 +15,7 @@ import { createCombatState, beginPlayerFirst } from '../src/engine/combatEngine.
 import { broadcastFalseTarget } from '../src/engine/recovery.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import {
-  ADJACENT_SECTOR_IDS, RUN_COLLAPSE_TIME, COMBAT_ROUND_TIME_COST, BASIC_RECON_TIME,
+  RUN_COLLAPSE_TIME, COMBAT_ROUND_TIME_COST, BASIC_RECON_TIME,
   FALSE_BROADCAST_TIME, FALSE_BROADCAST_DURATION_BY_STEP, BASIC_RECON_HOP_RANGE,
   INVESTIGATION_MEMORY_DURATION,
 } from '../src/data/facilityLayout.js';
@@ -45,8 +45,10 @@ function snapshotOf(run, playerState = {}) {
 }
 
 test('a retrieval contract is not completed by acting at the objective — only by reaching an open exit', () => {
+  // 구역이 런마다 뽑히므로(ADR-0081) 이 런에 목표부 구역이 실제로 있는 회수 계약을 고른다.
   const base = makeRun(7);
-  const contract = CONTRACT_DEFS.find((c) => c.type === 'retrieval');
+  const contract = CONTRACT_DEFS.find((c) => c.type === 'retrieval' && base.graph.sectorIds.includes(c.sectorId));
+  assert.ok(contract, 'fixture seed should draw a sector with a retrieval contract');
   const landmark = base.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
   const goods = Array.from({ length: contract.goodsSlots }, (_, i) => ({
     id: `g${i}`, kind: 'contractGoods', contractId: contract.id, value: contract.goodsValuePerSlot,
@@ -80,16 +82,18 @@ test('a retrieval contract is not completed by acting at the objective — only 
 
 test('a discovery is reported to the sector it happened in, not to the finder’s home sector', () => {
   const base = makeRun(1);
+  // 사건이 일어나는 구역은 이 런에서 뽑힌 구역 중 하나다(ADR-0081) — 고정 id를 쓰지 않는다.
+  const hostSectorId = base.graph.sectorIds[1];
   // 본적이 다른 구역인 위협을 데려와, 남의 구역 노드에 있는 시체를 밟게 한다.
-  const visitor = Object.values(base.threats).find((t) => t.sectorId !== 'labs');
+  const visitor = Object.values(base.threats).find((t) => t.sectorId !== hostSectorId);
   assert.ok(visitor, 'fixture should contain a threat from another sector');
-  const labsNodes = base.graph.nodes.filter((n) => n.sectorId === 'labs').slice(0, 2);
-  const to = labsNodes[1] || labsNodes[0];
+  const hostNodes = base.graph.nodes.filter((n) => n.sectorId === hostSectorId).slice(0, 2);
+  const to = hostNodes[1] || hostNodes[0];
 
   const state = {
     ...base,
     playerNodeId: null,
-    corpses: [{ id: 'c1', nodeId: to.id, sectorId: 'labs', createdAt: 0 }],
+    corpses: [{ id: 'c1', nodeId: to.id, sectorId: hostSectorId, createdAt: 0 }],
     threats: {
       ...base.threats,
       // 순찰 목표를 자기가 선 자리로 두면 다음 틱에 그 자리를 다시 '밟아' 발견 판정이 돈다
@@ -100,19 +104,19 @@ test('a discovery is reported to the sector it happened in, not to the finder’
   const after = advanceTime(state, state.time + 1);
 
   assert.equal(after.corpses.length, 0, '시체는 신고되어 사라진다');
-  assert.equal(after.sectorAlerts.labs.level, 1, '시체가 있던 구역의 경계도가 오른다');
+  assert.equal(after.sectorAlerts[hostSectorId].level, 1, '시체가 있던 구역의 경계도가 오른다');
   assert.equal(after.sectorAlerts[visitor.sectorId].level, 0, '발견자의 본적 구역은 오르지 않는다');
   // 이중계산 방지 등록도 같은 구역에 들어가야 한다 — 그러지 않으면 조사하러 온 위협이 허탕치며
   // 한 번 더 올려 시체 하나가 두 단계를 만든다.
   const investigation = after.noiseEvents[after.noiseEvents.length - 1];
-  assert.ok(after.sectorAlerts.labs.resolvedEventIds.includes(investigation.id), '조사 소음은 그 구역에서 이미 처리된 것으로 등록된다');
+  assert.ok(after.sectorAlerts[hostSectorId].resolvedEventIds.includes(investigation.id), '조사 소음은 그 구역에서 이미 처리된 것으로 등록된다');
 });
 
 test('a false broadcast cannot dump alert into a sector that is already at maximum', () => {
   const base = makeRun(1);
   const entry = base.graph.accessInterfaces[0];
   const sectorId = entry.nodeId.split('_')[0];
-  const neighborId = ADJACENT_SECTOR_IDS[sectorId][0];
+  const neighborId = adjacentSectorIds(base.graph, sectorId)[0];
   const state = {
     ...base,
     playerNodeId: entry.nodeId,
@@ -338,7 +342,7 @@ test('a false broadcast whose target filled up while it ran moves nothing — to
   const base = { ...createRunState(graph, 1), threats: {} };
   const entry = base.graph.accessInterfaces[0];
   const sectorId = entry.nodeId.split('_')[0];
-  const targetSectorId = ADJACENT_SECTOR_IDS[sectorId][0];
+  const targetSectorId = adjacentSectorIds(base.graph, sectorId)[0];
   const run = {
     ...base,
     playerNodeId: entry.nodeId,

@@ -1,4 +1,6 @@
-// 160노드 익스트랙션 맵 화면 (docs/extraction-map-implementation-spec.md).
+// 익스트랙션 맵 화면 (docs/extraction-map-implementation-spec.md). 구역은 런마다 네 개씩
+// 뽑히므로(ADR-0081) 구역을 훑는 자리는 전부 run.graph.sectorIds를 본다 — 전역 구역 목록을
+// 쓰면 이 런에 없는 구역을 그리게 된다.
 // 전체 지도(노드+엣지)는 항상 보이고, 위협 존재 여부 같은 "내용" 정보만
 // 시야(현재+인접) 밖에서는 마지막으로 확인한 값으로 고정된다 — gameReducer.js의
 // refreshLocalObservations가 매 행동 끝에 현재+인접 노드를 observations에 스냅샷한다).
@@ -18,10 +20,11 @@ import {
   explainEffectiveStealth, detailIncludes, lockdownClosesExitB,
 } from '../engine/runEngine.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
+import { adjacentSectorIds } from '../engine/facilityGraph.js';
 import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION } from '../data/facilityLayout.js';
 import { computeFloorOverload, computeOverloadGainMultiplier, getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
-  SECTOR_IDS, SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR, ADJACENT_SECTOR_IDS,
+  SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR,
   LOCKDOWN_EXIT_CLOSE_WINDOW, CONTRACT_DETONATE_MIN_HOPS,
 } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
@@ -389,7 +392,7 @@ function convexHull(points) {
  * 그려져 구역 성격이 배경만 봐도 읽힌다. */
 function sectorZones(graph, positions) {
   const zones = {};
-  for (const sectorId of SECTOR_IDS) {
+  for (const sectorId of graph.sectorIds) {
     const pts = graph.nodes.filter((n) => n.sectorId === sectorId).map((n) => positions[n.id]);
     if (pts.length === 0) continue;
     const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
@@ -743,9 +746,10 @@ export function MapScreen() {
   const broadcastSectorIds = currentSectorId
     ? (capabilities.deception >= FALSE_BROADCAST_ANY_SECTOR_DECEPTION
       ? Object.keys(run.sectorAlerts).filter((id) => id !== currentSectorId)
-      : (ADJACENT_SECTOR_IDS[currentSectorId] || []))
+      : adjacentSectorIds(run.graph, currentSectorId))
     : [];
-  const adjacentSectorIds = broadcastSectorIds;
+  // 가짜 목표를 쏠 수 있는 구역 목록(Deception 3 이상이면 이웃이 아니어도 된다).
+  const broadcastTargetSectorIds = broadcastSectorIds;
   const hackableGenerators = (run.graph.generators || []).filter((generator) => isDeviceVisible(generator.nodeId)
     && canHackDevice(generator.nodeId) && !run.disabledGeneratorIds.includes(generator.id));
   const activeReconNodeIds = new Set(run.activeRecon?.targetNodeIds || []);
@@ -1096,7 +1100,7 @@ export function MapScreen() {
           >
             <g transform=${`translate(${view.x}, ${view.y}) translate(${CANVAS_CENTER}, ${CANVAS_CENTER}) scale(${view.scale}) translate(${-CANVAS_CENTER}, ${-CANVAS_CENTER})`}>
               <g>
-                ${SECTOR_IDS.map((sectorId, i) => {
+                ${run.graph.sectorIds.map((sectorId, i) => {
                   const zone = zones[sectorId];
                   if (!zone) return null;
                   const alert = run.sectorAlerts[sectorId];
@@ -1644,7 +1648,7 @@ export function MapScreen() {
                       // 완료가 한 자리에서 끝나면 계약의 마지막 장이 사라지고, 아무 구역이나
                       // 허용하면 어느 랜드마크가 싼지 전 구역을 재봐야 해서 계획이 읽히지 않는다.
                       const canTransmit = canTransmitContractIntelHere(run);
-                      const transmitSectorNames = (ADJACENT_SECTOR_IDS[contract.sectorId] || [])
+                      const transmitSectorNames = adjacentSectorIds(run.graph, contract.sectorId)
                         .map((id) => SECTOR_NAMES[id]).join(' · ');
                       statusLine = canTransmit
                         ? '여기서 송출할 수 있습니다.'
@@ -1708,7 +1712,7 @@ export function MapScreen() {
                             onClick=${() => runCommand({ type: 'CUT_POWER' })}
                           />
                         ` : null}
-                        ${canBroadcast ? adjacentSectorIds.map((target) => {
+                        ${canBroadcast ? broadcastTargetSectorIds.map((target) => {
                           // 상한(3)에 찬 구역으로는 넘길 수 없다 — 넘기면 +1이 잘려 경계도가
                           // 사라지고, 옮기는 수단이 지우는 수단이 된다(총량 보존, ADR-0073).
                           const full = (run.sectorAlerts[target]?.level || 0) >= 3;

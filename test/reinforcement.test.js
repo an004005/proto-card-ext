@@ -83,7 +83,8 @@ test('disposing of a corpse costs time and removes it', () => {
 
 test('reinforcement refills a killed marker at a gateway, and never exceeds the sector roster', () => {
   const base = makeRun(1);
-  const sectorId = 'labs';
+  // 구역은 런마다 뽑히므로(ADR-0081) 고정 id 대신 이 런의 비시작 구역 하나를 쓴다.
+  const sectorId = base.graph.sectorIds[1];
   const roster = base.graph.threats.filter((t) => t.sectorId === sectorId);
   assert.equal(roster.length, THREAT_COUNT_BY_SECTOR[sectorId]);
 
@@ -109,7 +110,8 @@ test('reinforcement refills a killed marker at a gateway, and never exceeds the 
 
 test('reinforcement never spawns onto the player, even when they are standing on a gateway', () => {
   const base = makeRun(1);
-  const sectorId = 'labs';
+  // 구역은 런마다 뽑히므로(ADR-0081) 고정 id 대신 이 런의 비시작 구역 하나를 쓴다.
+  const sectorId = base.graph.sectorIds[1];
   const roster = base.graph.threats.filter((t) => t.sectorId === sectorId);
   const gateways = base.graph.nodes.filter((n) => n.sectorId === sectorId && n.isGateway);
   assert.ok(gateways.length >= 1);
@@ -126,7 +128,8 @@ test('reinforcement never spawns onto the player, even when they are standing on
 
 test('a rising alert pulls that sector’s next reinforcement forward', () => {
   const base = makeRun(1);
-  const sectorId = 'labs';
+  // 구역은 런마다 뽑히므로(ADR-0081) 고정 id 대신 이 런의 비시작 구역 하나를 쓴다.
+  const sectorId = base.graph.sectorIds[1];
   const roster = base.graph.threats.filter((t) => t.sectorId === sectorId);
   const threats = { ...base.threats };
   delete threats[roster[0].id];

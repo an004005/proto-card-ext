@@ -56,7 +56,7 @@
  * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
  */
 
-// ---- facility graph (206-node extraction map, docs/extraction-map-implementation-spec.md) ----
+// ---- facility graph (extraction map, docs/extraction-map-implementation-spec.md) ----
 // These types describe the generated graph shape only (facilityGraph.js). The broader RunState
 // from the spec (time, threats' live mode/alert, exits' request lifecycle, etc.) is added in a
 // later phase once the time/threat engine lands.
@@ -155,6 +155,8 @@
 
 /**
  * @typedef {Object} FacilityGraph
+ * @property {FacilitySectorId[]} sectorIds 이 런이 실제로 쓰는 구역, 링 순서(ADR-0081). 구역을
+ *   훑는 모든 코드는 전역 목록이 아니라 이것을 봐야 한다.
  * @property {FacilityNode[]} nodes
  * @property {FacilityEdge[]} edges
  * @property {string} startNodeId
@@ -662,8 +664,11 @@
  * @property {?CombatSummary} combatSummary post-combat durability report, shown once on the
  *   reward screen then cleared by CONFIRM_REWARDS
  * @property {RngState} rngState
+ * @property {FacilitySectorId[]} [runSectorIds] NEW_RUN이 시드로 뽑아 둔 이 런의 구역(링 순서,
+ *   ADR-0081). 계약 제안을 좁히고, CONFIRM_LOADOUT이 그대로 generateFacilityGraph에 넘긴다.
  * @property {import('../data/contracts.js').ContractDef[]|null} offeredContracts 'contract' 화면에서
- *   고르는 중인 계약 3장. 수락 즉시 activeContract로 옮겨지고 이 필드는 비워진다.
+ *   고르는 중인 계약. 유형별 한 장씩이되 뽑힌 구역에 그 유형이 없으면 빠지므로 1~3장이다.
+ *   수락 즉시 activeContract로 옮겨지고 이 필드는 비워진다.
  * @property {(import('../data/contracts.js').ContractDef & {status: 'accepted'})|null} activeContract
  *   수락됐지만 아직 confirmLoadout으로 facilityRunState.contract에 옮겨지지 않은 계약. 'contract'/'loadout'
  *   화면 동안만 쓰인다 — confirmLoadout 이후로는 facilityRunState.contract가 유일한 소스다.
