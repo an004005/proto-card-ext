@@ -595,6 +595,18 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
     camera ? `카메라 ${run.disabledCameraIds?.includes(camera.id) ? '파괴됨' : (isCameraHackActive(run, camera.id) ? '해킹됨' : '작동 중')}` : null,
     accessInterface ? `접속 인터페이스 ${run.hackedInterfaceIds?.includes(accessInterface.id) ? '해킹됨' : '미해킹'}` : null,
     generator ? `배터리 발전기 ${run.disabledGeneratorIds.includes(generator.id) ? '무력화됨' : '작동 중'}` : null,
+    // 구역 랜드마크(계약 목표부·통제실)는 지형의 일부라 안개만 걷히면 이름이 보인다 — 장치처럼
+    // 가 봐야 발견되는 것이 아니다. 어느 노드가 "주 발전기"인지 지도에서 읽을 수 있어야 계약이
+    // 계획이 된다.
+    (() => {
+      if (knowledge === 'unknown' && !debugReveal) return null;
+      const landmark = run.graph.landmarks.find((l) => l.nodeId === n.id);
+      if (!landmark) return null;
+      const name = LANDMARKS_BY_SECTOR[landmark.sectorId]?.name || landmark.id;
+      const isObjective = !!run.contract && run.contract.sectorId === landmark.sectorId;
+      const seized = run.revealedPatrolRouteSectorIds.includes(landmark.sectorId);
+      return `구역 랜드마크 · ${name}${isObjective ? ` — 계약 「${run.contract.name}」 목표부` : ''}${seized ? ' · 통제실 장악됨' : ''}`;
+    })(),
     // 시체·흔적의 위치도 가 본 자리이거나 Perception 4의 정찰 사거리 안에서만 보인다.
     (run.visitedNodeIds.includes(n.id) || debugReveal || detailIncludes(observedDetail, 'evidence'))
       && run.corpses?.some((c) => c.nodeId === n.id) ? '시체가 남아 있음 — 위협이 밟으면 신고되어 이 구역 경계도가 오른다' : null,
@@ -729,6 +741,8 @@ export function MapScreen() {
     && canHackDevice(camera.nodeId) && !(run.disabledCameraIds || []).includes(camera.id));
   const generatorByNode = Object.fromEntries((run.graph.generators || []).filter((generator) => isDeviceVisible(generator.nodeId)).map((generator) => [generator.nodeId, generator]));
   const currentGenerator = (run.graph.generators || []).find((generator) => generator.nodeId === run.playerNodeId);
+  // 랜드마크 기호는 안개가 걷힌 노드에서만 그린다(툴팁의 규칙과 같다). 계약 목표부는 색을 달리한다.
+  const landmarkByNode = Object.fromEntries(run.graph.landmarks.map((landmark) => [landmark.nodeId, landmark]));
   const currentCamera = run.graph.cameras.find((camera) => camera.nodeId === run.playerNodeId);
   // §4단계 — 시체와 흔적은 내가 만든 것이라 위치를 항상 안다(안개와 무관). 전원 차단 중인
   // 구역과 다음 증원 예정 시각도 여기서 뽑는다.
@@ -1084,6 +1098,8 @@ export function MapScreen() {
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#dc2626', fontWeight: 900 }}>C</span>카메라 — 작동 중(빨강) / <span style=${{ color: '#0ea5e9', fontWeight: 900 }}>해킹됨(파랑)</span> / <span style=${{ color: '#64748b', fontWeight: 900 }}>파괴됨(회색)</span>. Stealth 3 미만이면 그 노드에 들어갈 때 발각된다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#7c3aed', fontWeight: 900 }}>I</span>접속 인터페이스 — 장악하면 이 구역의 발견된 카메라·발전기를 거리와 무관하게 원격 조작할 수 있다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#ca8a04', fontWeight: 900 }}>G</span>배터리 발전기 — 살아 있으면 이 구역 적이 전투 시작 시 갑옷 5를 받는다(<span style=${{ color: '#64748b', fontWeight: 900 }}>회색은 무력화됨</span>)</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '1.5px dashed #7c3aed', boxSizing: 'border-box' }}></span>구역 랜드마크(통제실 장악 자리, 구역당 하나). 안개가 걷히면 이름이 툴팁에 보인다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '2.5px solid var(--color-accent-2-700)', boxSizing: 'border-box' }}></span>계약 목표부 — 이번 계약의 확보·설치·데이터 확보 자리</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', background: 'var(--color-negative, #dd2b0f)', opacity: 0.18, border: '1px solid var(--color-divider)' }}></span>구역 배경색 = 경계도. 진할수록 높고, 높으면 위협이 자주 움직이고 증원이 빨라진다</div>
               </div>
             </div>
@@ -1206,6 +1222,12 @@ export function MapScreen() {
                     ${camera ? html`<text x=${pos.x - 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledCameraIds?.includes(camera.id) ? '#64748b' : (isCameraHackActive(run, camera.id) ? '#0ea5e9' : '#dc2626')} pointer-events="none">C</text>` : null}
                     ${hasInterface ? html`<text x=${pos.x + 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill="#7c3aed" pointer-events="none">I</text>` : null}
                     ${generator ? html`<text x=${pos.x} y=${pos.y + 22} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledGeneratorIds.includes(generator.id) ? '#64748b' : '#ca8a04'} pointer-events="none">G</text>` : null}
+                    ${(() => {
+                      const landmark = landmarkByNode[n.id];
+                      if (!landmark || (knowledge === 'unknown' && !debugReveal)) return null;
+                      const isObjective = !!run.contract && run.contract.sectorId === landmark.sectorId;
+                      return html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 3} fill="none" stroke=${isObjective ? 'var(--color-accent-2-700)' : '#7c3aed'} stroke-width=${isObjective ? 2.5 : 1.5} stroke-dasharray=${isObjective ? null : '3 2'} opacity=${nodeOpacity(displayKnowledge)} pointer-events="none"></circle>`;
+                    })()}
                     ${/* roving tabindex — 탭 순서에 노드가 160개 들어가면 키보드로는 사이드바에
                         닿을 수 없다. 탭 정지점은 지금 보고 있는 노드 하나뿐이고, 나머지는 그
                         자리에서 화살표로 옮겨 다닌다. */ null}
