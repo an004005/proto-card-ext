@@ -9,6 +9,7 @@ import { WEAPON_DEFINITIONS } from '../data/equipment.js';
 import { describeItem } from '../data/itemDisplay.js';
 import { Tooltip } from './Tooltip.js';
 import { OverloadGauge } from './OverloadGauge.js';
+import { COMBAT_NOISE_ENABLED } from '../engine/combatMapIntegration.js';
 
 export const TYPE_INFO = {
   attack: { color: 'var(--color-accent)', label: 'ATTACK · 공격', cls: 'tag-accent' },
@@ -149,7 +150,7 @@ export function CardDetailTooltip({ def, cost, type, overload, item, powers = {}
             </div>
           ` : null}
           ${def.overloadGain ? html`<div style=${{ fontSize: '10px', marginTop: '2px', color: 'var(--color-negative, #dc2626)', opacity: 0.9 }}>과부화 부여 +${def.overloadGain}</div>` : null}
-          ${def.mapTags?.noise ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.8 }}>소음 게이지 +${def.mapTags.noise}</div>` : null}
+          ${COMBAT_NOISE_ENABLED && def.mapTags?.noise ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.8 }}>소음 게이지 +${def.mapTags.noise}</div>` : null}
         </div>
       </div>
 

@@ -22,6 +22,13 @@ export { COMBAT_ROUND_TIME_COST };
 export const NOISE_GAUGE_CAPACITY = 6;
 
 /**
+ * 전투 소음 게이지 활성 여부. false면 카드를 내도 게이지가 채워지지 않고 소음 사건도 나지 않는다.
+ * 카드의 `mapTags.noise` 데이터는 그대로 두므로 true로 되돌리면 즉시 복구된다. UI(게이지 바, 카드
+ * 툴팁의 소음 표시)도 이 값을 따른다.
+ */
+export const COMBAT_NOISE_ENABLED = false;
+
+/**
  * @param {number} gauge current accumulated noise (0..CAPACITY-1 going in)
  * @param {number} amount the played card's mapTags.noise (0-3)
  * @returns {{gauge: number, fired: boolean}}
@@ -45,9 +52,11 @@ export function nextNoiseIntensity(lastIntensity) {
  * @param {number} gauge current gauge value
  * @param {0|1|2|3} lastIntensity last fired intensity this combat (0 if none fired yet)
  * @param {number} cardNoise the played card's mapTags.noise
+ * @param {boolean} [enabled] 기본값은 COMBAT_NOISE_ENABLED. false면 입력을 그대로 돌려준다.
  * @returns {{runState: import('./types.js').FacilityRunState, gauge: number, intensity: 0|1|2|3}}
  */
-export function applyCombatCardNoise(runState, nodeId, gauge, lastIntensity, cardNoise) {
+export function applyCombatCardNoise(runState, nodeId, gauge, lastIntensity, cardNoise, enabled = COMBAT_NOISE_ENABLED) {
+  if (!enabled) return { runState, gauge, intensity: lastIntensity };
   const { gauge: nextGauge, fired } = addCombatNoiseGauge(gauge, cardNoise);
   if (!fired) return { runState, gauge: nextGauge, intensity: lastIntensity };
   const intensity = nextNoiseIntensity(lastIntensity);

@@ -5,7 +5,7 @@ import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileC
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { isCardPlayable, getCardTargetKind } from '../engine/combatEngine.js';
-import { canDisengage, DISENGAGE_REQUIRED_PROGRESS, COMBAT_ROUND_TIME_COST } from '../engine/combatMapIntegration.js';
+import { canDisengage, DISENGAGE_REQUIRED_PROGRESS, COMBAT_ROUND_TIME_COST, COMBAT_NOISE_ENABLED } from '../engine/combatMapIntegration.js';
 import { runCountdowns } from '../engine/mapTimeline.js';
 import { MapClock } from './MapClock.js';
 import { Tooltip } from './Tooltip.js';
@@ -109,7 +109,7 @@ export function CombatScreen() {
             </select>
           </label>
         </div>
-        <${NoiseGauge} gauge=${combatContext?.noiseGauge ?? 0} intensity=${combatContext?.noiseIntensity ?? 0} />
+        ${COMBAT_NOISE_ENABLED ? html`<${NoiseGauge} gauge=${combatContext?.noiseGauge ?? 0} intensity=${combatContext?.noiseIntensity ?? 0} />` : null}
         <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', width: '280px', fontSize: '11px' }}>
           <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
             <span class="tag tag-outline">DEBUG · 디버그</span>
@@ -142,7 +142,7 @@ export function CombatScreen() {
           // 버튼에 이름만 있으면 무엇이 일어나는지, 소음이 얼마나 나는지, 다시 쓸 수 있는지가
           // 전부 감춰진다 — 소모품은 한 번 쓰면 영구히 사라지므로 특히 그렇다(리뷰 B7).
           const tip = `${def.description}.`
-            + ` 소음 ${def.mapTags.noise}${def.mapTags.noise === 0 ? ' (조용함)' : ' — 전투 소음 게이지에 더해집니다'}.`
+            + (COMBAT_NOISE_ENABLED ? ` 소음 ${def.mapTags.noise}${def.mapTags.noise === 0 ? ' (조용함)' : ' — 전투 소음 게이지에 더해집니다'}.` : '')
             + `${def.mapTags.disengageProgress ? ` 이탈 진행도 +${def.mapTags.disengageProgress}.` : ''}`
             + ' 쓰면 이 런에서 영구히 사라집니다.';
           return html`

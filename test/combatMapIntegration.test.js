@@ -4,7 +4,7 @@ import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState } from '../src/engine/runEngine.js';
 import {
   addCombatNoiseGauge, nextNoiseIntensity, applyCombatCardNoise, applyCombatRoundTimeToRunState,
-  NOISE_GAUGE_CAPACITY, COMBAT_ROUND_TIME_COST,
+  NOISE_GAUGE_CAPACITY, COMBAT_ROUND_TIME_COST, COMBAT_NOISE_ENABLED,
   beginDisengage, cancelDisengage, addDisengageProgress, canDisengage, resolveDisengage,
   DISENGAGE_REQUIRED_PROGRESS,
 } from '../src/engine/combatMapIntegration.js';
@@ -59,17 +59,32 @@ test('nextNoiseIntensity climbs 1 -> 2 -> 3 then holds at 3', () => {
   assert.equal(nextNoiseIntensity(3), 3);
 });
 
+test('applyCombatCardNoise is a no-op while the combat noise gauge is disabled', () => {
+  const { graph } = generateFacilityGraph(2);
+  const runState = createRunState(graph, 2);
+  const nodeId = runState.playerNodeId;
+  const result = applyCombatCardNoise(runState, nodeId, NOISE_GAUGE_CAPACITY - 1, 0, 3, false);
+  assert.equal(result.gauge, NOISE_GAUGE_CAPACITY - 1);
+  assert.equal(result.intensity, 0);
+  assert.equal(result.runState, runState);
+  assert.equal(result.runState.noiseEvents.length, 0);
+});
+
+test('combat noise gauge is currently disabled by default', () => {
+  assert.equal(COMBAT_NOISE_ENABLED, false);
+});
+
 test('applyCombatCardNoise reports a noise event only when the gauge fires, at the escalating intensity', () => {
   const { graph } = generateFacilityGraph(2);
   const runState = createRunState(graph, 2);
   const nodeId = runState.playerNodeId;
 
-  let result = applyCombatCardNoise(runState, nodeId, NOISE_GAUGE_CAPACITY - 2, 0, 1);
+  let result = applyCombatCardNoise(runState, nodeId, NOISE_GAUGE_CAPACITY - 2, 0, 1, true);
   assert.equal(result.gauge, NOISE_GAUGE_CAPACITY - 1);
   assert.equal(result.intensity, 0);
   assert.equal(result.runState.noiseEvents.length, 0);
 
-  result = applyCombatCardNoise(result.runState, nodeId, result.gauge, result.intensity, 2);
+  result = applyCombatCardNoise(result.runState, nodeId, result.gauge, result.intensity, 2, true);
   assert.equal(result.gauge, 0);
   assert.equal(result.intensity, 1);
   assert.equal(result.runState.noiseEvents.length, 1);
@@ -77,14 +92,14 @@ test('applyCombatCardNoise reports a noise event only when the gauge fires, at t
   assert.equal(result.runState.noiseEvents[0].sourceNodeId, nodeId);
 
   // fire again — intensity escalates to 2
-  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0);
+  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0, true);
   assert.equal(result.intensity, 2);
   assert.equal(result.runState.noiseEvents.length, 2);
 
   // a third fire caps at 3 and holds there on a fourth
-  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0);
+  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0, true);
   assert.equal(result.intensity, 3);
-  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0);
+  result = applyCombatCardNoise(result.runState, nodeId, NOISE_GAUGE_CAPACITY, result.intensity, 0, true);
   assert.equal(result.intensity, 3);
 });
 
