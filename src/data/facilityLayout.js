@@ -312,10 +312,10 @@ export const MOBILITY_MOVE_TIME_DELTA = [2, 1, 0, -1, -2, -3, -4];
 /** 아무리 빨라도 통로 하나는 2칸이다 — 짧은 통로에서는 Mobility 추가 이득이 없다. */
 export const MOVE_MIN_TIME = 2;
 
-// 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 3 / 실험 5 / 격납고 5 / 보안 6 /
-// 동력 7 / 폐기물 6 / 통신 4 / 거주 4 (총 40).
+// 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 3 / 실험 3 / 격납고 3 / 보안 4 /
+// 동력 5 / 폐기물 4 / 통신 3 / 거주 3 (총 28).
 export const THREAT_COUNT_BY_SECTOR = {
-  entrance: 3, labs: 5, hangar: 5, security: 6, power: 7, waste: 6, comms: 4, residential: 4,
+  entrance: 3, labs: 3, hangar: 3, security: 4, power: 5, waste: 4, comms: 3, residential: 3,
 };
 export const THREAT_MIN_HOPS_FROM_START = 3; // "시작점 2홉 안에 배치하지 않는다" -> 최소 3홉.
 export const THREAT_MIN_HOPS_BETWEEN_MARKERS = 2;
@@ -411,11 +411,11 @@ export const TRACE_CLEANUP_TIME_BY_PERCEPTION = [8, 8, 7, 6, 5, 4, 4];
 // 증원(D14) — 구역마다 로스터(graph.threats)에 정해진 정원이 있고, 전투로 비운 자리만 다시
 // 채운다("그냥 리스폰"). 정원을 넘지 않으므로 맵 청소는 불가능해지되 무한 증식도 하지 않는다.
 // 증원은 구역 관문에서 나온다 — 등 뒤에서 생기지 않는다.
-export const REINFORCEMENT_INTERVAL = 90;
+export const REINFORCEMENT_INTERVAL = 180;
 // 봉쇄(D22) 중에는 교대가 빨라진다 — 기존 위협의 이동 가속(LOCKDOWN_THREAT_MOVE_INTERVAL)과
 // 함께 "마지막 장"의 압박을 만든다. 봉쇄에 들어가는 순간 각 구역의 다음 교대 시각을
-// min(기존, 현재+45)으로 당긴다.
-export const REINFORCEMENT_LOCKDOWN_INTERVAL = 45;
+// min(기존, 현재+90)으로 당긴다.
+export const REINFORCEMENT_LOCKDOWN_INTERVAL = 90;
 
 // 전원 차단(D12) — 그 구역 경계도 상승을 잠시 멈춘다. 대가는 큰 소음과, 그동안 그 구역의
 // 전자식 자물쇠를 열 수 없다는 것이다(전원이 없으니 해킹할 제어가 없다. 문을 뜯는 Force는 된다).
