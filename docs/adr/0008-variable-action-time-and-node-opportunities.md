@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §6
+status: amended by ADR-0075 and implementation spec §6
 ---
 
 # 현장 기회는 노드별 0~2개이며 시간 비용은 가변적이다

@@ -8,6 +8,7 @@
     "test": "node --test",
     "docs:reference": "node scripts/generate-reference-workbook.mjs",
     "docs:check": "node scripts/generate-reference-workbook.mjs --check",
+    "balance:map": "node scripts/measure-map-balance.mjs",
     "electron": "electron .",
     "dist": "electron-builder"
   },

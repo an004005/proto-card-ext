@@ -80,10 +80,10 @@ export const SECTOR_LAYOUTS = {
 
 export const TOTAL_NODES = SECTOR_IDS.reduce((sum, id) => sum + SECTOR_LAYOUTS[id].nodeCount, 0);
 
-// Mobility 0 기준 "평균적인" 일반 복도 시간 비용 (구현 명세 §6.2) — 실제 엣지 시간은 이제
-// 두 노드의 기하학적 거리에 비례해 가감된다(EDGE_TIME_PER_LENGTH_UNIT 이하 참고). 이 값은
-// 그 스케일을 맞추는 기준점일 뿐, 더 이상 모든 엣지에 균일하게 적용되지 않는다.
-export const STANDARD_EDGE_TIME_COST = 100;
+// Mobility 0 기준 "평균적인" 일반 복도 시간 비용(칸) — 실제 엣지 시간은 두 노드의 기하학적
+// 거리에 비례해 가감된다(EDGE_TIME_PER_LENGTH_UNIT 이하 참고). 이 값은 그 스케일을 맞추는
+// 기준점일 뿐, 모든 엣지에 균일하게 적용되지 않는다.
+export const STANDARD_EDGE_TIME_COST = 5;
 
 // ---- 기하학적 배치 (구역 링 + 구역별 평면도) ----
 // 구역 중심은 하나의 큰 링 위에 균등 배치한다. 각 구역 내부는 SECTOR_LAYOUTS의 배치 원형에
@@ -124,11 +124,12 @@ export const TOWER_LOBBY_SPREAD = 2.6;
 export const LANDMARK_CANDIDATE_MIN = 2;
 export const LANDMARK_CANDIDATE_MAX = 4;
 
-// 엣지 시간 비용 = clamp(round(기하 거리 * EDGE_TIME_PER_LENGTH_UNIT), MIN, MAX). 구역 내부
-// 최근접 노드 간 평균 거리(~50 단위)가 STANDARD_EDGE_TIME_COST(100)에 가깝게 나오도록 잡은 값.
-export const EDGE_TIME_PER_LENGTH_UNIT = 2;
-export const EDGE_TIME_MIN = 40;
-export const EDGE_TIME_MAX = 260;
+// 엣지 시간 비용(칸) = clamp(round(기하 거리 * EDGE_TIME_PER_LENGTH_UNIT), MIN, MAX). 구역 내부
+// 최근접 노드 간 평균 거리(~50 단위)가 STANDARD_EDGE_TIME_COST(5)에 가깝게 나오도록 잡은 값.
+// 반올림은 여기서 딱 한 번만 한다 — 생성 이후 통로 비용은 변하지 않는 정수 칸이다.
+export const EDGE_TIME_PER_LENGTH_UNIT = 0.1;
+export const EDGE_TIME_MIN = 2;
+export const EDGE_TIME_MAX = 13;
 
 // 특수 엣지를 얹을 때 한 노드가 가질 수 있는 최대 차수. 기저 그래프에는 적용되지 않는다 —
 // 평면도가 만든 문·복도와 관문은 차수를 보지 않고 놓이며, 격자 교차점이나 탑 1층 로비처럼
@@ -141,21 +142,21 @@ export const BASE_EDGE_DEGREE_HARD_CAP = 4;
 /** @type {[string, string][]} */
 export const SECTOR_ADJACENCY = SECTOR_IDS.map((s, i) => [s, SECTOR_IDS[(i + 1) % SECTOR_IDS.length]]);
 
-// 탈출구별 Mobility 0 가중 이동비용 범위 (구현 명세 §2.2).
+// 탈출구 A와 B 사이의 최소 거리(칸, ADR-0076). 시작점 기준 거리 범위도 A<열쇠<B 순서도 두지
+// 않는다 — 세 출구는 서로 다른 구역에, 시작 구역(입구·관리동)을 빼고 무작위로 놓이고, 이 값만
+// 완성된 그래프(특수 엣지 포함)에서 검증한다. 판정 기준은 Capability 0이 아무것도 열지 않고
+// 걸어갈 수 있는 간선뿐이며(baselineWalkDistances), 방향에 따라 값이 다르므로 두 방향 중 짧은
+// 쪽을 쓴다.
 //
-// 시작점은 항상 입구·관리동이고 여덟 구역은 균등한 원 위에 있으므로, 시작점 가중거리는 사실상
-// 링 위치의 함수다. 그래서 구간을 좁게 잡으면 그 구간이 링의 특정 호에 대응해 버리고, 출구가
-// 놓이는 구역이 시드와 무관하게 고정된다 — 예전 값에서는 B의 90%가 동력·정비동(입구의 정반대편,
-// 유일하게 5,300을 넘는 구역) 하나에 몰렸다.
-//
-// 그래서 구간을 아래로 당기고 서로 겹치게 넓혔다. 구간이 겹쳐도 A<열쇠<B 순서는 깨지지 않는다 —
-// 순서는 구간이 아니라 placeStartAndExits가 후보를 고를 때 직접 비교해 보장한다. 상한은 시작점에서
-// 2-edge-disjoint 경로가 있는 노드까지의 실제 도달 거리(시드마다 5,500~6,600) 아래로 둔다.
-export const EXIT_DISTANCE_RANGES = {
-  A: { min: 2400, max: 4000 },
-  key: { min: 3400, max: 5000 },
-  B: { min: 4400, max: 5800 },
-};
+// 초기값, 플레이테스트로 조절. 120칸은 A 폐쇄 430의 약 28%이고 봉쇄 유예
+// LOCKDOWN_EXIT_CLOSE_WINDOW(125)보다 조금 짧다 — 목표 확보 뒤 A 대신 B로 갈아타는 것이 이론상
+// 가능한 상한에 걸치는 거리다. 무작위 후보 쌍의 약 60%가 이 값을 넘기므로 재배치도 거의
+// 실패하지 않는다.
+export const EXIT_AB_MIN_DISTANCE = 120;
+
+// 위 조건을 만족하는 조합을 찾는 재배치 시도 횟수. 넘기면 그 시드에서 가장 먼 후보 쌍을
+// 택하고(생성 실패로 치지 않는다) graph.exitPlacement.relaxed 로 표시한다.
+export const EXIT_PLACEMENT_MAX_ATTEMPTS = 24;
 
 // 구역 "내부" 특수 엣지 (기존과 동일한 배치 방식 — 같은 구역 노드 풀에서만 고름).
 export const SPECIAL_EDGES_PER_SECTOR_MIN = 4;
@@ -232,7 +233,7 @@ export const NODE_TYPE_CONCEALMENT_WEIGHTS = {
   crawlway: [{ value: 0, weight: 20 }, { value: 2, weight: 45 }, { value: 3, weight: 35 }],
   refuge: [{ value: 0, weight: 10 }, { value: 2, weight: 40 }, { value: 3, weight: 50 }],
 };
-export const CONCEALMENT_ACTION_TIME_COST = 20;
+export const CONCEALMENT_ACTION_TIME_COST = 1;
 
 // 대공간에 서 있는 동안 실효 Stealth가 이만큼 깎인다(D7 격납고: 개방 공간이라 Stealth가 불리).
 // 은엄폐와 같은 자리에서 계산되며, 대공간에는 은엄폐가 아예 배치되지 않으므로 상쇄되지 않는다.
@@ -241,24 +242,23 @@ export const HALL_STEALTH_PENALTY = 1;
 // 구역 통제실 해킹(§신규) — 각 구역의 랜드마크 노드(graph.landmarks)에서만 시도할 수 있다.
 // 해킹 수치별로 누적 언락(상위 레벨은 하위 효과를 전부 포함): 1=이 구역 순찰경로 영구 표시,
 // 2=이 구역 경계레벨 감소(감소량 = 해킹 수치 - 1), 3=맵 전체 위협 전원 patrol 전환.
-export const CONTROL_ROOM_HACK_TIME = 150;
+export const CONTROL_ROOM_HACK_TIME = 8;
 export const CONTROL_ROOM_HACK_OVERLOAD = 10;
 
 // 계약(§3단계, D3·D4·D21). 완료 액션 세 종류의 시간·과부화 비용. 확보(회수 물건 집기·정보
 // 데이터 추출)는 정찰보다 무겁고 해킹보다는 가볍게, 파괴는 가장 무겁게, 송출은 확보보다
-// 가볍게 잡았다 — 다른 §신규 필드 액션들과 같은 대역(80~180)에 맞춘 1차값이다.
-export const CONTRACT_ACQUIRE_TIME = 120;
+// 가볍게 잡았다 — 다른 §신규 필드 액션들과 같은 대역(4~9칸)에 맞춘 1차값이다.
+export const CONTRACT_ACQUIRE_TIME = 6;
 export const CONTRACT_ACQUIRE_OVERLOAD = 8;
-export const CONTRACT_DESTROY_TIME = 180;
+export const CONTRACT_DESTROY_TIME = 9;
 export const CONTRACT_DESTROY_OVERLOAD = 15;
-export const CONTRACT_TRANSMIT_TIME = 100;
+export const CONTRACT_TRANSMIT_TIME = 5;
 export const CONTRACT_TRANSMIT_OVERLOAD = 10;
 
 // 봉쇄(D22) — 계약 목표를 확보한 순간부터 켜진다. 위협 이동 간격을 전역으로 줄이고(작을수록
 // 빠르다), 두 표준 출구 중 더 먼 B의 비활성 시각을 앞당긴다 — 어느 쪽이 닫힐지 예측 가능해야
 // 플레이어가 대비할 수 있으므로 무작위나 조건부가 아니라 항상 B로 고정한다.
-export const LOCKDOWN_THREAT_SPEED_MULTIPLIER = 0.6;
-export const LOCKDOWN_EXIT_CLOSE_WINDOW = 2500;
+export const LOCKDOWN_EXIT_CLOSE_WINDOW = 125;
 
 // Cameras and access interfaces are rolled independently, so either device can exist alone or
 // both can share a node. Generation guarantees at least one of each per sector.
@@ -266,24 +266,28 @@ export const CAMERA_NODE_CHANCE = 0.22;
 export const ACCESS_INTERFACE_NODE_CHANCE = 0.16;
 export const CAMERA_STEALTH_THRESHOLD = 3;
 export const CAMERA_ALERT_RANGE = 3;
-export const CAMERA_HACK_TIME = 100;
+export const CAMERA_HACK_TIME = 5;
 export const CAMERA_HACK_OVERLOAD = 6;
-export const CAMERA_HACK_DURATION = 300;
+export const CAMERA_HACK_DURATION = 15;
 // Effective Hacking -2/-1/0/1/2/3/4 -> direct graph-hop range (§10.2 문서: "Hacking 1·2·3·4에서
 // 각각 1·2·3·4홉 이내"). Hacking 0 이하는 자격 미달로 아예 시도할 수 없으므로 0. A hacked access
 // interface instead grants the entire sector, regardless of this direct range (§11.2 카메라·
 // 접속 인터페이스 참고).
 export const CAMERA_HACK_RANGE_BY_HACKING = [0, 0, 0, 1, 2, 3, 4];
-export const CAMERA_FORCE_TIME = 100;
+export const CAMERA_FORCE_TIME = 5;
 export const CAMERA_FORCE_NOISE = 2;
 export const GENERATOR_SECTOR_IDS = ['power', 'labs'];
-export const GENERATOR_HACK_TIME = 100;
+export const GENERATOR_HACK_TIME = 5;
 export const GENERATOR_HACK_OVERLOAD = 6;
-export const GENERATOR_FORCE_TIME = 100;
+export const GENERATOR_FORCE_TIME = 5;
 export const GENERATOR_FORCE_NOISE = 2;
 export const GENERATOR_COMBAT_START_ARMOR = 5;
-// Effective Mobility -2/-1/0/1/2/3/4 scales each geometry-derived corridor cost.
-export const MOBILITY_MOVE_TIME_MULTIPLIER = [1.4, 1.2, 1, 0.9, 0.8, 0.7, 0.6];
+// 유효 Mobility -2/-1/0/1/2/3/4 -> 통로 비용에 더하는 칸 가감(ADR-0075). 저장된 통로 비용에
+// 배율을 곱하지 않는다 — 그러면 같은 통로가 빌드마다 다른 소수로 갈라져 뺄셈으로 예측할 수
+// 없게 된다. 최종 비용은 max(MOVE_MIN_TIME, B + 가감)이다.
+export const MOBILITY_MOVE_TIME_DELTA = [2, 1, 0, -1, -2, -3, -4];
+/** 아무리 빨라도 통로 하나는 2칸이다 — 짧은 통로에서는 Mobility 추가 이득이 없다. */
+export const MOVE_MIN_TIME = 2;
 
 // 초기 위협 배치 (구역 순서는 SECTOR_IDS와 일치): 입구 3 / 실험 5 / 격납고 5 / 보안 6 /
 // 동력 7 / 폐기물 6 / 통신 4 / 거주 4 (총 40).
@@ -306,31 +310,38 @@ export const ENTRANCE_THREAT_MAX_GROUP_SIZE = 2;
 export const GENERATION_MAX_ATTEMPTS = 64;
 export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
 
-// ---- 시간·틱·탈출 (구현 명세 §2, §5, §7) ----
+// ---- 시간·탈출 (구현 명세 §2, §5, §7) ----
+// 맵 시간의 단위는 정수 "칸" 하나뿐이다(ADR-0075). 아래 값은 전부 칸이며, 런타임에서 이 값에
+// 배율을 곱해 소수를 만들지 않는다.
 
-// EXIT_DISTANCE_RANGES.B 상한(5,800) 대비 약 2.4배. 가장 먼 탈출구를 찍고 돌아 나올 여유는
-// 있되, 시설 전체를 훑고 나갈 만큼은 아니게 잡은 값이다.
-export const RUN_COLLAPSE_TIME = 14000; // §2.3 t===RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
-export const WORLD_TICK_INTERVAL = 10; // §5.1 "전역 시간이 10 시간 포인트 진행될 때마다 1회".
+// 시작점에서 가장 먼 출구까지의 실측 중앙값(Mobility 0, 개방 없이 220칸 안팎) 대비 약 3배.
+// 가장 먼 탈출구를 찍고 돌아 나올 여유는 있되, 시설 전체를 훑고 나갈 만큼은 아니게 잡은 값이다.
+export const RUN_COLLAPSE_TIME = 700; // §2.3 t>=RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
 
-export const EXIT_A_DISABLED_AT = 8600;
-export const EXIT_B_DISABLED_AT = 13400;
-export const EXIT_REQUEST_TIME = 50;
-export const EXIT_OPEN_WINDOW = 100;
+export const EXIT_A_DISABLED_AT = 430;
+export const EXIT_B_DISABLED_AT = 670;
+export const EXIT_REQUEST_TIME = 3;
+export const EXIT_OPEN_WINDOW = 5;
 
 // 유효 Hacking -2~-1/0/1/2/3/4 -> 개방 대기 (§2.2, §CONTEXT 탈출 카운트다운). effectiveHacking을
 // -2..4 범위로 clamp한 뒤 이 배열의 (value+2) 인덱스로 조회한다.
-export const EXIT_OPEN_WAIT_BY_HACKING = [300, 300, 300, 250, 200, 150, 100];
+export const EXIT_OPEN_WAIT_BY_HACKING = [15, 15, 15, 13, 10, 8, 5];
 
-export const NOISE_DURATION = 100; // §7.1 "일반 소음은 100포인트 동안 지속".
-export const INVESTIGATION_MEMORY_DURATION = 300; // §7.1 "출처 도착 또는 기억 만료 전까지".
+export const NOISE_DURATION = 5; // §7.1 소음은 발생 시각 C부터 [C, C+5) 동안 들린다.
+export const INVESTIGATION_MEMORY_DURATION = 15; // §7.1 "출처 도착 또는 기억 만료 전까지".
 export const EVIDENCE_TRACE_DURATION_LIGHT = null; // §7.2: 흔적은 시간 만료가 아니라 발견/정리로만 사라진다.
 
-// §CONTEXT.md "순찰 경로": mode별 다음 엣지 이동 간격. 구역 경계도 2/3은 조사·경계에 한해 더
-// 빨라진다(아래 SECTOR_ALERT_INVESTIGATE_INTERVAL로 override).
-export const THREAT_MOVE_INTERVAL = { patrol: 100, investigate: 80, alert: 80, pursuit: 60, exit_guard: 80 };
+// §CONTEXT.md "순찰 경로": mode별 다음 엣지 이동 간격(칸). 구역 경계도 2/3은 조사·경계에 한해
+// 더 빨라진다(아래 SECTOR_ALERT_INVESTIGATE_INTERVAL로 override).
+export const THREAT_MOVE_INTERVAL = { patrol: 5, investigate: 4, alert: 4, pursuit: 3, exit_guard: 4 };
 /** @type {Partial<Record<0|1|2|3, number>>} sectorAlertLevel -> interval override */
-export const SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 70, 3: 60 };
+export const SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 3, 3: 3 };
+
+// 봉쇄 중 이동 간격은 배율이 아니라 고정표다(ADR-0075) — 0.6을 곱하면 자투리 칸이 생기고,
+// "지금 몇 칸 뒤에 움직이나"를 뺄셈으로 알 수 없게 된다.
+export const LOCKDOWN_THREAT_MOVE_INTERVAL = { patrol: 3, investigate: 3, alert: 3, pursuit: 2, exit_guard: 3 };
+/** @type {Partial<Record<0|1|2|3, number>>} 봉쇄 중 sectorAlertLevel -> 조사·경계 간격 override */
+export const LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 2, 3: 2 };
 
 /** @type {Record<0|1|2|3, 0|1|2>} */
 export const SECTOR_ALERT_MIN_ENEMY_ALERT = { 0: 0, 1: 1, 2: 2, 3: 2 }; // §7.4
@@ -345,7 +356,7 @@ export const SECTOR_ALERT_MIN_ENEMY_ALERT = { 0: 0, 1: 1, 2: 2, 3: 2 }; // §7.4
 
 // 시체(D13) — 전투에서 이긴 노드에 남는다. 위협이 밟으면 신고되어 경계도가 오르고 그 지점으로
 // 조사가 몰린다. 치우는 것은 선택이며 기본은 그냥 두고 가는 것이다.
-export const CORPSE_DISPOSAL_TIME = 200;
+export const CORPSE_DISPOSAL_TIME = 5;
 /** 시체·강한 흔적이 발견됐을 때 그 지점에 생기는 조사 유발 소음의 강도. */
 export const DISCOVERY_NOISE_INTENSITY = 2;
 
@@ -353,29 +364,39 @@ export const DISCOVERY_NOISE_INTENSITY = 2;
 // tier로 가른다: 약한 흔적은 위협을 끌어들이기만 하고, 강한 흔적(Stealth -2 이하)만 경계도를
 // 올린다. 중장비 빌드가 실제로 위험해지는 자리다.
 export const EVIDENCE_TIER_RAISING_ALERT = 2;
-/** 유효 Perception -2~4 -> 흔적 정리 시간. 크고, 그동안 무방비다(D12). */
-export const TRACE_CLEANUP_TIME_BY_PERCEPTION = [320, 320, 280, 250, 210, 180, 150];
+/**
+ * 유효 Perception -2~4 -> 흔적 정리 시간. 크고, 그동안 무방비다(D12).
+ * 첫 칸(Perception -2)은 층계상 도달할 수 없어 실제로는 쓰이지 않는다 — 다른 Capability 표와
+ * 같은 -2~4 일곱 칸 모양을 유지하려고 남겨 둔 자리다.
+ */
+export const TRACE_CLEANUP_TIME_BY_PERCEPTION = [8, 8, 7, 6, 5, 4, 4];
 
 // 증원(D14) — 구역마다 로스터(graph.threats)에 정해진 정원이 있고, 전투로 비운 자리만 다시
 // 채운다("그냥 리스폰"). 정원을 넘지 않으므로 맵 청소는 불가능해지되 무한 증식도 하지 않는다.
 // 증원은 구역 관문에서 나온다 — 등 뒤에서 생기지 않는다.
-export const REINFORCEMENT_INTERVAL = 1800;
-// 봉쇄(D22) 중에는 교대가 빨라진다 — 기존 위협의 이동 가속(LOCKDOWN_THREAT_SPEED_MULTIPLIER)과
-// 함께 "마지막 장"의 압박을 만든다.
-export const REINFORCEMENT_LOCKDOWN_MULTIPLIER = 0.5;
+export const REINFORCEMENT_INTERVAL = 90;
+// 봉쇄(D22) 중에는 교대가 빨라진다 — 기존 위협의 이동 가속(LOCKDOWN_THREAT_MOVE_INTERVAL)과
+// 함께 "마지막 장"의 압박을 만든다. 봉쇄에 들어가는 순간 각 구역의 다음 교대 시각을
+// min(기존, 현재+45)으로 당긴다.
+export const REINFORCEMENT_LOCKDOWN_INTERVAL = 45;
 
 // 전원 차단(D12) — 그 구역 경계도 상승을 잠시 멈춘다. 대가는 큰 소음과, 그동안 그 구역의
 // 전자식 자물쇠를 열 수 없다는 것이다(전원이 없으니 해킹할 제어가 없다. 문을 뜯는 Force는 된다).
-export const POWER_CUT_DURATION = 600;
-export const POWER_CUT_TIME = 120;
+export const POWER_CUT_DURATION = 30;
+export const POWER_CUT_TIME = 6;
 export const POWER_CUT_NOISE = 3;
 
 // 가짜 목표 송출(D12) — 경계를 인접 구역으로 옮긴다. 총량은 보존된다.
-export const FALSE_BROADCAST_TIME = 130;
+export const FALSE_BROADCAST_TIME = 7;
 export const FALSE_BROADCAST_OVERLOAD = 6;
 export const FALSE_BROADCAST_INTENSITY = 2;
-/** 심어둔 가짜 목표가 유지되는 시간 — 소음(100)보다 길어야 위협이 실제로 그쪽까지 걸어간다. */
-export const FALSE_BROADCAST_DURATION = 300;
+/**
+ * Deception — 어설픈 속임수는 오래 못 간다. 심어둔 가짜 목표가 유지되는 시간이며, 소음(5칸)
+ * 보다 길어야 위협이 실제로 그쪽까지 걸어간다. 층계별 **고정 칸 표**이고 적정(standard)이
+ * 기본 15칸이다. 배율이 아니라 표인 이유는 ADR-0075 — 지속도 시간이라 정수 칸으로 읽히고
+ * 뺄셈으로 예측 가능해야 한다. 지속이 통화인 행동은 저마다 자기 표를 갖고 호출부가 넘긴다.
+ */
+export const FALSE_BROADCAST_DURATION_BY_STEP = { surplus: 19, standard: 15, strained: 8, severe: 4 };
 
 // 구역 링(SECTOR_IDS) 위에서 서로 맞닿은 구역. 경계도를 옮기거나(D12 가짜 목표 송출) 인접
 // 구역까지 낮출 때(통제실 해킹 3단계) 쓰는 유일한 인접 정의다 — 기하학적 배치가 이 링 순서를
@@ -393,8 +414,15 @@ export const ADJACENT_SECTOR_IDS = Object.fromEntries(SECTOR_IDS.map((id, i) => 
 // 핵심은 부족분을 전부 시간으로 받지 않는 것이다 — 그러면 시간이 다시 단일 통화가 된다.
 // Capability마다 받는 통화가 다르고, 아래 표가 그 통화별 수치다.
 
-/** 모든 단계에 공통으로 걸리는 시간 배수. Mobility와 Perception은 이것이 주 통화다. */
-export const CAPABILITY_STEP_TIME_MULTIPLIER = { surplus: 0.75, standard: 1, strained: 1.4, severe: 2 };
+/**
+ * 모든 단계에 공통으로 걸리는 시간 **칸 가감**. Mobility와 Perception은 이것이 주 통화다.
+ * 배율이 아니라 가감인 이유는 ADR-0075 — 저장된 칸에 배율을 곱하면 반올림이 끼어들어 같은
+ * 행동이 기본 비용마다 다른 값으로 갈라지고, "이 행동 동안 적이 몇 번 움직이나"를 뺄셈으로
+ * 알 수 없게 된다. 전용 시간 규칙을 가진 행동(이동, 흔적 정리)에는 중복 적용하지 않는다.
+ */
+export const CAPABILITY_STEP_TIME_DELTA = { surplus: -1, standard: 0, strained: 2, severe: 4 };
+/** 층계·접근 가감을 다 받은 뒤에도 유료 행동은 최소 1칸이다. */
+export const CAPABILITY_MIN_TIME = 1;
 /** Force — 힘으로 밀어붙이면 시끄럽다. severe에서는 장비도 상한다. */
 export const CAPABILITY_STEP_NOISE_DELTA = { surplus: -1, standard: 0, strained: 1, severe: 2 };
 export const CAPABILITY_STEP_DURABILITY_LOSS = { surplus: 0, standard: 0, strained: 0, severe: 1 };
@@ -402,8 +430,6 @@ export const CAPABILITY_STEP_DURABILITY_LOSS = { surplus: 0, standard: 0, strain
 export const CAPABILITY_STEP_OVERLOAD_DELTA = { surplus: -3, standard: 0, strained: 6, severe: 14 };
 /** Mobility — 무리하면 몸이 상한다. playerState.hp라 커맨드 래퍼에서 반영한다. */
 export const CAPABILITY_STEP_HP_COST = { surplus: 0, standard: 0, strained: 3, severe: 8 };
-/** Deception — 어설픈 속임수는 오래 못 간다. */
-export const CAPABILITY_STEP_DURATION_MULTIPLIER = { surplus: 1.25, standard: 1, strained: 0.5, severe: 0.25 };
 /** Stealth — 서툰 침투는 흔적을 남긴다. severe는 그 자리에서 경계까지 올린다(4단계 파이프라인 재사용). */
 export const CAPABILITY_STEP_LEAVES_STRONG_TRACE = { surplus: false, standard: false, strained: true, severe: true };
 export const CAPABILITY_STEP_RAISES_ALERT = { surplus: false, standard: false, strained: false, severe: true };
@@ -423,10 +449,10 @@ export const PRIZE_PROMOTION_CHANCE_BY_NODE_TYPE = {
 /** @type {{value: 'normal'|'elite', weight: number}[]} */
 export const PRIZE_TIER_WEIGHTS = [{ value: 'normal', weight: 70 }, { value: 'elite', weight: 30 }];
 
-export const SUPPLY_FARM_TIME = 90;
+export const SUPPLY_FARM_TIME = 5;
 export const SUPPLY_FARM_NOISE = 1;
 /** @type {Record<'normal'|'elite', number>} */
-export const PRIZE_FARM_TIME = { normal: 200, elite: 260 };
+export const PRIZE_FARM_TIME = { normal: 10, elite: 13 };
 /** @type {Record<'normal'|'elite', 1|2|3>} */
 export const PRIZE_FARM_NOISE = { normal: 2, elite: 3 };
 // 확보 대상 지점의 역할축. 지점마다 독립적으로 굴리므로 한 구역의 확보 대상이 전부 같은
@@ -450,19 +476,36 @@ export const OVERLOAD_MIN = 0;
 
 // ---- 공통 접근 모드 (§6.1) ----
 
-export const APPROACH_TIME_DELTA = { safe: 40, normal: 0, rush: -40 };
+export const APPROACH_TIME_DELTA = { safe: 2, normal: 0, rush: -2 };
 export const APPROACH_NOISE_DELTA = { safe: -1, normal: 0, rush: 1 };
-export const APPROACH_MIN_TIME = 20;
+export const APPROACH_MIN_TIME = 1;
 
 // ---- 기본 맵 행동 (§6.2) ----
 
-export const BASIC_RECON_TIME = 80;
+export const BASIC_RECON_TIME = 4;
+// 기본 정찰이 관측하는 홉 범위 — 현재 노드 + 1홉 + 2홉. 무료 인접 실시간 관측(1홉)보다 한 홉
+// 더 보는 것이 정찰이 시간을 쓰는 이유다. 확보 대상의 등급·역할축도 이 범위 안에서만 읽힌다.
+export const BASIC_RECON_HOP_RANGE = 2;
+
+// 대기와 조우 회피. 대기는 HP·과부화·경계도를 회복시키지 않는다 — 개방·쿨다운·적 위치를
+// 기다리는 용도다. 묶음 대기는 1칸 대기를 반복하며 새 조우·출구 개방/폐쇄·붕괴에서 즉시 멈춘다.
+export const WAIT_TICK_TIME = 1;
+export const WAIT_BATCH_MAX_TICKS = 5;
+// 회피에 시간이 들지 않으면 같은 위협의 추적을 무한히 공짜로 끊을 수 있다.
+export const ENCOUNTER_EVADE_TIME = 1;
+
+// ---- 전투 라운드 정산 (planned §8) ----
+
+/** 전투 1라운드(플레이어 행동 구간 + 적 반응)에 드는 맵 칸. 적 수나 카드 수로 늘어나지 않는다. */
+export const COMBAT_ROUND_TIME_COST = 3;
+/** 적 기습으로 생기는 추가 선공 구간. 라운드 비용과 별도로 한 번 청구된다. */
+export const COMBAT_ENEMY_AMBUSH_TIME_COST = 3;
 
 // ---- Capability 행동표 tier 1 (§6.3) — MVP는 tier 1 접근만 구현한다. 더 높은 tier(예: Force
 // 2~4의 바리케이드 파괴·구조물 붕괴)는 이후 단계 과제로 남긴다.
-export const FORCE_TIER1_TIME = 100;
+export const FORCE_TIER1_TIME = 5;
 export const FORCE_BASE_NOISE = 2; // §6.3 "Force 기본 소음은 2와 흔적이다."
-export const HACKING_TIER1_TIME = 80;
+export const HACKING_TIER1_TIME = 4;
 export const HACKING_BASE_NOISE = 0;
 // §8.2 "Hacking 1/2/3/4 신속 접근 +3/+6/+9/+12" — MVP는 tier 1의 +3만 사용한다.
 export const HACKING_TIER1_OVERLOAD_GAIN = 3;

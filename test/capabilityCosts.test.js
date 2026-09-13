@@ -5,8 +5,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { capabilityStep, resolveCapabilityCost } from '../src/engine/capabilityCosts.js';
 import {
-  CAPABILITY_STEP_TIME_MULTIPLIER, CAPABILITY_STEP_HP_COST,
-  CAPABILITY_STEP_OVERLOAD_DELTA, CAPABILITY_STEP_DURATION_MULTIPLIER,
+  CAPABILITY_STEP_TIME_DELTA, CAPABILITY_MIN_TIME, CAPABILITY_STEP_HP_COST,
+  CAPABILITY_STEP_OVERLOAD_DELTA, FALSE_BROADCAST_DURATION_BY_STEP, APPROACH_TIME_DELTA,
 } from '../src/data/facilityLayout.js';
 import { CAPABILITY_MIN, CAPABILITY_MAX } from '../src/data/facilityEquipmentCapabilities.js';
 
@@ -129,7 +129,7 @@ test('mobility pays in HP on top of time, and perception pays in time alone', ()
   assert.equal(resolveCapabilityCost('mobility', 1, 1, base).hpCost, 0, '표준이면 몸은 안 상한다');
 
   const perception = resolveCapabilityCost('perception', 0, 1, base);
-  assert.equal(perception.timeCost, Math.round(80 * CAPABILITY_STEP_TIME_MULTIPLIER.strained));
+  assert.equal(perception.timeCost, 80 + CAPABILITY_STEP_TIME_DELTA.strained);
   assert.equal(perception.hpCost, 0);
   assert.equal(perception.noise, 0);
   assert.equal(perception.overload, 0);
@@ -138,43 +138,85 @@ test('mobility pays in HP on top of time, and perception pays in time alone', ()
   assert.equal(perception.raisesAlert, false);
 });
 
-test('deception pays by shortening the effect, and duration stays null when the action has none', () => {
-  const base = { time: 40, duration: 200 };
-  assert.equal(resolveCapabilityCost('deception', 1, 1, base).duration, 200);
-  assert.equal(resolveCapabilityCost('deception', 0, 1, base).duration, 100, 'strained는 절반');
-  assert.equal(resolveCapabilityCost('deception', 0, 2, base).duration, 50, 'severe는 4분의 1');
-  assert.equal(
-    resolveCapabilityCost('deception', 2, 1, base).durationMultiplier,
-    CAPABILITY_STEP_DURATION_MULTIPLIER.surplus,
-  );
+test('deception pays by shortening the effect, read straight off the fixed per-step table', () => {
+  // 지속도 시간이라 배율이 아니라 단계별 고정 칸 표다(ADR-0075) — 곱셈이 끼면 같은 단계가
+  // 기본값마다 다른 반올림 값으로 갈라져 "몇 칸 버티나"를 뺄셈으로 읽을 수 없다.
+  const base = { time: 40, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP };
+  assert.equal(resolveCapabilityCost('deception', 2, 1, base).duration, 19, '여유');
+  assert.equal(resolveCapabilityCost('deception', 1, 1, base).duration, 15, '적정이 기본값이다');
+  assert.equal(resolveCapabilityCost('deception', 0, 1, base).duration, 8, '부족');
+  assert.equal(resolveCapabilityCost('deception', 0, 2, base).duration, 4, '크게 부족');
 
   // 지속 개념이 없는 행동에 0을 주면 "지속 0"으로 오해할 수 있으므로 null이다.
   assert.equal(resolveCapabilityCost('deception', 0, 1, { time: 40 }).duration, null);
-  assert.equal(resolveCapabilityCost('force', 0, 1, base).durationMultiplier, 1, '자기 통화가 아니면 배수는 중립이다');
-  assert.equal(resolveCapabilityCost('force', 0, 1, base).duration, 200);
+  // 자기 통화가 아니면 다른 대가처럼 표준값이 단계와 무관하게 그대로 통과한다.
+  assert.equal(resolveCapabilityCost('force', 0, 1, base).duration, FALSE_BROADCAST_DURATION_BY_STEP.standard);
 });
 
 test('surplus is genuinely cheaper than standard in both time and the own currency', () => {
-  const base = { time: 100, noise: 2, overload: 10, duration: 200 };
+  const base = { time: 100, noise: 2, overload: 10, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP };
 
   const standardTime = resolveCapabilityCost('perception', 2, 2, base).timeCost;
   const surplusTime = resolveCapabilityCost('perception', 3, 2, base).timeCost;
   assert.ok(surplusTime < standardTime, `${surplusTime} < ${standardTime}`);
-  assert.equal(surplusTime, Math.round(100 * CAPABILITY_STEP_TIME_MULTIPLIER.surplus));
+  assert.equal(surplusTime, 100 + CAPABILITY_STEP_TIME_DELTA.surplus);
 
   assert.ok(resolveCapabilityCost('force', 3, 2, base).noise < resolveCapabilityCost('force', 2, 2, base).noise);
   assert.ok(resolveCapabilityCost('hacking', 3, 2, base).overload < resolveCapabilityCost('hacking', 2, 2, base).overload);
   assert.ok(resolveCapabilityCost('deception', 3, 2, base).duration > resolveCapabilityCost('deception', 2, 2, base).duration);
 });
 
-test('time is a rounded integer for every kind and step', () => {
+test('the step charges a fixed number of ticks, the same count regardless of the base cost', () => {
+  // 배율이면 같은 단계가 기본 비용마다 다른 값을 물린다. 가감이므로 33이든 4든 부족은 +2다.
+  for (const baseTime of [4, 33]) {
+    const at = (value, required) => resolveCapabilityCost('perception', value, required, { time: baseTime }).timeCost;
+    assert.equal(at(2, 1) - baseTime, CAPABILITY_STEP_TIME_DELTA.surplus);
+    assert.equal(at(1, 1) - baseTime, CAPABILITY_STEP_TIME_DELTA.standard);
+    assert.equal(at(0, 1) - baseTime, CAPABILITY_STEP_TIME_DELTA.strained);
+    assert.equal(at(0, 2) - baseTime, CAPABILITY_STEP_TIME_DELTA.severe);
+  }
+
+  // 기본 4칸 행동은 여유 3 / 적정 4 / 부족 6 / 크게 부족 8칸이다.
+  assert.deepEqual(
+    [[2, 1], [1, 1], [0, 1], [0, 2]].map(([a, r]) => resolveCapabilityCost('hacking', a, r, { time: 4 }).timeCost),
+    [3, 4, 6, 8],
+  );
+
   for (const kind of ['perception', 'stealth', 'hacking', 'mobility', 'force', 'deception']) {
     for (const value of [5, 4, 3, 2, 1]) {
       const { timeCost } = resolveCapabilityCost(kind, value, 3, { time: 33 });
       assert.ok(Number.isInteger(timeCost), `${kind}/${value} -> ${timeCost}`);
     }
   }
-  assert.equal(resolveCapabilityCost('perception', 0, 1, { time: 33 }).timeCost, 46); // 33 * 1.4 = 46.2
+});
+
+test('the floor is one tick — surplus never makes a paid action free', () => {
+  // 0칸이면 무료 조작과 구분이 사라져 "시간 없는 반복"이 열린다.
+  assert.equal(resolveCapabilityCost('hacking', 4, 1, { time: 1 }).timeCost, CAPABILITY_MIN_TIME);
+  assert.equal(resolveCapabilityCost('hacking', 4, 1, { time: 1, timeDelta: APPROACH_TIME_DELTA.rush }).timeCost, CAPABILITY_MIN_TIME);
+  // 시간을 아예 안 쓰는 행동은 0 그대로다 — 하한은 유료 행동에만 건다.
+  assert.equal(resolveCapabilityCost('hacking', 4, 1, {}).timeCost, 0);
+});
+
+test('the access delta lands after the step delta, so rush and strained cancel instead of clipping', () => {
+  // 접근 가감을 먼저 잘라 버리면 강행(-2)이 하한에 걸려 사라지고 뒤이은 부족(+2)만 남아,
+  // 같은 조합이 적용 순서에 따라 다른 값이 된다.
+  assert.equal(resolveCapabilityCost('force', 0, 1, { time: 2, timeDelta: APPROACH_TIME_DELTA.rush }).timeCost, 2);
+  assert.equal(resolveCapabilityCost('force', 1, 1, { time: 2, timeDelta: APPROACH_TIME_DELTA.safe }).timeCost, 4);
+
+  // 기본 4칸 문 열기 — 여유+강행 1칸, 부족+안전 8칸.
+  assert.equal(resolveCapabilityCost('hacking', 2, 1, { time: 4, timeDelta: APPROACH_TIME_DELTA.rush }).timeCost, 1);
+  assert.equal(resolveCapabilityCost('hacking', 0, 1, { time: 4, timeDelta: APPROACH_TIME_DELTA.safe }).timeCost, 8);
+});
+
+test('an action with its own time rule does not take the step delta on top of it', () => {
+  // 이동(Mobility 가감)과 흔적 정리(Perception 전용표)는 이미 수치별 표를 갖는다. 층계를 또
+  // 얹으면 같은 Capability 수치에 대가를 두 번 물린다.
+  for (const [value, required] of [[2, 1], [1, 1], [0, 1], [0, 2]]) {
+    assert.equal(resolveCapabilityCost('perception', value, required, { time: 14, dedicatedTimeRule: true }).timeCost, 14);
+  }
+  // 그래도 불가 판정은 층계가 그대로 맡는다.
+  assert.equal(resolveCapabilityCost('perception', -2, 1, { time: 14, dedicatedTimeRule: true }).step, 'impossible');
 });
 
 test('noise is clamped into the 0..3 band the noise pipeline understands', () => {
@@ -184,14 +226,13 @@ test('noise is clamped into the 0..3 band the noise pipeline understands', () =>
 
 test('impossible returns the step instead of throwing, and charges nothing', () => {
   let cost;
-  assert.doesNotThrow(() => { cost = resolveCapabilityCost('hacking', 0, 3, { time: 100, overload: 10, duration: 200 }); });
+  assert.doesNotThrow(() => { cost = resolveCapabilityCost('hacking', 0, 3, { time: 100, overload: 10, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP }); });
   assert.equal(cost.step, 'impossible');
   assert.equal(cost.timeCost, 0);
   assert.equal(cost.noise, 0);
   assert.equal(cost.overload, 0);
   assert.equal(cost.hpCost, 0);
   assert.equal(cost.durabilityLoss, 0);
-  assert.equal(cost.durationMultiplier, 1, '배수만은 중립값 1이다 — 0이면 호출부가 곱했을 때 의미가 뒤집힌다');
   assert.equal(cost.duration, null);
   assert.equal(cost.leavesStrongTrace, false);
   assert.equal(cost.raisesAlert, false);
@@ -206,7 +247,7 @@ test('an unknown capability kind throws instead of quietly costing nothing', () 
 });
 
 test('the caller\'s base object is never mutated', () => {
-  const base = { time: 100, noise: 2, overload: 10, duration: 200 };
+  const base = { time: 100, noise: 2, overload: 10, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP };
   const snapshot = { ...base };
   for (const kind of ['perception', 'stealth', 'hacking', 'mobility', 'force', 'deception']) {
     for (const value of [4, 3, 2, 1, 0]) resolveCapabilityCost(kind, value, 3, base);

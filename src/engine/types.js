@@ -111,7 +111,14 @@
  * @property {'A'|'B'|'key'} exitId
  * @property {string} nodeId
  * @property {FacilitySectorId} sectorId
- * @property {number} weightedDistanceFromStart Mobility 0 기준.
+ */
+
+/**
+ * @typedef {Object} ExitPlacementMeta 출구 배치가 어떻게 정해졌는지 (ADR-0076).
+ * @property {number} abDistance 완성 그래프에서 A와 B 사이 거리(칸) — Capability 0이 아무것도 열지
+ *   않고 걸을 수 있는 간선만, 두 방향 중 짧은 쪽.
+ * @property {boolean} relaxed 재배치 상한 안에서 EXIT_AB_MIN_DISTANCE를 못 지켜 가장 먼 후보 쌍으로
+ *   물러난 시드인가.
  */
 
 /**
@@ -152,6 +159,7 @@
  * @property {FacilityEdge[]} edges
  * @property {string} startNodeId
  * @property {ExitPlacement[]} exits A/B/key 순서 무관, 3개.
+ * @property {ExitPlacementMeta} exitPlacement
  * @property {SectorLandmark[]} landmarks
  * @property {Opportunity[]} opportunities
  * @property {Record<string, 1|2|3>} concealmentByNodeId 은엄폐가 있는 노드만 담는다(없으면 항목 자체가 없음).
@@ -263,7 +271,7 @@
  * @property {number} overload 0..100+ (100 초과는 전투 상태이상 카드로 처리한다).
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
- * @property {Record<string, {observedAt: number, hasThreat: boolean, exitStatus?: string}>} observations 기본 정찰(§6.2) 및
+ * @property {Record<string, {observedAt: number, hasThreat: boolean, exitStatus?: string, concealment?: 1|2|3, opportunityGrades?: Record<string, {tier: 'normal'|'elite', axis: string}>}>} observations 기본 정찰(§6.2) 및
  *   현재/인접 노드 자동 갱신(§10.2 — gameReducer.js가 매 행동 끝에 기록) 결과. 시야 밖으로 벗어나도
  *   지워지지 않고 "마지막으로 확인한 정보"로 남는다.
  * @property {Record<string, number>} fieldCooldowns instanceId -> readyAt (능동 현장 효과, §11.1).
@@ -273,6 +281,9 @@
  * @property {string[]} hackedInterfaceIds Access interfaces already taken over by the player.
  * @property {string[]} disabledGeneratorIds
  * @property {{source: 'basic'|'camera', sourceNodeId: string, targetNodeIds: string[], expiresAt: number|null}|null} activeRecon
+ * @property {number|null} lastWaitEndedAt 마지막 대기가 끝난 시각. null이 아니면 인접 노드의 무료
+ *   실시간 관측이 끊긴 상태이며(대기 중에는 주변을 살피지 않는다), 다음 유료 행동이 끝나면 null로
+ *   돌아간다. 화면의 fresh/stale 판정과 refreshLocalObservations가 같이 읽는다.
  * @property {{cameraId: string, nodeId: string, detectedAt: number}|null} lastCameraDetection
  * @property {{kind: 'farm', nodeId: string, opportunityId: string, status: 'completed'|'ambushed', completedAt: number, loot?: {kind: string, equipmentId?: string, defId?: string, value?: number, amount?: number}|null}|null} lastActionResult
  * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
@@ -297,6 +308,29 @@
  *   반영되지 않은 몫. HP는 facilityRunState 바깥이라 여기 쌓아두고 facilityReducer가 정산한다.
  * @property {number} pendingDurabilityLoss 같은 이유로 쌓아두는 장비 내구도 대가.
  *   3개(§5단계, D11). 고르기 전에는 아무것도 인벤토리에 들어오지 않는다.
+ * @property {PendingTask|null} pendingTask 예약해 둔 현장 작업. 시작 시점에는 아무 효과도 없고,
+ *   `completesAt` 칸 경계에서 종류별 완료 적용이 한 번에 확정된다.
+ * @property {{kind: string, status: 'completed'|'interrupted', reason: 'threatContact'|'collapsed'|null, startedAt: number, completedAt: number}|null} lastTaskOutcome
+ *   방금 끝난 작업이 완료됐는지 중단됐는지. 인벤토리를 만지는 호출부(파밍 보상, 계약 물건,
+ *   장비 교체)가 이 값으로 "줄지 말지"를 가른다.
+ * @property {string|null} engagedThreatId 전투 중인 위협 — 그 전투가 끝날 때까지 맵에서 멈춘다.
+ * @property {{requested: number, elapsed: number, reason: 'encounter'|'exitChange'|'runEnded'|'blocked'|null, completedAt: number}|null} [lastWaitBatch]
+ *   방금 끝난 묶음 대기가 몇 칸을 요청해 몇 칸을 실제로 썼고 왜 멈췄는지. 요청한 만큼 다 흘렀으면
+ *   말할 것이 없으므로 화면은 모자랄 때만 읽는다.
+ */
+
+/**
+ * 예약된 현장 작업. `params`는 종류마다 다른 완료 적용 파라미터이고, `cost`는 Capability
+ * 층계가 정한 대가 중 완료 시각에 확정될 몫이다.
+ * @typedef {Object} PendingTask
+ * @property {string} kind
+ * @property {string|null} nodeId 소음·흔적이 남고 완료 효과가 적용되는 자리.
+ * @property {Partial<import('./capabilityCosts.js').CapabilityCost>|null} cost
+ * @property {Record<string, any>} params 종류마다 모양이 다르므로 읽는 자리에서 좁힌다.
+ * @property {number} startedAt
+ * @property {number} completesAt
+ * @property {string[]} ignoredThreatIds 시작 시점에 이미 같은 노드에 있던 위협 — 새 접촉이
+ *   아니므로 이 작업을 중단시키지 않는다(그 조우는 이미 열려 있다).
  */
 
 /**
@@ -589,6 +623,8 @@
  * @property {number} ammoAtStart
  * @property {number} noiseGauge 전투 소음 게이지(0~9) — 카드를 낼 때마다 즉시 채워지고, 10 도달 시 발생·리셋.
  * @property {0|1|2|3} noiseIntensity 이번 전투에서 마지막으로 발생시킨 소음 강도(1→2→3, 3에서 유지).
+ * @property {boolean} roundSettled 지금 라운드의 맵 칸을 이미 청구했는지 — 턴 종료 처리 중에
+ *   승리가 확정돼도 종료 처리와 승리 처리가 이중 청구하지 않게 막는다.
  * @property {DisengageContext} disengage
  */
 

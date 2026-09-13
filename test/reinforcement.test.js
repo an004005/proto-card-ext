@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState, advanceTime, disposeCorpse } from '../src/engine/runEngine.js';
 import {
-  REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, THREAT_COUNT_BY_SECTOR, WORLD_TICK_INTERVAL,
+  REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, THREAT_COUNT_BY_SECTOR, 
 } from '../src/data/facilityLayout.js';
 
 function makeRun(seed = 1) {
@@ -36,7 +36,7 @@ test('a threat that walks onto a corpse reports it: the sector alert rises, an i
   }, threat.id, target);
 
   assert.equal(state.sectorAlerts[sectorId].level, 0);
-  const after = advanceTime(state, state.time + WORLD_TICK_INTERVAL);
+  const after = advanceTime(state, state.time + 1);
 
   assert.equal(after.corpses.length, 0, '신고된 시체는 사라진다');
   assert.equal(after.sectorAlerts[sectorId].level, 1, '시체 발견은 그 구역 경계도를 올린다');
@@ -54,7 +54,7 @@ test('a weak trace only draws an investigation; only a strong trace raises the a
     playerNodeId: null,
     evidence: [{ id: 'e1', nodeId: target, tier: 1, createdBySectorId: sectorId }],
   }, threat.id, target);
-  const afterWeak = advanceTime(withWeak, withWeak.time + WORLD_TICK_INTERVAL);
+  const afterWeak = advanceTime(withWeak, withWeak.time + 1);
   assert.equal(afterWeak.evidence.length, 0, '발견한 흔적은 지워진다');
   assert.equal(afterWeak.sectorAlerts[sectorId].level, 0, '약한 흔적은 경계도를 올리지 않는다');
   assert.ok(afterWeak.noiseEvents.some((e) => e.sourceNodeId === target), '대신 조사를 끌어온다');
@@ -64,7 +64,7 @@ test('a weak trace only draws an investigation; only a strong trace raises the a
     playerNodeId: null,
     evidence: [{ id: 'e2', nodeId: target, tier: 2, createdBySectorId: sectorId }],
   }, threat.id, target);
-  const afterStrong = advanceTime(withStrong, withStrong.time + WORLD_TICK_INTERVAL);
+  const afterStrong = advanceTime(withStrong, withStrong.time + 1);
   assert.equal(afterStrong.sectorAlerts[sectorId].level, 1, '강한 흔적은 경계도를 올린다');
 });
 
@@ -88,7 +88,7 @@ test('reinforcement refills a killed marker at a gateway, and never exceeds the 
   assert.equal(roster.length, THREAT_COUNT_BY_SECTOR[sectorId]);
 
   // 정원이 찬 상태에서는 교대 시각이 와도 아무도 늘지 않는다.
-  const full = advanceTime(base, REINFORCEMENT_INTERVAL + WORLD_TICK_INTERVAL);
+  const full = advanceTime(base, REINFORCEMENT_INTERVAL + 1);
   const liveFull = Object.values(full.threats).filter((t) => t.sectorId === sectorId).length;
   assert.equal(liveFull, roster.length, '정원을 넘겨 증식하지 않는다');
 
@@ -99,7 +99,7 @@ test('reinforcement refills a killed marker at a gateway, and never exceeds the 
   const killed = { ...base, threats };
   assert.equal(Object.values(killed.threats).filter((t) => t.sectorId === sectorId).length, roster.length - 1);
 
-  const refilled = advanceTime(killed, REINFORCEMENT_INTERVAL + WORLD_TICK_INTERVAL);
+  const refilled = advanceTime(killed, REINFORCEMENT_INTERVAL + 1);
   const back = refilled.threats[killedId];
   assert.ok(back, '비워진 로스터 자리는 다시 채워진다');
   const gatewayIds = refilled.graph.nodes.filter((n) => n.sectorId === sectorId && n.isGateway).map((n) => n.id);
@@ -118,7 +118,7 @@ test('reinforcement never spawns onto the player, even when they are standing on
   for (const t of roster) delete threats[t.id];
   for (const gateway of gateways) {
     const state = { ...base, threats, playerNodeId: gateway.id };
-    const after = advanceTime(state, REINFORCEMENT_INTERVAL + WORLD_TICK_INTERVAL);
+    const after = advanceTime(state, REINFORCEMENT_INTERVAL + 1);
     const spawnedHere = Object.values(after.threats).filter((t) => t.nodeId === gateway.id && t.sectorId === sectorId);
     assert.equal(spawnedHere.length, 0, `${gateway.id}에 서 있는데 그 자리로 증원이 나왔다`);
   }
@@ -132,7 +132,7 @@ test('a rising alert pulls that sector’s next reinforcement forward', () => {
   delete threats[roster[0].id];
 
   // 경계도가 오르기 전에는 교대 시각이 그대로다.
-  const quiet = advanceTime({ ...base, threats }, WORLD_TICK_INTERVAL);
+  const quiet = advanceTime({ ...base, threats }, 1);
   assert.equal(quiet.reinforcements[sectorId].nextAt, REINFORCEMENT_INTERVAL);
   assert.ok(!quiet.threats[roster[0].id], '아직 채워지지 않았다');
 
@@ -142,6 +142,6 @@ test('a rising alert pulls that sector’s next reinforcement forward', () => {
     threats,
     sectorAlerts: { ...base.sectorAlerts, [sectorId]: { level: 1, resolvedEventIds: ['cause'] } },
   };
-  const after = advanceTime(escalated, WORLD_TICK_INTERVAL);
+  const after = advanceTime(escalated, 1);
   assert.ok(after.threats[roster[0].id], '경계도 상승이 증원을 앞당긴다');
 });

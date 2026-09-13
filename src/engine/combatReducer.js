@@ -17,7 +17,60 @@ import { addItem, removeItem, isItemBurdenGivenOrder, getUsableAmmo, spendAmmo }
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { BURDEN_CARD_DEF_BY_KIND, CARD_DEFINITIONS } from '../data/cards.js';
 import { startReward } from './rewardReducer.js';
-import { GENERATOR_COMBAT_START_ARMOR } from '../data/facilityLayout.js';
+import { GENERATOR_COMBAT_START_ARMOR, COMBAT_ENEMY_AMBUSH_TIME_COST } from '../data/facilityLayout.js';
+
+/**
+ * planned §8 전투 라운드 정산 — 이 라운드의 맵 칸을 아직 청구하지 않았을 때만 한 번 청구한다.
+ *
+ * 라운드별 정산 여부(`combatContext.roundSettled`)를 들고 있어야 "턴 종료 처리 중에 승리"가
+ * 종료 처리와 승리 처리에서 두 번 청구되지 않는다. 첫 라운드에 끝나도 3칸이고, 세 번째에
+ * 끝나면 총 9칸이다. 카드 사용·전투 소모품·이탈 선택에는 별도 비용이 없다 — 전부 그 라운드의
+ * 3칸에 포함된다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+function settleCombatRound(snapshot) {
+  const ctx = snapshot.combatContext;
+  if (!ctx || ctx.roundSettled || !snapshot.facilityRunState) return snapshot;
+  const facilityRunState = refreshLocalObservations(applyCombatRoundTimeToRunState(snapshot.facilityRunState));
+  return { ...snapshot, facilityRunState, combatContext: { ...ctx, roundSettled: true } };
+}
+
+/**
+ * 전투가 끝나 맵으로 돌아갈 때 교전 표시를 지운다 — 그 위협이 다시 맵에서 움직일 수 있게.
+ * @template {import('./types.js').FacilityRunState|null|undefined} T
+ * @param {T} run
+ * @returns {T}
+ */
+function releaseEngagement(run) {
+  return run && run.engagedThreatId ? { ...run, engagedThreatId: null } : run;
+}
+
+/**
+ * 전투 정산이 런을 끝냈으면(붕괴) 전투 결과와 무관하게 그 자리에서 런이 끝난다. 라운드 정산은
+ * 맵 시간을 밀기 때문에 승패가 아직 나지 않은 라운드에서도 붕괴 시각을 넘길 수 있다 — 그때
+ * 전투 화면에 남아 있으면 이미 끝난 런에서 계속 카드를 내게 된다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+function endRunIfCollapsed(snapshot) {
+  const run = snapshot.facilityRunState;
+  if (!run || run.phase === 'active') return snapshot;
+  // finalizeIfCombatEnded가 이미 정리한 뒤라면 건드릴 것이 없다.
+  if (!snapshot.activeCombatState && !snapshot.combatContext) return snapshot;
+  const combat = snapshot.activeCombatState;
+  const playerState = combat
+    ? { ...snapshot.playerState, hp: combat.player.hp, overload: combat.overload }
+    : snapshot.playerState;
+  return {
+    ...snapshot,
+    playerState,
+    activeCombatState: null,
+    combatContext: null,
+    currentScreen: /** @type {const} */ ('gameOver'),
+    facilityRunState: releaseEngagement(run),
+  };
+}
 
 /** @typedef {import('./types.js').GameSnapshot} GameSnapshot */
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -96,13 +149,30 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
     combat = { ...combat, enemies: combat.enemies.map((e) => ({ ...e, statuses: applyStatus(e.statuses, 'stun', 1) })) };
   }
   combat = context.ambush === 'enemy' ? beginEnemyFirst(combat) : beginPlayerFirst(combat);
-  return {
-    ...snapshot, activeCombatState: combat, currentScreen: 'combat', rngState: combat.rngState,
+
+  // 교전에 들어간 위협은 전투가 끝날 때까지 맵에서 멈춘다. 외부 위협은 계속 움직이지만,
+  // 도착해도 현재 전투에 끼어들지 않고 종료 후 조우로 처리된다(planned §8).
+  let facilityRunState = snapshot.facilityRunState
+    ? { ...snapshot.facilityRunState, engagedThreatId: context.threatId || null }
+    : snapshot.facilityRunState;
+  // 적 기습으로 생기는 추가 선공 구간은 라운드와 별도로 3칸이다. 플레이어 기습의 스턴은 적
+  // 행동을 막을 뿐 라운드 시간을 줄이지 않으므로 여기에 대응하는 할인이 없다.
+  if (context.ambush === 'enemy' && facilityRunState) {
+    facilityRunState = refreshLocalObservations(applyCombatRoundTimeToRunState(facilityRunState, COMBAT_ENEMY_AMBUSH_TIME_COST));
+  }
+  /** @type {GameSnapshot} */
+  const started = {
+    ...snapshot, activeCombatState: combat, currentScreen: 'combat', rngState: combat.rngState, facilityRunState,
     combatContext: {
-      ...context, ammoAtStart: usableAmmo, noiseGauge: 0, noiseIntensity: 0,
+      ...context, ammoAtStart: usableAmmo, noiseGauge: 0, noiseIntensity: 0, roundSettled: false,
       disengage: { escapeIntent: false, disengageProgress: 0 },
     },
   };
+  // 기습 정산 도중 붕괴에 걸릴 수 있다 — 전투를 시작하기 전에 런이 끝난다.
+  if (facilityRunState && facilityRunState.phase !== 'active') {
+    return { ...started, activeCombatState: null, combatContext: null, currentScreen: 'gameOver', facilityRunState: releaseEngagement(facilityRunState) };
+  }
+  return started;
 }
 
 /**
@@ -128,15 +198,19 @@ export function playCardCommand(snapshot, instanceId, targetId) {
     combatContext = { ...combatContext, noiseGauge: noise.gauge, noiseIntensity: noise.intensity };
     if (mapTags.disengageProgress) combatContext = { ...combatContext, disengage: addDisengageProgress(combatContext.disengage, mapTags.disengageProgress) };
   }
-  return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, combatContext, facilityRunState });
+  return endRunIfCollapsed(finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, combatContext, facilityRunState }));
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function endTurnCommand(snapshot) {
   if (!snapshot.activeCombatState || !snapshot.combatContext || !snapshot.facilityRunState) return snapshot;
   const combat = advanceTurn(snapshot.activeCombatState);
-  const facilityRunState = refreshLocalObservations(applyCombatRoundTimeToRunState(snapshot.facilityRunState));
-  return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, facilityRunState });
+  // 턴 종료 처리가 곧 이 라운드의 끝이다 — 여기서 한 번 정산하고, 전투가 이어지면 새 라운드를
+  // 미정산으로 연다. 종료 처리 도중 승리했더라도 아래 finalize가 다시 청구하지 않는다.
+  let s = settleCombatRound({ ...snapshot, activeCombatState: combat });
+  s = endRunIfCollapsed(finalizeIfCombatEnded(s));
+  if (!s.combatContext || !s.activeCombatState) return s;
+  return { ...s, combatContext: { ...s.combatContext, roundSettled: false } };
 }
 
 /**
@@ -176,11 +250,31 @@ export function useConsumable(snapshot, itemId) {
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function finalizeIfCombatEnded(snapshot) {
-  const combat = snapshot.activeCombatState;
+  let combat = snapshot.activeCombatState;
   if (!combat || (combat.phase !== 'victory' && combat.phase !== 'defeat')) return snapshot;
 
+  // 라운드 도중 승리·패배가 확정돼도 그 라운드는 3칸이다(planned §8). 턴 종료 경로에서 이미
+  // 정산했으면 roundSettled가 막아준다 — 이중 청구가 없다.
+  snapshot = settleCombatRound(snapshot);
+  // settleCombatRound는 맵 시간만 건드린다 — 전투 상태는 방금 확인한 그대로다.
+  combat = /** @type {import('./types.js').CombatState} */ (snapshot.activeCombatState);
+
   if (combat.phase === 'defeat') {
-    return { ...snapshot, activeCombatState: null, currentScreen: 'gameOver', combatContext: null };
+    return {
+      ...snapshot, activeCombatState: null, currentScreen: 'gameOver', combatContext: null,
+      facilityRunState: releaseEngagement(snapshot.facilityRunState),
+    };
+  }
+
+  // 정산 도중 붕괴 시각을 넘겼으면 승리했더라도 붕괴 실패가 우선한다. 보상 창·연출 시간은
+  // 따로 청구하지 않으므로, 여기서 살아남았다면 보상은 온전히 받는다.
+  if (snapshot.facilityRunState && snapshot.facilityRunState.phase !== 'active') {
+    return {
+      ...snapshot,
+      playerState: { ...snapshot.playerState, hp: combat.player.hp, overload: combat.overload },
+      activeCombatState: null, currentScreen: 'gameOver', combatContext: null,
+      facilityRunState: releaseEngagement(snapshot.facilityRunState),
+    };
   }
 
   const ps = snapshot.playerState;
@@ -227,6 +321,7 @@ export function finalizeIfCombatEnded(snapshot) {
       : facilityRunState.corpses;
     facilityRunState = { ...facilityRunState, threats, corpses };
   }
+  facilityRunState = releaseEngagement(facilityRunState);
 
   const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, inventory, loadout: decayResult.loadout };
   const s = { ...snapshot, playerState, activeCombatState: null, combatSummary, combatContext: null, facilityRunState };
@@ -254,6 +349,13 @@ export function resolveDisengageCommand(snapshot) {
   const combat = snapshot.activeCombatState;
   const context = snapshot.combatContext;
   if (!combat || !context || !canDisengage(context.disengage)) return snapshot;
-  const playerState = { ...snapshot.playerState, hp: combat.player.hp, overload: combat.overload };
-  return { ...snapshot, playerState, activeCombatState: null, combatContext: null, currentScreen: 'map' };
+  // 이탈 확정에도 별도 맵 비용은 없다 — 다만 이탈한 그 라운드는 아직 정산되지 않았다면 3칸이다.
+  const settled = settleCombatRound(snapshot);
+  const playerState = { ...settled.playerState, hp: combat.player.hp, overload: combat.overload };
+  const facilityRunState = releaseEngagement(settled.facilityRunState);
+  const collapsed = facilityRunState && facilityRunState.phase !== 'active';
+  return {
+    ...settled, playerState, facilityRunState, activeCombatState: null, combatContext: null,
+    currentScreen: collapsed ? 'gameOver' : 'map',
+  };
 }

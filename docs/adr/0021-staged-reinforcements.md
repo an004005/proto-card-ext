@@ -1,5 +1,5 @@
 ---
-status: amended by implementation spec §9.1
+status: amended by ADR-0075 and implementation spec (90/45칸)
 ---
 
 # 증원 대기 그룹은 전투 중 1~2개체씩 합류한다

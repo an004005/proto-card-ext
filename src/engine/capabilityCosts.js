@@ -5,18 +5,21 @@
 // 선택지가 된다.
 //
 // 그리고 그 대가를 전부 시간으로 받으면 시간이 다시 단일 통화가 되어 층계가 의미를 잃는다.
-// 그래서 Capability마다 자기 통화가 따로 있고(아래 CAPABILITY_CURRENCIES), 시간 배수만 공통이다.
+// 그래서 Capability마다 자기 통화가 따로 있고(아래 CAPABILITY_CURRENCIES), 시간 가감만 공통이다.
+//
+// 시간은 배율이 아니라 정수 칸 가감으로 받는다(ADR-0075). 배율이면 같은 단계가 기본 비용마다
+// 다른 반올림 값으로 갈라져 "이 행동 동안 적이 몇 번 움직이나"를 뺄셈으로 알 수 없게 된다.
 //
 // 이 모듈은 순수 계산만 한다 — 상태를 건드리지 않고 "무엇을 치러야 하는지"만 돌려준다.
 // 대가마다 반영할 자리가 다르기 때문이다(hpCost는 playerState, 나머지는 facilityRunState).
 
 import {
-  CAPABILITY_STEP_TIME_MULTIPLIER,
+  CAPABILITY_STEP_TIME_DELTA,
+  CAPABILITY_MIN_TIME,
   CAPABILITY_STEP_NOISE_DELTA,
   CAPABILITY_STEP_DURABILITY_LOSS,
   CAPABILITY_STEP_OVERLOAD_DELTA,
   CAPABILITY_STEP_HP_COST,
-  CAPABILITY_STEP_DURATION_MULTIPLIER,
   CAPABILITY_STEP_LEAVES_STRONG_TRACE,
   CAPABILITY_STEP_RAISES_ALERT,
 } from '../data/facilityLayout.js';
@@ -29,26 +32,30 @@ import {
  * @property {number} [time] 표준 소요 시간. 시간은 전 Capability 공통 통화라 대부분 채워진다.
  * @property {number} [noise] 표준 소음 강도(0~3).
  * @property {number} [overload] 표준 과부화 증가량.
- * @property {number} [duration] 표준 효과 지속 시간. Deception 계열에서만 의미가 있다.
+ * @property {Record<string, number>} [durationByStep] 단계별 지속 **고정표**. 지속이 통화인
+ *   행동(현재는 Deception 가짜 목표 송출)만 넘긴다. 배율을 곱하지 않고 이 표를 조회한다.
+ * @property {number} [timeDelta] 층계 밖의 칸 가감(공통 접근 모드의 안전 +2 / 강행 -2).
+ *   층계 가감 뒤, 최소 1칸 클램프 전에 더한다.
+ * @property {boolean} [dedicatedTimeRule] 전용 시간 규칙을 가진 행동(이동의 Mobility 가감,
+ *   흔적 정리의 Perception 전용표)은 층계 시간 가감을 중복으로 받지 않는다.
  */
 
 /**
  * @typedef {object} CapabilityCost
  * @property {CapabilityStep} step
- * @property {number} timeCost 반올림한 정수 시간.
+ * @property {number} timeCost 정수 칸.
  * @property {number} noise 0~3으로 clamp된 소음 강도. 0은 무음이다.
  * @property {number} overload 과부화 증감. 음수면 오히려 부하가 내려간다(surplus).
  * @property {number} hpCost 차감할 HP. playerState 쪽이라 호출부가 따로 반영한다.
  * @property {number} durabilityLoss 깎일 장비 내구도.
- * @property {number} durationMultiplier 효과 지속 배수.
- * @property {number|null} duration base.duration이 있을 때만 계산된 실제 지속 시간.
+ * @property {number|null} duration base.durationByStep가 있을 때만 조회된 실제 지속 칸.
  * @property {boolean} leavesStrongTrace 남기는 흔적이 tier 2가 되는가.
  * @property {boolean} raisesAlert 그 자리에서 구역 경계도를 올리는가.
  */
 
 /**
  * Capability별로 "자기 통화만" 받는다. 여기 없는 통화는 그 Capability의 부족분으로 청구되지
- * 않으며(시간 배수만은 공통), base로 들어온 표준 비용은 단계와 무관하게 그대로 통과한다.
+ * 않으며(시간 가감만은 공통), base로 들어온 표준 비용은 단계와 무관하게 그대로 통과한다.
  * 표에 새 항목을 더하기 전에 D8의 의도 — 통화가 겹치면 층계가 다시 시간 하나로 수렴한다 — 를 볼 것.
  * @type {Record<CapabilityKind, {noise?: true, durability?: true, overload?: true, hp?: true, duration?: true, trace?: true, alert?: true}>}
  */
@@ -100,8 +107,6 @@ const NO_COST = /** @type {const} */ ({
   overload: 0,
   hpCost: 0,
   durabilityLoss: 0,
-  // 배수의 중립값은 1이다. 0을 두면 호출부가 곱했을 때 "지속 0"이 되어 의미가 뒤집힌다.
-  durationMultiplier: 1,
   duration: null,
   leavesStrongTrace: false,
   raisesAlert: false,
@@ -144,18 +149,25 @@ export function resolveCapabilityCost(capabilityKind, effectiveValue, required =
   // 과부화는 clamp하지 않는다. surplus의 음수는 "부하를 오히려 덜어낸다"는 뜻이고, 게이지 하한
   // 처리는 과부화를 보관하는 쪽의 몫이다.
   const overload = currencies.overload ? baseOverload + CAPABILITY_STEP_OVERLOAD_DELTA[step] : baseOverload;
-  const durationMultiplier = currencies.duration ? CAPABILITY_STEP_DURATION_MULTIPLIER[step] : 1;
+  // 지속이 통화인 행동은 단계별 고정표를 조회한다. 표를 안 넘겼으면 지속 개념이 없는 행동이다.
+  // 자기 통화가 아닌 Capability에는 다른 대가와 마찬가지로 표준값(standard)이 그대로 통과한다.
+  const duration = base.durationByStep ? base.durationByStep[currencies.duration ? step : 'standard'] : null;
+
+  // 처리 순서: (자격 확인) -> 기본 비용 -> 층계 가감 -> (지원 행동에만) 접근 가감 -> 최소 1칸.
+  // 중간에 클램프를 끼우면 강행(-2) 뒤 부족(+2)이 서로 상쇄되지 못해 같은 조합이 경로에 따라
+  // 다른 값이 된다 — 그래서 가감을 전부 더한 뒤에 한 번만 자른다.
+  const stepTimeDelta = base.dedicatedTimeRule ? 0 : CAPABILITY_STEP_TIME_DELTA[step];
+  const rawTime = baseTime + stepTimeDelta + (base.timeDelta ?? 0);
 
   return {
     step,
-    timeCost: Math.round(baseTime * CAPABILITY_STEP_TIME_MULTIPLIER[step]),
+    timeCost: baseTime > 0 ? Math.max(CAPABILITY_MIN_TIME, rawTime) : 0,
     noise: clampNoise(noise),
     overload,
     hpCost: currencies.hp ? CAPABILITY_STEP_HP_COST[step] : 0,
     durabilityLoss: currencies.durability ? CAPABILITY_STEP_DURABILITY_LOSS[step] : 0,
-    durationMultiplier,
     // 지속 개념이 없는 행동에 0을 주면 호출부가 "지속 0"으로 오해한다. 없으면 null로 둔다.
-    duration: base.duration == null ? null : Math.round(base.duration * durationMultiplier),
+    duration,
     leavesStrongTrace: currencies.trace ? CAPABILITY_STEP_LEAVES_STRONG_TRACE[step] : false,
     raisesAlert: currencies.alert ? CAPABILITY_STEP_RAISES_ALERT[step] : false,
   };

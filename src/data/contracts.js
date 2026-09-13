@@ -2,7 +2,7 @@
 // facilityLayout.js의 LANDMARKS_BY_SECTOR를 그대로 가리킨다 — 아홉 계약의 시설명이 여덟
 // 랜드마크 이름과 정확히 일치한다(통신동만 파괴·정보 두 계약이 같은 랜드마크를 공유).
 //
-// 수치는 실측 전 1차값이다. EXIT_DISTANCE_RANGES처럼 플레이 후 조정 대상이다.
+// 수치는 실측 전 1차값이며 플레이테스트 후 조정 대상이다.
 
 /** @typedef {'retrieval'|'destroy'|'intel'} ContractType */
 

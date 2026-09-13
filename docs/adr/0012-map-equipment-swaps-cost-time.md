@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §6.2
+status: amended by ADR-0075 and implementation spec (3칸)
 ---
 
 # 런 중 장비 스왑은 5 시간 포인트를 소비한다

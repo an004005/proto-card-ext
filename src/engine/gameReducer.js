@@ -18,7 +18,7 @@ import {
   useMapConsumableCommand,
   acquireContractGoodsCommand, destroyContractTargetCommand, acquireContractIntelCommand, transmitContractIntelCommand,
   disposeCorpseCommand, cleanTracesCommand, cutPowerCommand, broadcastFalseTargetCommand,
-  selectFarmRewardCommand,
+  selectFarmRewardCommand, waitCommand,
 } from './facilityReducer.js';
 import {
   playCardCommand, endTurnCommand, useConsumable, beginDisengageCommand, cancelDisengageCommand,
@@ -51,6 +51,9 @@ export function gameReducer(snapshot, command) {
     case 'MOVE_TO_NODE': return moveToNode(snapshot, command.nodeId);
     case 'REQUEST_EXTRACTION': return requestExtractionCommand(snapshot, command.exitId);
     case 'BASIC_RECON': return basicReconCommand(snapshot);
+    // 대기(planned §4). WAIT은 1칸, WAIT_BATCH는 최대 5칸 묶음이며 사건이 나면 즉시 멈춘다.
+    case 'WAIT': return waitCommand(snapshot, 1);
+    case 'WAIT_BATCH': return waitCommand(snapshot, command.ticks);
     case 'USE_CONCEALMENT': return useConcealmentCommand(snapshot);
     case 'HACK_CONTROL_ROOM': return hackControlRoomCommand(snapshot);
     case 'ACQUIRE_CONTRACT_GOODS': return acquireContractGoodsCommand(snapshot);

@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §6.2
+status: amended by ADR-0075 and implementation spec §6.2
 ---
 
 # 맵은 재방문 가능하며 모든 이동은 시간을 소비한다

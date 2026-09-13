@@ -8,7 +8,7 @@
 // 화면 우하단 데브맵 선택기(DevScenarioPicker.js)의 소스다.
 
 import { startCombat } from '../engine/combatReducer.js';
-import { REINFORCEMENT_INTERVAL } from '../data/facilityLayout.js';
+import { POWER_CUT_DURATION, LOCKDOWN_EXIT_CLOSE_WINDOW } from '../data/facilityLayout.js';
 
 /**
  * 데브맵 목록. 단계별로 묶어 두어 "이 단계에서 무엇을 봐야 하는가"가 목록 자체에 남게 한다.
@@ -168,7 +168,7 @@ function withLockdown(snapshot, run) {
       ...withObjective,
       contract: contract ? { ...contract, status: 'acquired', acquiredAt: withObjective.time } : contract,
       lockdown: { startedAt: withObjective.time },
-      exits: { ...withObjective.exits, B: { ...withObjective.exits.B, disabledAt: withObjective.time + 2500 } },
+      exits: { ...withObjective.exits, B: { ...withObjective.exits.B, disabledAt: withObjective.time + LOCKDOWN_EXIT_CLOSE_WINDOW } },
     },
   };
 }
@@ -207,6 +207,9 @@ function withEvidence(snapshot, run) {
   return { ...snapshot, facilityRunState: { ...run, corpses, evidence, visitedNodeIds } };
 }
 
+/** 시나리오에서 "곧 온다"로 읽히는 칸 수. */
+const DEV_IMMINENT_REINFORCEMENT_TICKS = 3;
+
 /** 이 구역 경계도를 최대로 올리고 다음 증원을 코앞으로 당긴다. 통제실도 장악해 둬야 예정
  * 시각이 화면에 뜬다(장악하지 않은 구역의 증원 시각은 D14에 따라 감춰진다). */
 function withAlertHigh(snapshot, run) {
@@ -217,7 +220,9 @@ function withAlertHigh(snapshot, run) {
       ...run,
       sectorAlerts: { ...run.sectorAlerts, [sectorId]: { level: 3, resolvedEventIds: ['dev_a', 'dev_b', 'dev_c'] } },
       revealedPatrolRouteSectorIds: [...new Set([...run.revealedPatrolRouteSectorIds, sectorId])],
-      reinforcements: { ...run.reinforcements, [sectorId]: { nextAt: run.time + Math.round(REINFORCEMENT_INTERVAL / 10), alertSeen: 3 } },
+      // 교대까지 코앞인 상태를 보려는 시나리오다. 맵 시간은 정수 칸이므로(ADR-0075) 간격을
+      // 나누지 않고 몇 칸 뒤인지를 그대로 쓴다.
+      reinforcements: { ...run.reinforcements, [sectorId]: { nextAt: run.time + DEV_IMMINENT_REINFORCEMENT_TICKS, alertSeen: 3 } },
     },
   };
 }
@@ -230,7 +235,7 @@ function withPowerCut(snapshot, run) {
   const sectorId = sectorOf(run, entry.nodeId);
   return {
     ...snapshot,
-    facilityRunState: { ...moved, powerCuts: [{ sectorId, expiresAt: moved.time + 600 }] },
+    facilityRunState: { ...moved, powerCuts: [{ sectorId, expiresAt: moved.time + POWER_CUT_DURATION }] },
   };
 }
 

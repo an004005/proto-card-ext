@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { TOTAL_NODES } from '../src/data/facilityLayout.js';
 import { gameReducer } from '../src/engine/gameReducer.js';
 import { isCardPlayable } from '../src/engine/combatEngine.js';
+import { MAP_EQUIP_TIME_COST, MAP_CONSUMABLE_TIME_COST } from '../src/engine/facilityReducer.js';
 
 // 계약 화면이 NEW_RUN과 로드아웃 사이에 낀다(§3단계) — 첫 제안 계약을 그대로 수락해 로드아웃
 // 화면까지 진행하는 헬퍼. 계약 자체를 검증하는 테스트는 이 헬퍼를 거치지 않고 NEW_RUN을
@@ -340,7 +341,7 @@ test('EQUIP_ITEM/UNEQUIP_ITEM move gear (by instance itemId) between the loadout
   assert.equal(blocked, midCombat); // guarded to currentScreen === 'map', no-op mid-combat
 });
 
-test('EQUIP_ITEM on the map costs MAP_EQUIP_TIME_COST (50) and is free/instant during loadout prep', () => {
+test('EQUIP_ITEM on the map costs MAP_EQUIP_TIME_COST (3칸) and is free/instant during loadout prep', () => {
   let s = startLoadout(3);
   // Free/instant during loadout prep — no facilityRunState to advance yet.
   const rifle = s.playerState.warehouse.items.find((i) => i.equipmentId === 'rifle');
@@ -357,7 +358,7 @@ test('EQUIP_ITEM on the map costs MAP_EQUIP_TIME_COST (50) and is free/instant d
     },
   };
   s = gameReducer(s, { type: 'EQUIP_ITEM', itemId: 'item-katana' });
-  assert.equal(s.facilityRunState.time, timeBefore + 50);
+  assert.equal(s.facilityRunState.time, timeBefore + MAP_EQUIP_TIME_COST);
   assert.deepEqual(s.playerState.loadout.weapons.map((w) => w.equipmentId).sort(), ['katana', 'rifle']);
 });
 
@@ -440,14 +441,14 @@ test('a threat wandering onto the player mid-action (not just mid-move) forces c
   assert.ok(neighborId, 'start node should have at least one edge');
 
   // Park a threat one hop away with its very next patrol stop set to the player's *current*
-  // node, due to move within the 80-time-unit basic recon (well past the next 10-point tick).
+  // node, due to move within the BASIC_RECON_TIME(4칸) 정찰 도중.
   const [threatId, threat] = Object.entries(run.threats)[0];
   // alert 3 + a rigged boss roster guarantees perception 4, comfortably above the default
   // (unequipped) loadout's stealth 0 — so this collision is deterministically tier 'disadvantage'
   // on first judgment.
   const rigged = {
     ...threat, nodeId: neighborId, patrolRoute: [run.playerNodeId], patrolIndex: 0, mode: 'patrol',
-    nextMoveAt: run.time + 10, alert: 3, size: 4, monsterIds: ['ceremonial_beast'],
+    nextMoveAt: run.time + 1, alert: 3, size: 4, monsterIds: ['ceremonial_beast'],
     target: null, investigationMemory: null, lastKnownPlayerNodeId: null, pursuitStrength: 0,
   };
   s = { ...s, facilityRunState: { ...run, threats: { ...run.threats, [threatId]: rigged } } };
@@ -484,7 +485,7 @@ function riggedEncounterState(seed, { alert, size, monsterIds, equip = false }) 
   const [threatId, threat] = Object.entries(run.threats)[0];
   const rigged = {
     ...threat, nodeId: neighborId, patrolRoute: [run.playerNodeId], patrolIndex: 0, mode: 'patrol',
-    nextMoveAt: run.time + 10, alert, size, monsterIds: monsterIds ?? threat.monsterIds,
+    nextMoveAt: run.time + 1, alert, size, monsterIds: monsterIds ?? threat.monsterIds,
     target: null, investigationMemory: null, lastKnownPlayerNodeId: null, pursuitStrength: 0,
   };
   s = { ...s, facilityRunState: { ...run, threats: { ...run.threats, [threatId]: rigged } } };
@@ -550,7 +551,7 @@ test('encounter tier disadvantage: grace action allowed once, then forced with n
   assert.equal(fought.activeCombatState.turn, 2); // beginEnemyFirst ran one enemy turn first
 });
 
-test('USE_MAP_CONSUMABLE heals from inventory or quickslot, costs MAP_CONSUMABLE_TIME_COST (30), and only accepts healing consumables', () => {
+test('USE_MAP_CONSUMABLE heals from inventory or quickslot, costs MAP_CONSUMABLE_TIME_COST (2칸), and only accepts healing consumables', () => {
   let s = startLoadout(4);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   s = { ...s, playerState: { ...s.playerState, hp: Math.round(s.playerState.maxHp * 0.5) } };
@@ -567,7 +568,7 @@ test('USE_MAP_CONSUMABLE heals from inventory or quickslot, costs MAP_CONSUMABLE
   const timeBefore = s.facilityRunState.time;
   s = gameReducer(s, { type: 'USE_MAP_CONSUMABLE', itemId: 'item-bandage' });
   assert.equal(s.playerState.hp, Math.min(s.playerState.maxHp, hpBefore + Math.round(s.playerState.maxHp * 0.2)));
-  assert.equal(s.facilityRunState.time, timeBefore + 30);
+  assert.equal(s.facilityRunState.time, timeBefore + MAP_CONSUMABLE_TIME_COST);
   assert.ok(!s.playerState.inventory.items.some((i) => i.id === 'item-bandage'));
 
   // from a quickslot
@@ -602,4 +603,31 @@ test('USE_MAP_CONSUMABLE is a no-op outside the map screen (e.g. mid-combat)', (
   assert.equal(s.currentScreen, 'map');
   const notOnMap = { ...s, currentScreen: 'combat' };
   assert.equal(gameReducer(notOnMap, { type: 'USE_MAP_CONSUMABLE', itemId: 'nope' }), notOnMap);
+});
+
+// 회귀(코드 리뷰): refreshLocalObservations는 모든 시설 커맨드 뒤에 현재·인접 노드의 관측을
+// 갱신한다. 예전에는 관측 객체를 통째로 교체해, 정찰이 적어둔 concealment가 바로 다음
+// 행동에서 지워졌다 — 기본 정찰 4칸의 산출이 0이 되고 은엄폐 버튼(scouted 조건)이 UI에
+// 영영 뜨지 않는 결함이었다. 엔진 층이 아니라 **리듀서 층**에서 잡아야 하는 회귀다.
+test('정찰이 기록한 concealment는 이후 시설 커맨드의 관측 갱신에도 살아남는다', () => {
+  let s = startLoadout(4);
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  assert.equal(s.currentScreen, 'map');
+
+  // 은엄폐가 있는 노드에 서서 정찰한다 — 시작 노드에 은엄폐가 있으리란 보장이 없으므로
+  // 위치만 옮겨 둔다(다른 상태는 실제 런 그대로).
+  const run = s.facilityRunState;
+  const concealedNodeId = Object.keys(run.graph.concealmentByNodeId)[0];
+  s = { ...s, facilityRunState: { ...run, playerNodeId: concealedNodeId } };
+
+  s = gameReducer(s, { type: 'BASIC_RECON' });
+  const scouted = s.facilityRunState.observations[concealedNodeId];
+  assert.equal(scouted.concealment, run.graph.concealmentByNodeId[concealedNodeId]);
+
+  // 그 뒤 아무 커맨드나(유료 대기) 한 번 — 관측은 새 시각으로 갱신되지만 정찰 산출은 남는다.
+  const observedAt = scouted.observedAt;
+  s = gameReducer(s, { type: 'WAIT', ticks: 1 });
+  const after = s.facilityRunState.observations[concealedNodeId];
+  assert.equal(after.concealment, run.graph.concealmentByNodeId[concealedNodeId]);
+  assert.ok(after.observedAt >= observedAt);
 });

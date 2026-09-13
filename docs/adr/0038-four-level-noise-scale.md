@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §7.1
+status: amended by ADR-0075 and implementation spec (5칸)
 ---
 
 # 표준 전투 소음은 0~3 단계로 통일한다

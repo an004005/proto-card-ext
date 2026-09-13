@@ -56,25 +56,52 @@ export function bfsHopDistances(edges, fromId) {
 }
 
 /**
- * Dijkstra weighted-shortest-path distances from `fromId`, summing each edge's `timeCost` — used
- * instead of bfsHopDistances once edges no longer have a uniform cost (see facilityGraph.js's
- * geometry-based edge time costs). O(V^2), fine at this graph's scale (no priority queue needed).
- * @param {{from: string, to: string, timeCost: number}[]} edges
+ * Capability 0이 아무것도 열지 않고 실제로 걸어갈 수 있는 간선만으로 잰 가중 최단거리. 판정은
+ * runEngine.isEdgeTraversable(개방 없음, 유효 Mobility 0)과 같다 — 잠긴 통로(차단·전자)와
+ * 고지대(유효 Mobility 3 필요)는 없는 길로 치고, 일방통행은 생성 방향으로만 지난다. 방향에 따라
+ * 값이 달라지므로 결과도 방향성이다.
+ * @param {{id: string, from: string, to: string, timeCost: number, features: string[]}[]} edges
  * @param {string} fromId
- * @returns {Map<string, number>} nodeId -> total weighted distance (fromId itself is 0)
+ * @returns {Map<string, number>}
  */
-export function dijkstraDistances(edges, fromId) {
-  const adjacency = new Map();
-  /** @param {string} u @param {string} v @param {number} cost */
-  const link = (u, v, cost) => {
-    if (!adjacency.has(u)) adjacency.set(u, []);
-    adjacency.get(u).push({ to: v, cost });
-  };
-  for (const edge of edges) {
-    link(edge.from, edge.to, edge.timeCost);
-    link(edge.to, edge.from, edge.timeCost);
-  }
+export function baselineWalkDistances(edges, fromId) {
+  const arcs = new Map();
+  for (const arc of baselineWalkArcs(edges)) link(arcs, arc.from, arc.to, arc.timeCost);
+  return dijkstraOverArcs(arcs, fromId);
+}
 
+/**
+ * baselineWalkDistances가 거리를 재는 그 길들을 방향 호의 목록으로 그대로 내놓는다 — 거리
+ * 판정과 퇴로(2경로) 판정이 같은 "걸을 수 있는 길"을 쓰게 하려고 기준을 여기 한 곳에 둔다.
+ * 두 판정이 갈리면 환풍구(일방통행)나 고지대가 한쪽에서만 길로 인정돼, 실제로는 되돌아올 수
+ * 없는 자리가 "퇴로 2개"로 통과한다.
+ * @param {{id: string, from: string, to: string, timeCost: number, features: string[]}[]} edges
+ * @returns {{from: string, to: string, timeCost: number}[]}
+ */
+export function baselineWalkArcs(edges) {
+  /** @type {{from: string, to: string, timeCost: number}[]} */
+  const arcs = [];
+  for (const edge of edges) {
+    if (!isEdgeUnlocked(edge)) continue;
+    if (edge.features.includes('highGround')) continue;
+    arcs.push({ from: edge.from, to: edge.to, timeCost: edge.timeCost });
+    if (!edge.features.includes('oneWay')) arcs.push({ from: edge.to, to: edge.from, timeCost: edge.timeCost });
+  }
+  return arcs;
+}
+
+/** @param {Map<string, {to: string, cost: number}[]>} arcs @param {string} u @param {string} v @param {number} cost */
+function link(arcs, u, v, cost) {
+  if (!arcs.has(u)) arcs.set(u, []);
+  /** @type {{to: string, cost: number}[]} */ (arcs.get(u)).push({ to: v, cost });
+}
+
+/**
+ * @param {Map<string, {to: string, cost: number}[]>} arcs
+ * @param {string} fromId
+ * @returns {Map<string, number>}
+ */
+function dijkstraOverArcs(arcs, fromId) {
   const distances = new Map([[fromId, 0]]);
   const visited = new Set();
   for (;;) {
@@ -85,7 +112,7 @@ export function dijkstraDistances(edges, fromId) {
     }
     if (current === null) break;
     visited.add(current);
-    for (const { to, cost } of adjacency.get(current) || []) {
+    for (const { to, cost } of arcs.get(current) || []) {
       const candidate = currentDist + cost;
       if (candidate < (distances.get(to) ?? Infinity)) distances.set(to, candidate);
     }
@@ -97,26 +124,35 @@ export function dijkstraDistances(edges, fromId) {
  * Counts edge-disjoint paths between two nodes over undirected unit-capacity edges, up to
  * `maxPaths`, via repeated BFS augmenting paths (Edmonds-Karp, capped). By Menger's theorem this
  * equals min(edge connectivity, maxPaths).
+ *
+ * With `{directed: true}` each entry of `edges` is a one-way arc from→to instead of an undirected
+ * edge — the caller lists both directions itself for two-way passages. That is the mode to use
+ * when "can I walk it" is direction-dependent (일방통행), so the answer matches
+ * baselineWalkDistances rather than a more generous undirected reading of the same graph.
  * @param {{from: string, to: string}[]} edges
  * @param {string} fromId
  * @param {string} toId
  * @param {number} [maxPaths]
+ * @param {{directed?: boolean}} [options]
  * @returns {number}
  */
-export function countEdgeDisjointPaths(edges, fromId, toId, maxPaths = 2) {
+export function countEdgeDisjointPaths(edges, fromId, toId, maxPaths = 2, options = {}) {
   if (fromId === toId) return maxPaths;
+  const directed = options.directed === true;
   const capacity = new Map();
   const adjacency = new Map();
-  /** @param {string} u @param {string} v */
-  const addArc = (u, v) => {
+  // 용량 0으로도 인접에 등록한다 — 잔여 그래프(residual)에서 되돌아가는 호가 있어야
+  // 증가 경로 탐색이 올바르다. 방향 모드의 역방향은 용량 0인 잔여 호일 뿐이다.
+  /** @param {string} u @param {string} v @param {number} cap */
+  const addArc = (u, v, cap) => {
     const key = `${u}->${v}`;
-    capacity.set(key, (capacity.get(key) || 0) + 1);
+    capacity.set(key, (capacity.get(key) || 0) + cap);
     if (!adjacency.has(u)) adjacency.set(u, new Set());
     adjacency.get(u).add(v);
   };
   for (const edge of edges) {
-    addArc(edge.from, edge.to);
-    addArc(edge.to, edge.from);
+    addArc(edge.from, edge.to, 1);
+    addArc(edge.to, edge.from, directed ? 0 : 1);
   }
 
   let pathsFound = 0;

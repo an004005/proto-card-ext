@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §2
+status: amended by ADR-0068, ADR-0076, and implementation spec §2
 ---
 
 # 연구소는 세 탈출 지점을 가진 48노드 맵이다

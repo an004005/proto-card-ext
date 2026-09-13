@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §5 and §9
+status: amended by ADR-0075 and implementation spec §5 and §9
 ---
 
 # 맵 행동과 플레이어 전투 턴은 공통 시간 틱을 소비한다

@@ -18,6 +18,8 @@ import { AMMO_STACK_SIZE } from '../src/engine/inventoryEngine.js';
 import { MAX_DURABILITY } from '../src/engine/equipmentEngine.js';
 import { LOOT_DURABILITY_MIN, LOOT_DURABILITY_MAX } from '../src/engine/rewardEngine.js';
 import { HAND_SIZE, BASE_ENERGY, DURABILITY_DECAY_CHANCE } from '../src/engine/combatEngine.js';
+import { MAP_EQUIP_TIME_COST, MAP_CONSUMABLE_TIME_COST } from '../src/engine/actionCosts.js';
+import { TIMELINE_HORIZON } from '../src/engine/mapTimeline.js';
 
 const OUTPUT = path.resolve('docs/card-extraction-reference.xlsx');
 const FONT = 'Arial';
@@ -104,6 +106,8 @@ function categoryForConstant(name) {
   if (name.includes('SECTOR') || name.includes('NODE') || name.includes('EDGE') || name.includes('GENERATION')) return '그래프';
   if (name.includes('CAMERA') || name.includes('GENERATOR') || name.includes('INTERFACE')) return '장치';
   if (name.includes('OPPORTUNITY') || name.includes('LANDMARK') || name.includes('KEY_DROP')) return '콘텐츠';
+  if (name.includes('COMBAT')) return '전투';
+  if (name.includes('WAIT') || name.includes('EVADE')) return '행동';
   if (name.includes('APPROACH') || name.includes('RECON') || name.includes('FARM') || name.includes('HACKING') || name.includes('FORCE') || name.includes('MOBILITY')) return '행동';
   if (name.includes('OVERLOAD')) return '과부화';
   return '기타';
@@ -190,12 +194,26 @@ function buildWorkbook() {
     ['장비', '카드 사용 내구도 감소 확률', `${DURABILITY_DECAY_CHANCE * 100}%`, '장비 소속 카드 사용마다 판정, 전투 종료 후 적용', 'src/engine/combatEngine.js'],
     ['인벤토리', '탄약 더미 크기', AMMO_STACK_SIZE, '한 인벤토리 칸에 저장하는 최대 탄약', 'src/engine/inventoryEngine.js'],
     ['맵', '총 노드', FACILITY.TOTAL_NODES, `${FACILITY.SECTOR_IDS.length}구역, 구역별 ${FACILITY.SECTOR_IDS.map((id) => FACILITY.SECTOR_LAYOUTS[id].nodeCount).join('/')}노드`, 'src/data/facilityLayout.js'],
-    ['맵', '월드 틱', FACILITY.WORLD_TICK_INTERVAL, '시간 포인트마다 위협과 지속 상태 갱신', 'src/data/facilityLayout.js'],
-    ['맵', '시설 붕괴', FACILITY.RUN_COLLAPSE_TIME, '도달 시 런 종료', 'src/data/facilityLayout.js'],
-    ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '이후 새 개방 요청 불가', 'src/data/facilityLayout.js'],
-    ['탈출', 'B 비활성', FACILITY.EXIT_B_DISABLED_AT, '이후 새 개방 요청 불가', 'src/data/facilityLayout.js'],
+    ['맵', '시간 단위', '1칸', '맵의 모든 시각·비용·지속·예약은 정수 칸이다. 1칸마다 월드를 한 번 갱신한다', 'src/engine/runEngine.js'],
+    ['맵', '시설 붕괴', FACILITY.RUN_COLLAPSE_TIME, '이 시각에 도달하면 런 종료(마감과 같은 시각 도착은 늦은 것)', 'src/data/facilityLayout.js'],
+    ['맵', '통로 비용', `${FACILITY.EDGE_TIME_MIN}~${FACILITY.EDGE_TIME_MAX}칸`, '맵 생성 시 기하 거리로 한 번 정수화하고 이후 변하지 않는다', 'src/engine/facilityGraph.js'],
+    ['맵', '위협 이동 간격', `순찰 ${FACILITY.THREAT_MOVE_INTERVAL.patrol} / 조사·경계 ${FACILITY.THREAT_MOVE_INTERVAL.investigate} / 추적 ${FACILITY.THREAT_MOVE_INTERVAL.pursuit}`, `봉쇄 중에는 고정표로 각각 ${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.patrol}/${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.investigate}/${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.pursuit}`, 'src/data/facilityLayout.js'],
+    ['맵', '구역 증원 주기', `${FACILITY.REINFORCEMENT_INTERVAL} / 봉쇄 ${FACILITY.REINFORCEMENT_LOCKDOWN_INTERVAL}`, '구역별 독립 시계. 로스터의 빈자리만 채운다', 'src/data/facilityLayout.js'],
+    ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '요청·개방 여부와 무관하게 영구 폐쇄', 'src/data/facilityLayout.js'],
+    ['탈출', 'B 비활성', FACILITY.EXIT_B_DISABLED_AT, `요청·개방 여부와 무관하게 영구 폐쇄. 봉쇄 시 min(기존, 봉쇄+${FACILITY.LOCKDOWN_EXIT_CLOSE_WINDOW})로 당겨진다`, 'src/data/facilityLayout.js'],
     ['탈출', '개방 요청 행동', FACILITY.EXIT_REQUEST_TIME, '요청 상호작용 시간', 'src/data/facilityLayout.js'],
+    ['탈출', '개방 대기', FACILITY.EXIT_OPEN_WAIT_BY_HACKING.join('/'), '유효 Hacking -2~4별 요청 완료 후 개방까지', 'src/data/facilityLayout.js'],
     ['탈출', '개방 유지', FACILITY.EXIT_OPEN_WINDOW, '열린 뒤 추출 가능한 시간', 'src/data/facilityLayout.js'],
+    ['맵 행동', '작업 예약', '완료 시 적용', '현장 작업은 시작 시 대상·비용·자원을 예약만 하고, 보상·효과·쿨다운·과부화·소음을 완료 시각 C에 한 번에 확정한다', 'src/engine/runEngine.js'],
+    ['맵 행동', '작업 중단', '적 접촉', '완료 전에 새 위협이 도착하면 경과한 칸만 소모하고 미완료 효과는 하나도 적용하지 않는다. 임의 취소는 불가', 'src/engine/runEngine.js'],
+    ['맵 행동', '대기', `1 / 최대 ${FACILITY.WAIT_BATCH_MAX_TICKS}칸`, '아무것도 회복시키지 않는다. 묶음 대기는 새 조우·출구 개방/폐쇄·붕괴에서 즉시 멈춘다', 'src/engine/facilityReducer.js'],
+    ['맵 행동', '조우 회피', FACILITY.ENCOUNTER_EVADE_TIME, '그 위협의 추적을 해제한다. 같은 위협은 다음 유료 행동 종료 때 재판정한다', 'src/engine/runEngine.js'],
+    ['맵 행동', '무료 조작', '0칸', '지도 조작, 인벤토리 열기·정렬, 아이템 버리기, 실행 전 취소, 조우 무시, 우위 조우의 기습 진입(열세·강제 전투 진입은 적 선공 3칸)', 'src/engine/gameReducer.js'],
+    ['맵 행동', '장비 교체', MAP_EQUIP_TIME_COST, '장착·해제 각 1건마다. 예약해 두고 완료 시각에 적용되며, 중단되면 교체 없이 경과한 칸만 든다', 'src/engine/actionCosts.js'],
+    ['맵 행동', '회복 소모품 사용', MAP_CONSUMABLE_TIME_COST, '맵에서는 인벤토리·퀵슬롯 어디에 있든 쓸 수 있다. 중단되면 소모도 회복도 없다', 'src/engine/actionCosts.js'],
+    ['맵', '타임라인 예고 범위', TIMELINE_HORIZON, '지도 화면이 「앞으로 N칸」에 보여주는 범위. 지금 알 수 있는 사건만 시각순으로 나온다', 'src/engine/mapTimeline.js'],
+    ['전투', '라운드 맵 시간', FACILITY.COMBAT_ROUND_TIME_COST, '플레이어 행동 구간+적 반응 한 라운드. 라운드마다 한 번만 정산한다', 'src/engine/combatReducer.js'],
+    ['전투', '적 기습 선공 구간', FACILITY.COMBAT_ENEMY_AMBUSH_TIME_COST, '라운드 비용과 별도로 전투 시작 시 한 번', 'src/engine/combatReducer.js'],
   ].map(([category, name, value, detail, source]) => ({ category, name, value, detail, source }));
   sheet(workbook, '규칙', '현재 구현 규칙', 'src/engine/*, src/data/facilityLayout.js', [
     { key: 'category', header: '분류', width: 14 },

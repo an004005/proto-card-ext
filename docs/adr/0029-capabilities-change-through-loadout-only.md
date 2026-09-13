@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §6.2
+status: amended by ADR-0075 and implementation spec (3칸)
 ---
 
 # Capability는 장비와 임시 효과로만 변한다

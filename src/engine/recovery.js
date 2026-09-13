@@ -12,10 +12,10 @@
 // runEngine.js가 이미 크므로 신규 세 개는 여기 둔다. 전부 순수 함수이고 시간 진행은
 // runEngine.js의 advanceTime을 그대로 쓴다.
 
-import { applyOverloadDelta, reportFalseTarget, applyCapabilityCost, requireCapability } from './runEngine.js';
+import { applyCapabilityCost } from './runEngine.js';
+import { requireActionCost } from './actionCosts.js';
 import {
-  TRACE_CLEANUP_TIME_BY_PERCEPTION, POWER_CUT_DURATION, POWER_CUT_TIME, POWER_CUT_NOISE,
-  FALSE_BROADCAST_TIME, FALSE_BROADCAST_OVERLOAD, FALSE_BROADCAST_INTENSITY, FALSE_BROADCAST_DURATION, ADJACENT_SECTOR_IDS,
+  POWER_CUT_DURATION, FALSE_BROADCAST_OVERLOAD, FALSE_BROADCAST_INTENSITY, ADJACENT_SECTOR_IDS,
 } from '../data/facilityLayout.js';
 
 /** @typedef {import('./types.js').FacilityRunState} FacilityRunState */
@@ -48,11 +48,11 @@ export function cleanTraces(state, effectivePerception) {
   if (here.length === 0) throw new Error('no traces at this node');
 
   // Perception은 자기 통화가 없어 시간으로만 받는다(D8의 타협). 수치별 기준 시간표가 이미
-  // 있으므로 그것을 표준 비용으로 삼고, 층계가 다시 배수를 건다.
-  const timeIndex = Math.max(-2, Math.min(4, effectivePerception)) + 2;
-  const cost = requireCapability('perception', effectivePerception, 1, { time: TRACE_CLEANUP_TIME_BY_PERCEPTION[timeIndex] });
-  const next = { ...state, evidence: state.evidence.filter((e) => e.nodeId !== state.playerNodeId) };
-  return applyCapabilityCost(next, cost);
+  // 있으므로 그것이 곧 전용 시간 규칙이다 — 층계 가감을 또 얹으면 같은 Perception 수치에
+  // 대가를 두 번 물리게 된다(ADR-0075). 층계는 불가 판정에만 쓴다.
+  const cost = requireActionCost('cleanTraces', { value: effectivePerception });
+  // 흔적은 작업이 끝나야 지워진다 — 중간에 적이 들이닥치면 치우다 만 자리가 그대로 남는다.
+  return applyCapabilityCost(state, cost, undefined, 'cleanTraces');
 }
 
 /**
@@ -71,9 +71,8 @@ export function cutPower(state, effectiveForce) {
     throw new Error('power is already cut in this sector');
   }
 
-  const cost = requireCapability('force', effectiveForce, 1, { time: POWER_CUT_TIME, noise: POWER_CUT_NOISE });
-  const next = { ...state, powerCuts: [...state.powerCuts, { sectorId, expiresAt: state.time + POWER_CUT_DURATION }] };
-  return applyCapabilityCost(next, cost);
+  const cost = requireActionCost('cutPower', { value: effectiveForce });
+  return applyCapabilityCost(state, cost, undefined, 'cutPower', { sectorId, duration: POWER_CUT_DURATION });
 }
 
 /**
@@ -103,38 +102,18 @@ export function broadcastFalseTarget(state, effectiveDeception, targetSectorId) 
 
   // Deception이 모자라면 가짜 목표가 오래 버티지 못한다 — 경계는 옮겨가지만 시선은 금방
   // 돌아온다(D8: Deception의 통화는 효과 지속).
-  const cost = requireCapability('deception', effectiveDeception, 1, { time: FALSE_BROADCAST_TIME, duration: FALSE_BROADCAST_DURATION });
-
-  const target = state.sectorAlerts[targetSectorId];
-  let next = {
-    ...state,
-    sectorAlerts: {
-      ...state.sectorAlerts,
-      [sectorId]: { ...current, level: /** @type {0|1|2|3} */ (current.level - 1) },
-      [targetSectorId]: { ...target, level: /** @type {0|1|2|3} */ (Math.min(3, target.level + 1)) },
-    },
-  };
-  next = applyOverloadDelta(next, FALSE_BROADCAST_OVERLOAD);
+  const cost = requireActionCost('falseBroadcast', { value: effectiveDeception });
 
   // 옮겨간 구역의 아무 노드에나 가짜 목표를 심는다 — 그 구역 위협이 실제로 그쪽으로 움직인다.
-  // 숫자만 옮기면 시선은 그대로라 수습이 아니다.
-  const decoyNode = next.graph.nodes.find((n) => n.sectorId === targetSectorId && n.isGateway)
-    || next.graph.nodes.find((n) => n.sectorId === targetSectorId);
-  if (decoyNode) {
-    next = reportFalseTarget(next, decoyNode.id, FALSE_BROADCAST_INTENSITY, /** @type {number} */ (cost.duration), next.time);
-    // 심은 미끼는 이미 위에서 경계도 한 칸으로 값을 치렀다. 나중에 위협이 쫓아가 허탕을 쳐도
-    // 또 올리면 총량이 늘어나 "옮긴다"가 아니라 "만든다"가 된다 — 그 구역의 처리 완료 목록에
-    // 미리 넣어 두 번 계산되지 않게 한다.
-    const planted = next.falseTargets[next.falseTargets.length - 1];
-    const targetAlert = next.sectorAlerts[targetSectorId];
-    next = {
-      ...next,
-      sectorAlerts: {
-        ...next.sectorAlerts,
-        [targetSectorId]: { ...targetAlert, resolvedEventIds: [...targetAlert.resolvedEventIds, planted.id] },
-      },
-    };
-  }
-
-  return applyCapabilityCost(next, { ...cost, duration: null });
+  // 숫자만 옮기면 시선은 그대로라 수습이 아니다. 경계 이동도 미끼도 **완료 시각 C**에 생기고,
+  // 미끼는 거기서부터 층계 고정표의 지속만큼 버틴다.
+  const decoyNode = state.graph.nodes.find((n) => n.sectorId === targetSectorId && n.isGateway)
+    || state.graph.nodes.find((n) => n.sectorId === targetSectorId);
+  return applyCapabilityCost(state, { ...cost, overload: FALSE_BROADCAST_OVERLOAD, duration: null }, undefined, 'falseBroadcast', {
+    sectorId,
+    targetSectorId,
+    decoyNodeId: decoyNode ? decoyNode.id : null,
+    intensity: FALSE_BROADCAST_INTENSITY,
+    duration: /** @type {number} */ (cost.duration),
+  });
 }

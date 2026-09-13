@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068
+status: amended by ADR-0075 (±2칸)
 ---
 
 # 안전·신속·강행은 고정 비용 변환을 사용한다

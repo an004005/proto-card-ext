@@ -16,10 +16,11 @@
 // the eight sectors form a ring, no gateway edge is a bridge, and a route can go around the ring
 // either way.
 //
-// Each edge's timeCost is derived from its actual 2D length (EDGE_TIME_PER_LENGTH_UNIT, clamped to
-// [EDGE_TIME_MIN, EDGE_TIME_MAX]) instead of a flat constant — shorter corridors are faster,
-// longer ones slower. Weighted-distance calculations (exit placement, computeWeightedDistance)
-// therefore use Dijkstra (graphUtils.js dijkstraDistances) rather than hop-count * constant.
+// Each edge's timeCost is an integer number of time 칸, derived once at generation from its actual
+// 2D length (EDGE_TIME_PER_LENGTH_UNIT, rounded and clamped to [EDGE_TIME_MIN, EDGE_TIME_MAX])
+// instead of a flat constant — shorter corridors are faster, longer ones slower. The exit
+// placement's A–B distance therefore uses Dijkstra (graphUtils.js baselineWalkDistances) rather
+// than hop-count * constant.
 //
 // Special edges (§4.2) are additional edges layered on top of the base graph, in three flavors:
 // "within-sector" (both endpoints from one sector's pool), "cross-sector" (one endpoint from each
@@ -36,12 +37,12 @@
 // per attempt, via generateFacilityGraph's retry (GENERATION_MAX_ATTEMPTS) + fallback-seed net.
 
 import { createRngState, nextFloat, nextInt, pick, shuffle, weightedPick } from './rng.js';
-import { dijkstraDistances, bfsHopDistances, countEdgeDisjointPaths, reachableSet, isEdgeUnlocked } from './graphUtils.js';
+import { baselineWalkDistances, baselineWalkArcs, bfsHopDistances, countEdgeDisjointPaths, reachableSet, isEdgeUnlocked } from './graphUtils.js';
 import { generateSectorLayout } from './layoutArchetypes.js';
 import {
   SECTOR_IDS, SECTOR_RING_RADIUS, SECTOR_NODE_RADIUS,
   EDGE_TIME_PER_LENGTH_UNIT, EDGE_TIME_MIN, EDGE_TIME_MAX,
-  BASE_EDGE_DEGREE_HARD_CAP, EXIT_DISTANCE_RANGES, SECTOR_ADJACENCY,
+  BASE_EDGE_DEGREE_HARD_CAP, EXIT_AB_MIN_DISTANCE, EXIT_PLACEMENT_MAX_ATTEMPTS, SECTOR_ADJACENCY,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
   LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SPECIAL_EDGE_CATEGORY_WEIGHTS,
@@ -72,16 +73,13 @@ function edgeTimeCostForLength(length) {
 /**
  * @typedef {Object} Topology
  * @property {import('./types.js').FacilityNode[]} nodes
- * @property {import('./types.js').FacilityEdge[]} edges
+ * @property {import('./types.js').FacilityEdge[]} edges 특수 엣지까지 얹은 완성 간선 목록.
  * @property {Record<string, string[]>} nodeIdsBySector
- * @property {Record<string, string[]>} externalIdsBySector 그 구역에서 바깥과 이어질 수 있는 노드.
- *   보통은 구역 전체지만, 탑 구조(통신·관제탑)는 1층 로비만 들어간다.
- * @property {Record<string, number>} groupByNodeId 층처럼 구역을 더 잘게 나눈 덩어리. 여기 실린
- *   노드끼리는 같은 덩어리 안에서만 특수 엣지가 난다. 나뉘지 않는 구역의 노드는 빠져 있다.
  * @property {Record<string, string[]>} landmarkIdsBySector 표지가 놓일 수 있는 노드. 배치 원형이
  *   정한다(D16) — 도면만 보고 후보를 좁힐 수 있게 하려는 것이다.
  * @property {string} startNodeId
  * @property {import('./types.js').ExitPlacement[]} exits
+ * @property {import('./types.js').ExitPlacementMeta} exitPlacement
  */
 
 /**
@@ -225,115 +223,148 @@ function deriveGraphMeta(nodes, edges) {
 }
 
 /**
- * Step 4-5 of §4.1: place start + the three exits and verify distance/path requirements. Weighted
- * distance now comes from Dijkstra over each edge's geometry-derived timeCost (see module header)
- * rather than hop-count * a flat constant.
- * Returns null (caller retries) if no valid combination exists in this graph instance.
+ * Step 4-5 of §4.1: place start + the three exits on the **finished** graph — special edges
+ * included (ADR-0076). The three exits go to three different sectors, never to the start sector
+ * (입구·관리동), and are otherwise random: there is no distance range from the start and no
+ * A < 열쇠 < B ordering. The one guarantee is that A and B are at least EXIT_AB_MIN_DISTANCE apart,
+ * so they are two real destinations rather than one — measured on this finished graph over the
+ * edges a Capability 0 player can walk without opening anything (baselineWalkDistances), in the
+ * cheaper of the two directions.
+ *
+ * Never fails on the distance rule: after EXIT_PLACEMENT_MAX_ATTEMPTS draws it keeps the widest
+ * A–B pair it saw and marks the placement `relaxed` (a seed with an unusually cramped graph still
+ * produces a map). It can still return null when a sector has no exit-capable node at all, which
+ * is the caller's retry signal.
  * @param {import('./types.js').FacilityNode[]} nodes
- * @param {import('./types.js').FacilityEdge[]} edges
+ * @param {import('./types.js').FacilityEdge[]} edges 특수 엣지까지 얹은 완성 그래프.
  * @param {import('./rng.js').RngState} rngState
  */
 function placeStartAndExits(nodes, edges, rngState) {
   const entranceNodes = nodes.filter((n) => n.sectorId === 'entrance').map((n) => n.id);
   const { value: startNodeId, state: afterStart } = pick(rngState, entranceNodes);
+  let state = afterStart;
 
-  const distances = dijkstraDistances(edges, startNodeId);
-  /** @type {Record<string, {id: string, weightedDistance: number}[]>} */
-  const candidatesBySector = {};
+  /** @type {Record<string, string[]>} */
+  const poolBySector = {};
   for (const node of nodes) {
-    const weightedDistance = distances.get(node.id);
-    if (weightedDistance === undefined) continue;
-    (candidatesBySector[node.sectorId] ||= []).push({ id: node.id, weightedDistance });
+    if (node.sectorId === 'entrance') continue;
+    (poolBySector[node.sectorId] ||= []).push(node.id);
   }
-
-  /**
-   * @param {{id: string, weightedDistance: number}[]} candidates
-   * @param {{min: number, max: number}} range
-   */
-  const inRange = (candidates, range) => candidates.filter((c) => c.weightedDistance >= range.min && c.weightedDistance <= range.max);
+  const exitSectors = SECTOR_IDS.filter((sectorId) => (poolBySector[sectorId] || []).length > 0);
+  if (exitSectors.length < 3) return null;
 
   // 방을 복도 하나에만 매단 평면도에서는 잎 노드가 많고, 잎으로 가는 길은 하나뿐이라 §4.1 step 5의
-  // 2-edge-disjoint 요구를 만족하지 못한다. 이 검사는 탈출구마다 독립이므로 후보 노드 하나당 한 번만
-  // 하고 캐시한다 — 삼중 루프 안에서 매 조합마다 다시 하면 같은 노드를 수백 번 검사하게 된다.
+  // 2-edge-disjoint 요구를 만족하지 못한다. 후보 노드 하나당 한 번만 검사하고 캐시한다.
+  // 잠긴 통로는 우회로로 치지 않는다 — 배치 원형이 구조적으로 두는 특수 엣지(탑 승강기)를 두 번째
+  // 경로로 인정하면 "열지 못하면 퇴로가 없는" 탈출구가 생긴다. 같은 이유로 고지대(유효
+  // Mobility 3 필요)도 빼고 환풍구(일방통행)는 생성 방향으로만 센다 — A–B 거리를 재는
+  // baselineWalkDistances와 같은 기준이다(baselineWalkArcs). 무향으로 세면 되돌아올 수 없는
+  // 통로가 두 번째 퇴로로 인정돼, 실제 보행 가능 간선만으로는 퇴로가 하나뿐인 출구가 나온다.
+  const redundancyArcs = baselineWalkArcs(edges);
   /** @type {Map<string, boolean>} */
   const twoPathCache = new Map();
-  // 잠긴 통로는 우회로로 치지 않는다. 배치 원형이 구조적으로 두는 특수 엣지(탑 승강기)가 base
-  // 그래프에 이미 들어 있는데, 그걸 두 번째 경로로 인정하면 "열지 못하면 퇴로가 없는" 탈출구가
-  // 생긴다. 여는 절차가 필요 없는 엣지만으로 우회로가 있어야 한다.
-  const redundancyEdges = edges.filter((e) => isEdgeUnlocked(e));
   /** @param {string} nodeId */
   const hasTwoPaths = (nodeId) => {
     const cached = twoPathCache.get(nodeId);
     if (cached !== undefined) return cached;
-    const ok = countEdgeDisjointPaths(redundancyEdges, startNodeId, nodeId, 2) >= 2;
+    const ok = countEdgeDisjointPaths(redundancyArcs, startNodeId, nodeId, 2, { directed: true }) >= 2;
     twoPathCache.set(nodeId, ok);
     return ok;
   };
 
-  let state = afterStart;
-  const { value: sectorOrder, state: afterShuffle } = shuffle(state, SECTOR_IDS);
-  state = afterShuffle;
-
-  for (const sectorA of sectorOrder) {
-    const aPool = inRange(candidatesBySector[sectorA] || [], EXIT_DISTANCE_RANGES.A).filter((c) => hasTwoPaths(c.id));
-    if (aPool.length === 0) continue;
-    for (const nodeA of aPool) {
-      for (const sectorKey of sectorOrder) {
-        if (sectorKey === sectorA) continue;
-        const keyPool = inRange(candidatesBySector[sectorKey] || [], EXIT_DISTANCE_RANGES.key)
-          .filter((c) => c.weightedDistance > nodeA.weightedDistance && hasTwoPaths(c.id));
-        if (keyPool.length === 0) continue;
-        for (const nodeKey of keyPool) {
-          for (const sectorB of sectorOrder) {
-            if (sectorB === sectorA || sectorB === sectorKey) continue;
-            const bPool = inRange(candidatesBySector[sectorB] || [], EXIT_DISTANCE_RANGES.B)
-              .filter((c) => c.weightedDistance > nodeKey.weightedDistance && hasTwoPaths(c.id));
-            if (bPool.length === 0) continue;
-            const nodeB = bPool[0];
-            /** @type {import('./types.js').ExitPlacement[]} */
-            const exits = [
-              { exitId: 'A', nodeId: nodeA.id, sectorId: sectorA, weightedDistanceFromStart: nodeA.weightedDistance },
-              { exitId: 'key', nodeId: nodeKey.id, sectorId: sectorKey, weightedDistanceFromStart: nodeKey.weightedDistance },
-              { exitId: 'B', nodeId: nodeB.id, sectorId: sectorB, weightedDistanceFromStart: nodeB.weightedDistance },
-            ];
-            return { startNodeId, exits, rngState: state };
-          }
-        }
-      }
+  /** @type {Map<string, Map<string, number>>} */
+  const walkCache = new Map();
+  /** @param {string} nodeId */
+  const walkFrom = (nodeId) => {
+    let cached = walkCache.get(nodeId);
+    if (!cached) {
+      cached = baselineWalkDistances(edges, nodeId);
+      walkCache.set(nodeId, cached);
     }
+    return cached;
+  };
+  /** 두 방향 중 짧은 쪽 — 한쪽으로만 가까우면 그 둘은 사실상 가까운 출구다. @param {string} a @param {string} b */
+  const abDistance = (a, b) => Math.min(walkFrom(a).get(b) ?? Infinity, walkFrom(b).get(a) ?? Infinity);
+
+  /** 한 구역에서 탈출구가 될 수 있는 노드 하나. 전부 잎이면 null. @param {string} sectorId */
+  const pickExitNode = (sectorId) => {
+    const pool = poolBySector[sectorId];
+    for (let i = 0; i < 8; i++) {
+      const { value: candidate, state: next } = pick(state, pool);
+      state = next;
+      if (hasTwoPaths(candidate)) return candidate;
+    }
+    return null;
+  };
+
+  /** @type {{a: string, key: string, b: string, sectors: string[], distance: number} | null} */
+  let best = null;
+  for (let attempt = 0; attempt < EXIT_PLACEMENT_MAX_ATTEMPTS; attempt++) {
+    const { value: order, state: afterShuffle } = shuffle(state, exitSectors);
+    state = afterShuffle;
+    const sectors = order.slice(0, 3);
+    const chosen = sectors.map(pickExitNode);
+    if (chosen.some((id) => id === null)) continue;
+    const [a, key, b] = /** @type {string[]} */ (chosen);
+    const distance = abDistance(a, b);
+    // 양방향 모두 도달 불가면 Infinity다 — 그대로 두면 "가장 먼 쌍"으로 뽑혀 서로 걸어서
+    // 오갈 수 없는 A·B가 확정되고, relaxed 판정(< 최소거리)도 통과해 버린다. 후보에서 뺀다.
+    if (!Number.isFinite(distance)) continue;
+    if (!best || distance > best.distance) best = { a, key, b, sectors, distance };
+    if (distance >= EXIT_AB_MIN_DISTANCE) break;
   }
-  return null;
+  if (!best) return null;
+
+  /** @type {import('./types.js').ExitPlacement[]} */
+  const exits = [
+    { exitId: 'A', nodeId: best.a, sectorId: /** @type {any} */ (best.sectors[0]) },
+    { exitId: 'key', nodeId: best.key, sectorId: /** @type {any} */ (best.sectors[1]) },
+    { exitId: 'B', nodeId: best.b, sectorId: /** @type {any} */ (best.sectors[2]) },
+  ];
+  /** @type {import('./types.js').ExitPlacementMeta} */
+  const exitPlacement = { abDistance: best.distance, relaxed: best.distance < EXIT_AB_MIN_DISTANCE };
+  return { startNodeId, exits, exitPlacement, rngState: state };
 }
 
 /**
- * §4.1 steps 1-5+8 as a single attempt. Returns `{ok:false}` if this rngState's graph can't
- * satisfy the exit/path requirements — caller retries with the returned rngState.
+ * §4.1 steps 1-5+8 as a single attempt. Special edges are layered on **before** the exits are
+ * placed (ADR-0076) so the A–B minimum distance is judged on the graph the player actually walks;
+ * a guarantee proven on the base graph alone did not survive the special edges.
+ * Returns `{ok:false}` if this rngState's graph can't satisfy the connectivity/path requirements —
+ * caller retries with the returned rngState.
  * @param {import('./rng.js').RngState} rngState
  * @returns {{ok: false, rngState: import('./rng.js').RngState} | {ok: true, topology: Topology, rngState: import('./rng.js').RngState}}
  */
 function tryBuildTopology(rngState) {
   const base = buildBaseGraph(rngState);
-  const placement = placeStartAndExits(base.nodes, base.edges, base.rngState);
-  if (!placement) return { ok: false, rngState: base.rngState };
 
-  // Step 7: every node reachable from start — the degree-capped Kruskal repair pass in
-  // buildBaseGraph is *usually* enough to fully connect the graph, but isn't structurally
-  // guaranteed the way the old single-cycle base graph was, so this check is load-bearing now,
-  // not just defensive. A failure here is caught by generateFacilityGraph's retry/fallback loop.
-  const reachable = reachableSet(base.edges, placement.startNodeId);
-  if (reachable.size !== base.nodes.length) return { ok: false, rngState: placement.rngState };
+  // Step 7: every node reachable — the floor plans plus gateway edges are *usually* enough to fully
+  // connect the graph, but it isn't structurally guaranteed, so this check is load-bearing. Run it
+  // before the expensive steps; undirected reachability is symmetric, so any node works as a root
+  // (the start node isn't chosen until placeStartAndExits).
+  const reachable = reachableSet(base.edges, base.nodes[0].id);
+  if (reachable.size !== base.nodes.length) return { ok: false, rngState: base.rngState };
+
+  const { byId, existing, degree } = deriveGraphMeta(base.nodes, base.edges);
+  const special = placeSpecialEdges(
+    base.nodes, base.edges, base.nodeIdsBySector, base.externalIdsBySector, base.groupByNodeId,
+    byId, existing, degree, base.rngState,
+  );
+  const edges = [...base.edges, ...special.specialEdges];
+
+  const placement = placeStartAndExits(base.nodes, edges, special.rngState);
+  if (!placement) return { ok: false, rngState: special.rngState };
 
   return {
     ok: true,
     topology: {
       nodes: base.nodes,
-      edges: base.edges,
+      edges,
       nodeIdsBySector: base.nodeIdsBySector,
-      externalIdsBySector: base.externalIdsBySector,
-      groupByNodeId: base.groupByNodeId,
       landmarkIdsBySector: base.landmarkIdsBySector,
       startNodeId: placement.startNodeId,
       exits: placement.exits,
+      exitPlacement: placement.exitPlacement,
     },
     rngState: placement.rngState,
   };
@@ -717,19 +748,14 @@ function placeThreats(allEdges, nodeIdsBySector, startNodeId, rngState) {
 }
 
 /**
- * §4.1 step 6: special edges, landmarks, opportunities, threats. Always succeeds — no failure
- * mode here, unlike the topology step.
+ * §4.1 step 6: landmarks, opportunities, security devices, threats, concealment. Always succeeds —
+ * no failure mode here, unlike the topology step. Special edges are already in topology.edges: they
+ * are placed in tryBuildTopology, before the exits (ADR-0076).
  * @param {Topology} topology
- * @param {Map<string, {x:number,y:number}>} byId
- * @param {Set<string>} existingPairs
- * @param {Map<string, number>} baseDegree
  * @param {import('./rng.js').RngState} rngState
  */
-function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
+function placeContent(topology, rngState) {
   let state = rngState;
-
-  const special = placeSpecialEdges(topology.nodes, topology.edges, topology.nodeIdsBySector, topology.externalIdsBySector, topology.groupByNodeId, byId, existingPairs, baseDegree, state);
-  state = special.rngState;
 
   const reserved = [topology.startNodeId, ...topology.exits.map((e) => e.nodeId)];
   const landmarkResult = placeLandmarks(topology.landmarkIdsBySector, topology.nodeIdsBySector, reserved, state);
@@ -744,8 +770,7 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
   const generatorResult = placeGenerators(topology.nodeIdsBySector, state);
   state = generatorResult.rngState;
 
-  const allEdges = [...topology.edges, ...special.specialEdges];
-  const threatResult = placeThreats(allEdges, topology.nodeIdsBySector, topology.startNodeId, state);
+  const threatResult = placeThreats(topology.edges, topology.nodeIdsBySector, topology.startNodeId, state);
   state = threatResult.rngState;
 
   // 은엄폐는 맨 마지막에 뽑는다 — 다른 콘텐츠(특히 위협 배치/경로)보다 나중 draw여야 이 기능을
@@ -755,7 +780,6 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
 
   return {
     content: {
-      edges: allEdges,
       landmarks: landmarkResult.landmarks,
       opportunities: opportunityResult.opportunities,
       concealmentByNodeId: concealmentResult.concealmentByNodeId,
@@ -776,62 +800,36 @@ function placeContent(topology, byId, existingPairs, baseDegree, rngState) {
  */
 export function generateFacilityGraph(seed) {
   let rngState = createRngState(seed);
+  /** @type {Topology | null} */
+  let topology = null;
+  let usedFallback = false;
   for (let attempt = 0; attempt < GENERATION_MAX_ATTEMPTS; attempt++) {
     const result = tryBuildTopology(rngState);
     rngState = result.rngState;
-    if (result.ok) {
-      const { byId, existing, degree } = deriveGraphMeta(result.topology.nodes, result.topology.edges);
-      const contentResult = placeContent(result.topology, byId, existing, degree, rngState);
-      return {
-        graph: {
-          nodes: result.topology.nodes,
-          edges: contentResult.content.edges,
-          startNodeId: result.topology.startNodeId,
-          exits: result.topology.exits,
-          landmarks: contentResult.content.landmarks,
-          opportunities: contentResult.content.opportunities,
-          concealmentByNodeId: contentResult.content.concealmentByNodeId,
-          cameras: contentResult.content.cameras,
-          accessInterfaces: contentResult.content.accessInterfaces,
-          generators: contentResult.content.generators,
-          threats: contentResult.content.threats,
-        },
-        rngState: contentResult.rngState,
-        usedFallback: false,
-      };
-    }
+    if (result.ok) { topology = result.topology; break; }
+  }
+  if (!topology) {
+    topology = getFallbackTopology();
+    usedFallback = true;
   }
 
-  const fallbackTopology = getFallbackTopology();
-  const { byId, existing, degree } = deriveGraphMeta(fallbackTopology.nodes, fallbackTopology.edges);
-  const contentResult = placeContent(fallbackTopology, byId, existing, degree, rngState);
+  const contentResult = placeContent(topology, rngState);
   return {
     graph: {
-      nodes: fallbackTopology.nodes,
-      edges: contentResult.content.edges,
-      startNodeId: fallbackTopology.startNodeId,
-      exits: fallbackTopology.exits,
+      nodes: topology.nodes,
+      edges: topology.edges,
+      startNodeId: topology.startNodeId,
+      exits: topology.exits,
+      exitPlacement: topology.exitPlacement,
       landmarks: contentResult.content.landmarks,
       opportunities: contentResult.content.opportunities,
-          concealmentByNodeId: contentResult.content.concealmentByNodeId,
+      concealmentByNodeId: contentResult.content.concealmentByNodeId,
       cameras: contentResult.content.cameras,
       accessInterfaces: contentResult.content.accessInterfaces,
       generators: contentResult.content.generators,
       threats: contentResult.content.threats,
     },
     rngState: contentResult.rngState,
-    usedFallback: true,
+    usedFallback,
   };
-}
-
-/**
- * Mobility 0 기준 가중 이동비용 (§2.2 검증용 헬퍼). 특수 엣지 포함 그래프 위에서 Dijkstra로
- * 계산한다(엣지 시간이 더 이상 균일하지 않으므로).
- * @param {import('./types.js').FacilityEdge[]} edges
- * @param {string} fromNodeId
- * @param {string} toNodeId
- */
-export function computeWeightedDistance(edges, fromNodeId, toNodeId) {
-  const dist = dijkstraDistances(edges, fromNodeId).get(toNodeId);
-  return dist === undefined ? Infinity : dist;
 }

@@ -16,6 +16,8 @@ import { html, useState, useRef, useLayoutEffect } from '../lib.js';
 // align="left": anchor the box to the trigger's left edge instead of centering on it — still
 // useful when the trigger fills a narrow column and a centered box would read oddly, even
 // though clipping itself is no longer the reason to reach for it.
+// 키보드로도 열린다 — 마우스를 올려야만 보이는 정보는 탭으로 버튼을 훑는 사람에게는 없는
+// 정보다. Esc로 닫는 것도 같은 이유다(포커스를 옮기지 않고 가릴 방법이 있어야 한다).
 export function Tooltip({ content, width = 220, align = 'center', children }) {
   const [visible, setVisible] = useState(false);
   const wrapRef = useRef(null);
@@ -44,8 +46,15 @@ export function Tooltip({ content, width = 220, align = 'center', children }) {
       style=${{ position: 'relative', display: 'inline-block' }}
       onMouseEnter=${() => setVisible(true)}
       onMouseLeave=${() => setVisible(false)}
+      onFocusCapture=${() => setVisible(true)}
+      onBlurCapture=${() => setVisible(false)}
+      onKeyDown=${(ev) => { if (ev.key === 'Escape') setVisible(false); }}
     >
       ${children}
+      ${/* 문자열 설명은 보이지 않는 사본으로도 항상 DOM에 둔다. 렌더 테스트가 툴팁 본문의
+          단위 표기를 검사할 수 있게 하고(그 전에는 hover 없이는 아무 글자도 없었다), 보조
+          기술도 같은 문장을 읽는다. */ null}
+      ${typeof content === 'string' ? html`<span style=${{ display: 'none' }}>${content}</span>` : null}
       ${visible ? html`
         <div ref=${boxRef} style=${{
           position: 'fixed', left: `${pos.left}px`, top: `${pos.top}px`,

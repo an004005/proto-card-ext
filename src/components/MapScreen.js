@@ -2,15 +2,17 @@
 // 전체 지도(노드+엣지)는 항상 보이고, 위협 존재 여부 같은 "내용" 정보만
 // 시야(현재+인접) 밖에서는 마지막으로 확인한 값으로 고정된다 — gameReducer.js의
 // refreshLocalObservations가 매 행동 끝에 현재+인접 노드를 observations에 스냅샷한다).
+// 예외는 대기다: 대기 중에는 주변을 살피지 않으므로 인접 노드도 낡은 정보가 되고, 다음 유료
+// 행동이 끝나야 다시 실시간이 된다(observationSuspended).
 //
 // UI 레이아웃(HUD/구역 라벨/미니맵/선택 노드 패널/범례·로그 접기)은 게임 UI 목업 디자인/
 // map-redesign의 개선안을 반영해 재구성했다 — 명령·판정 로직은 이전과 동일, 표현 계층만 변경.
 import { html, useState, useEffect, useRef } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { computeCapabilities, listFieldActiveEquipment, effectiveForRequirement } from '../engine/capabilityEngine.js';
+import { computeCapabilities, listFieldActiveEquipment } from '../engine/capabilityEngine.js';
 import { bfsHopDistances } from '../engine/graphUtils.js';
-import { openSpecialEdge, applyOverloadDelta, canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted } from '../engine/runEngine.js';
+import { canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted, moveTimeCost, observationSuspended, prizeGradeKnown } from '../engine/runEngine.js';
 import { computeFloorOverload, computeOverloadGainMultiplier, getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import { SECTOR_IDS, SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR, ADJACENT_SECTOR_IDS } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
@@ -23,12 +25,37 @@ import { HistoryControls } from './HistoryControls.js';
 import { describeItem } from '../data/itemDisplay.js';
 import { EncounterPanel } from './EncounterPanel.js';
 import { ItemTooltipContent } from './ItemTooltipContent.js';
-import { resolveCapabilityCost, capabilityStep } from '../engine/capabilityCosts.js';
+import { MapClock, deadlineStyle } from './MapClock.js';
+import { capabilityStep } from '../engine/capabilityCosts.js';
+import { forecastAction, describeForecast, forecastUnknownPrizeFarm } from '../engine/actionCosts.js';
 import {
-  CAPABILITY_STEP_TIME_MULTIPLIER, SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE, PRIZE_OPTION_COUNT,
+  runCountdowns, upcomingEvents, timersEndingBefore, observableThreatMoves, staleThreatSightings,
+  interruptionNotice, waitBatchNotice, threatMovesDuring, describeNodeLocation,
+  EXIT_STATUS_LABELS, TIMELINE_HORIZON,
+} from '../engine/mapTimeline.js';
+import {
+  PRIZE_OPTION_COUNT, CAMERA_HACK_DURATION, WAIT_BATCH_MAX_TICKS,
 } from '../data/facilityLayout.js';
 
 const FIELD_ACTION_LABELS = { snapshot_scan: '집중 투시', temporary_barrier: '임시 장벽', remote_intrusion: '원격 침투' };
+
+/** 특수 엣지 feature의 표시 이름. `blocked`/`electronic` 같은 코드 키가 그대로 화면에 나오면
+ * 플레이어는 그 통로를 무엇으로 여는지 읽을 수 없다. */
+const EDGE_FEATURE_LABELS = { blocked: '물리 잠금', electronic: '전자 잠금', highGround: '높은 지형' };
+/** 위협 상태의 표시 이름 — `patrol`/`pursuit` 같은 코드 키가 그대로 툴팁에 나오면 읽히지 않는다. */
+const THREAT_MODE_LABELS = { patrol: '순찰', investigate: '조사', alert: '경계', pursuit: '추적', exit_guard: '출구 경계' };
+/** @param {string[]} features */
+function featureText(features) {
+  return features.map((feature) => EDGE_FEATURE_LABELS[feature] || feature).join('·');
+}
+
+/** 화면의 모든 시각은 상대 표기다 — 절대 시각(424 / 700)은 괄호로만 병기한다. 700칸짜리 시계를
+ * 머릿속에서 빼는 일을 플레이어에게 시키면 계획이 아니라 산수가 된다. */
+function ticksUntil(at, now) { return Math.max(0, at - now); }
+function inTicksText(at, now) { return `${ticksUntil(at, now)}칸 후`; }
+function leftTicksText(at, now) { return `${ticksUntil(at, now)}칸 남음`; }
+
+
 
 const PRIZE_AXIS_LABELS = { combat: '전투 강화', infiltration: '침투 강화', resource: '즉시 자원' };
 const PRIZE_TIER_LABELS = { normal: '일반', elite: '상급' };
@@ -39,25 +66,46 @@ const STEP_COLORS = { surplus: '#15803d', standard: 'var(--color-neutral-600)', 
  * 층계(D8)로 바뀌면서 버튼은 더 이상 잠기지 않고 "대가를 치르고 된다"가 됐다. 그 대가가 누르기
  * 전에 보이지 않으면 플레이어는 자기가 무엇을 지불했는지 사후에야 알게 된다 — 그러면 고민할
  * 자리가 사라지므로, 여기서 단계와 통화를 미리 문장으로 만든다.
- * @param {'hacking'|'force'|'stealth'|'mobility'|'perception'|'deception'} kind
- * @param {number} value 원시 실효 Capability(-2~4)
- * @param {number} required
- * @returns {{step: string, label: string, note: string, color: string, blocked: boolean}}
+ *
+ * 입력은 엔진이 실제로 청구할 값(actionCosts.forecastAction)이다. 여기서 비용식을 다시 쓰면
+ * 상수 하나만 바뀌어도 화면이 조용히 거짓말을 한다.
+ * @param {import('../engine/actionCosts.js').ActionForecast} forecast
+ * @returns {{step: string, label: string, note: string, color: string, blocked: boolean}|null}
  */
-function ladderNote(kind, value, required = 1) {
-  const cost = resolveCapabilityCost(kind, value, required, {});
-  const step = cost.step;
+function ladderNote(forecast) {
+  const kind = forecast.capabilityKind;
+  const cost = forecast.cost;
+  // 층계가 걸리지 않는 고정 비용 행동(정찰·대기·시체 처리 등)은 뱃지가 없다.
+  if (!kind || !cost || !forecast.step) return null;
+  const step = forecast.step;
   if (step === 'impossible') {
-    return { step, label: STEP_LABELS[step], note: `${CAPABILITY_LABELS[kind]} ${required - 2} 이상이 있어야 시도할 수 있습니다 (현재 ${value})`, color: STEP_COLORS[step], blocked: true };
+    // 한 문장으로만 말한다. 예전에는 버튼에 '불가', 뱃지에 또 '불가', 그리고 요구치를 두 개
+    // (표준 R과 시도 하한 R-2) 나란히 적어서, 셋 중 무엇이 진짜 조건인지 읽히지 않았다.
+    return {
+      step,
+      label: STEP_LABELS[step],
+      note: `${CAPABILITY_LABELS[kind]} ${forecast.required}이 표준, ${forecast.required - 2} 이상이면 대가를 치르고 시도 가능(현재 ${forecast.value})`,
+      color: STEP_COLORS[step],
+      blocked: true,
+    };
   }
   const parts = [];
-  const timePercent = Math.round((CAPABILITY_STEP_TIME_MULTIPLIER[step] - 1) * 100);
-  if (timePercent !== 0) parts.push(`시간 ${timePercent > 0 ? '+' : ''}${timePercent}%`);
-  if (cost.noise !== 0) parts.push(`소음 ${cost.noise > 0 ? '+' : ''}${cost.noise}`);
-  if (cost.overload !== 0) parts.push(`과부화 ${cost.overload > 0 ? '+' : ''}${cost.overload}`);
+  // 시간 가감은 예고가 실제로 더한 만큼만 적는다 — 흔적 정리처럼 전용 시간표를 쓰는 행동은
+  // 층계 가감을 받지 않으므로, 층계표를 그대로 베끼면 버튼이 없는 대가를 말하게 된다.
+  const timeDelta = forecast.parts.filter((part) => part.label === '능력').reduce((acc, part) => acc + part.delta, 0);
+  if (timeDelta !== 0) parts.push(`시간 ${timeDelta > 0 ? '+' : ''}${timeDelta}칸`);
+  // 소음과 과부화는 **총량**이다. `+`를 붙이면 "지금보다 2 더"로 읽히지만 실제로는 "이 행동이
+  // 낼 소음이 2"라는 뜻이다. 층계가 그 값을 바꿨을 때만 기본값과의 차이를 괄호로 덧붙인다.
+  const amount = (label, value, baseValue) => {
+    const delta = value - baseValue;
+    if (delta === 0) return `${label} ${value}`;
+    return `${label} ${value}(기본 ${baseValue} ${delta > 0 ? '+' : '−'} ${STEP_LABELS[step]} ${Math.abs(delta)})`;
+  };
+  if (cost.noise !== 0 || forecast.baseNoise !== 0) parts.push(amount('소음', cost.noise, forecast.baseNoise));
+  if (cost.overload !== 0 || forecast.baseOverload !== 0) parts.push(amount('과부화', cost.overload, forecast.baseOverload));
   if (cost.hpCost) parts.push(`HP -${cost.hpCost}`);
   if (cost.durabilityLoss) parts.push(`장비 내구도 -${cost.durabilityLoss}`);
-  if (cost.durationMultiplier !== 1) parts.push(`효과 지속 ${Math.round(cost.durationMultiplier * 100)}%`);
+  if (cost.duration != null) parts.push(`지속 ${cost.duration}칸`);
   if (cost.leavesStrongTrace) parts.push('강한 흔적이 남음');
   if (cost.raisesAlert) parts.push('이 구역 경계도 +1');
   return {
@@ -69,16 +117,51 @@ function ladderNote(kind, value, required = 1) {
   };
 }
 
+/** 조우가 다른 맵 행동을 막는 상태인지 — facilityReducer.isBlockedByEncounter와 같은 조건.
+ * 막힌 동안 버튼이 눌리는 채로 있으면 눌러도 아무 일이 없어, 화면이 고장난 것처럼 보인다. */
+function encounterBlocks(run) {
+  const tier = run.encounter?.tier;
+  return tier === 'even' || tier === 'forced';
+}
+
+const ENCOUNTER_BLOCK_NOTE = '조우 중입니다 — 회피하거나 전투에 들어가기 전에는 이 행동을 할 수 없습니다.';
+
+/**
+ * 예고 한 줄과 그 뒤에 붙는 시간 정보. 예고 = 실제 청구 칸이고, 그 칸이 끝나는 시각과 그 전에
+ * 끝나버리는 타이머까지 함께 낸다 — 15칸짜리 해킹을 믿고 20칸짜리 작업을 시작하는 실수를 막는다.
+ */
+function forecastTooltip(run, forecast, label, tip, extraNote) {
+  const lines = [tip];
+  if (forecast.blocked) {
+    lines.push('지금 수치로는 시도할 수 없습니다.');
+  } else {
+    const completesAt = run.time + forecast.timeCost;
+    lines.push(`${describeForecast(forecast, label)} · 완료까지 ${forecast.timeCost}칸 후(시각 ${completesAt} / ${RUN_COLLAPSE_TIME}).`);
+    const ending = timersEndingBefore(run, completesAt);
+    if (ending.length > 0) lines.push(`작업 중 종료: ${ending.map((event) => event.text).join(' · ')}.`);
+    // 끝나는 타이머만 보면 정작 가장 위험한 변화 — 이 N칸 동안 옆 방의 적이 몇 번 움직이는가 —
+    // 가 한 줄도 안 나온다. 관측 중인 위협에 한해 그 횟수와 시점을 함께 낸다.
+    const moves = threatMovesDuring(run, forecast.timeCost);
+    if (moves.length > 0) {
+      lines.push(`작업 중 위협 이동: ${moves.map((move) => `${describeNodeLocation(run, move.nodeId)} ${move.count}회(${move.offsets.map((offset) => `+${offset}`).join(', ')}칸)`).join(' · ')}.`);
+    } else {
+      lines.push(`관측 중인 위협 없음 — 이 ${forecast.timeCost}칸은 보이지 않는 곳에서도 흐릅니다.`);
+    }
+  }
+  if (extraNote) lines.push(extraNote);
+  return lines.filter(Boolean).join(' ');
+}
+
 /** 층계 다섯 단계가 무엇인지 — 뱃지에 "무리"라고만 쓰여 있으면 그게 좋은 건지 나쁜 건지,
  * 투자하면 뭐가 나아지는지 알 수 없다. 뱃지마다 같은 설명을 달아 둔다. */
 const LADDER_EXPLAINER = html`<div>
   <div style=${{ fontWeight: 800, marginBottom: '5px' }}>Capability 층계</div>
   <div>요구치를 못 넘겨도 시도할 수 있습니다. 대신 모자란 만큼 그 Capability의 통화로 값을 치릅니다.</div>
   <div style=${{ marginTop: '5px' }}>
-    여유(+1 이상) 시간 −25%<br />
+    여유(+1 이상) 시간 −1칸<br />
     표준(요구치와 같음) 추가 대가 없음<br />
-    무리(−1) 시간 +40% + 대가 하나<br />
-    위태(−2) 시간 +100% + 무거운 대가<br />
+    무리(−1) 시간 +2칸 + 대가 하나<br />
+    위태(−2) 시간 +4칸 + 무거운 대가<br />
     불가(−3 이하) 시도 불가
   </div>
   <div style=${{ marginTop: '5px', opacity: 0.85 }}>
@@ -87,24 +170,38 @@ const LADDER_EXPLAINER = html`<div>
 </div>`;
 
 /**
- * Capability가 걸린 맵 행동 버튼 하나. 설명(무엇을 하는 행동인가)과 층계 뱃지(지금 이 값으로
- * 하면 무엇을 더 내는가)를 항상 함께 낸다 — 층계 이후로는 버튼이 잠기지 않으므로, 대가가
- * 눌리기 전에 보이지 않으면 플레이어는 자기가 무엇을 지불했는지 사후에야 알게 된다.
- * @param {{kind: string, value: number, required?: number, label: string, tip: string, onClick: () => void, disabled?: boolean}} props
+ * 유료 행동 버튼 하나. 이름 옆에 **실제로 청구될 칸**을 붙이고, 층계가 걸린 행동이면 그 대가까지
+ * 함께 낸다. 숫자는 전부 `forecastAction`에서 오며 이 파일에는 비용식이 없다.
+ * @param {{run: object, actionId: string, opts?: object, label: string, tip: string,
+ *   onClick: () => void, disabled?: boolean, disabledNote?: string}} props
  */
-function LadderButton({ kind, value, required = 1, label, tip, onClick, disabled }) {
-  const ladder = ladderNote(/** @type {any} */ (kind), value, required);
-  const blockedNote = ladder.blocked ? ` ${ladder.note}.` : '';
+function ActionButton({ run, actionId, opts = {}, label, tip, onClick, disabled, disabledNote }) {
+  const forecast = forecastAction(actionId, opts);
+  const ladder = ladderNote(forecast);
+  const blockedByEncounter = encounterBlocks(run);
+  const note = blockedByEncounter ? ENCOUNTER_BLOCK_NOTE : (disabledNote || (ladder?.blocked ? `${ladder.note}.` : ''));
   return html`
-    <${Tooltip} align="left" content=${`${tip}${blockedNote}`}>
+    <${Tooltip} align="left" width=${260} content=${forecastTooltip(run, forecast, label, tip, note)}>
       <button
         class="btn btn-secondary"
         style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }}
-        disabled=${disabled || ladder.blocked}
+        disabled=${disabled || blockedByEncounter || !!ladder?.blocked}
         onClick=${onClick}
-      >${label} <${StepBadge} ladder=${ladder} /></button>
+      >${forecast.blocked ? `${label} · 불가` : actionButtonLabel(forecast, label)}${ladder && !ladder.blocked ? html` <${StepBadge} ladder=${ladder} />` : null}</button>
     <//>
   `;
+}
+
+/**
+ * 유료 버튼 라벨의 유일한 규칙 — `이름 · N칸 · 소음 M · 과부화 K`. 0인 통화는 적지 않는다.
+ * 버튼마다 다른 순서로 적으면 두 버튼을 나란히 놓고 비교할 수 없다.
+ * @param {import('../engine/actionCosts.js').ActionForecast} forecast @param {string} label
+ */
+function actionButtonLabel(forecast, label) {
+  const parts = [label, `${forecast.timeCost}칸`];
+  if (forecast.noise) parts.push(`소음 ${forecast.noise}`);
+  if (forecast.overload) parts.push(`과부화 ${forecast.overload}`);
+  return parts.join(' · ');
 }
 
 /** 버튼 옆에 붙는 짧은 층계 뱃지. */
@@ -286,7 +383,10 @@ function findTraversableEdge(run, nodeId) {
 function nodeKnowledge(run, nodeId) {
   if (run.playerNodeId === nodeId) return 'current';
   if (run.activeRecon?.targetNodeIds.includes(nodeId)) return 'fresh';
-  if (isTrueAdjacent(run, nodeId)) return 'fresh';
+  // 대기 중에는 주변을 관측하지 않는다 — 무료 인접 실시간 관측이 끊기고, 마지막으로 본 값이
+  // `N칸 전 관측`으로 남는다. 다음 유료 행동이 끝나면 다시 실시간이다. 값을 치른 정찰
+  // (activeRecon)은 위에서 이미 통과했으므로 대기 중에도 계속 실시간이다.
+  if (isTrueAdjacent(run, nodeId) && !observationSuspended(run)) return 'fresh';
   if (run.observations[nodeId]) return 'stale';
   return 'unknown';
 }
@@ -338,26 +438,18 @@ function candidateEdgesInRange(graph, fromId, range) {
   });
 }
 
+/** 출구 상태 다섯 가지의 표시 이름은 mapTimeline이 단일 출처다 — `닫힘`은 아직 요청하지 않은
+ * 출구(`미요청`)와 영구 폐쇄(`폐쇄됨`)를 같은 말로 덮어 버렸다. */
 function exitStatusLabel(exit) {
   if (exit.kind === 'key') return '열쇠';
-  const labels = { closed: '닫힘', requesting: '요청 중', opening: '개방 대기', open: '열림', disabled: '비활성' };
-  return labels[exit.status];
-}
-
-/**
- * 정찰(맵)에서 과부화가 100을 넘게 되는 행동은 애초에 버튼을 비활성화한다 — runEngine.js의
- * 실제 순수 함수를 그대로(부작용 없이) 미리 호출해 결과 overload만 확인한다. 던지면(자격
- * 미달 등 다른 이유로 실패) 과부화 판단과 무관하므로 막지 않는다 — 실제 클릭 시 에러로 뜬다.
- */
-function wouldExceedOverload(run, ps, actionFn) {
-  // Overload 100 is no longer a map-side game-over condition. Combat converts excess into status cards.
-  return false;
+  return EXIT_STATUS_LABELS[exit.status] || exit.status;
 }
 
 function movementRiskForecast(run, edge, destinationNodeId, mobility) {
   if (!edge) return { label: '경로 없음', color: 'var(--color-negative, #dc2626)' };
-  const multiplier = [1.4, 1.2, 1, 0.9, 0.8, 0.7, 0.6][Math.max(-2, Math.min(4, mobility)) + 2];
-  const arrivalAt = run.time + Math.max(10, Math.round(edge.timeCost * multiplier));
+  // 예고 비용 = 실제 비용. 엔진의 이동 비용 함수를 그대로 쓴다 — 여기서 식을 베껴 두면
+  // 한쪽만 바뀌었을 때 플레이어가 도착 시각을 틀리게 읽는다.
+  const arrivalAt = run.time + moveTimeCost(edge, mobility);
   const direct = Object.values(run.threats).filter((threat) => threat.nodeId === destinationNodeId).length;
   if (direct > 0) return { label: `도착 예상: 적 ${direct}그룹`, color: 'var(--color-negative, #dc2626)' };
   const hops = bfsHopDistances(run.graph.edges, destinationNodeId);
@@ -371,12 +463,11 @@ function movementRiskForecast(run, edge, destinationNodeId, mobility) {
 
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
-// 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(시간 단위) — CAMERA_HACK_DURATION(300)보다
+// 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — CAMERA_HACK_DURATION(15칸)보다
 // 조금 길게 잡아, 그 이후는 조용한 이력 표기로 낮춘다(계속 안 사라지면 지금도 쫓기는 중처럼 읽힘).
-const CAMERA_DETECTION_BANNER_WINDOW = 400;
+const CAMERA_DETECTION_BANNER_WINDOW = 20;
 
 function IconHeart() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17s-6.2-3.9-6.2-8.5A3.8 3.8 0 0 1 10 6.1a3.8 3.8 0 0 1 6.2 2.4C16.2 13.1 10 17 10 17z"/></svg>`; }
-function IconClock() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg>`; }
 function IconBox() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5 10 3l7 3.5-7 3.5-7-3.5Z"/><path d="M3 6.5V14l7 3.5 7-3.5V6.5"/><path d="M10 10v7.5"/></svg>`; }
 function IconTarget() { return html`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.4"/><path d="M10 2v3M10 15v3M2 10h3M15 10h3"/></svg>`; }
 function IconList() { return html`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h8"/></svg>`; }
@@ -384,6 +475,32 @@ function IconList() { return html`<svg width="15" height="15" viewBox="0 0 20 20
 /** @param {{kind: string, equipmentId?: string, defId?: string, value?: number, amount?: number}} loot */
 function farmLootDisplay(loot) {
   return describeItem({ ...loot, durability: loot.kind === 'equipment' ? 10 : undefined });
+}
+
+/**
+ * 그 노드에서 정찰로 확인한 확보 대상 등급·역할축. 정찰하지 않았으면 undefined이고, 그때는
+ * 서 있어도 "확보 대상이 있다"까지만 보인다(등급·축은 정찰로만, D16의 결).
+ * @param {import('../engine/types.js').FacilityRunState} run
+ * @param {string} nodeId
+ * @param {string} opportunityId
+ */
+function scoutedGradeOf(run, nodeId, opportunityId) {
+  return run.observations[nodeId]?.opportunityGrades?.[opportunityId];
+}
+
+/**
+ * 노드 툴팁의 현장 기회 한 줄. 보급품은 현행대로 서 있을 때만 보이고, 확보 대상은 정찰한 뒤에만
+ * 등급·역할축이 붙는다 — 정찰 전에는 서 있어도 "등급·역할축 미확인"이다.
+ */
+function describeOpportunity(run, node, opp, knowledge, debugReveal) {
+  if (!opp) return null;
+  const here = debugReveal || knowledge === 'current';
+  if (opp.grade !== 'prize') return here ? `보급품 ${opp.usesRemaining}회 남음` : null;
+  const grade = debugReveal ? { tier: opp.tier, axis: opp.axis } : scoutedGradeOf(run, node.id, opp.id);
+  if (grade) {
+    return `확보 대상(${PRIZE_TIER_LABELS[grade.tier] || grade.tier} · ${PRIZE_AXIS_LABELS[grade.axis] || grade.axis}) ${opp.usesRemaining}회 남음`;
+  }
+  return here ? '확보 대상 있음 — 등급·역할축 미확인(정찰하면 보인다)' : null;
 }
 
 /**
@@ -408,11 +525,7 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false) {
     `${SECTOR_NAMES[n.sectorId]} · ${NODE_TYPE_LABELS[n.type] || n.type}${n.isGateway ? '(구역 출입구)' : ''} · ${knowledgeLabel}${debugReveal ? ' · DEBUG' : ''}`,
     exit ? (exit.kind === 'key' ? '숨겨진 열쇠 탈출구' : `표준 탈출구 ${exit.exitId} (${exitStatusLabel(exit)})`) : null,
     (knowledge === 'unknown' && !debugReveal) ? null : (hasThreat ? `위협 포착${threatCount ? ` (${threatCount}개 그룹)` : ''}` : '위협 없음(확인 시점 기준)'),
-    debugReveal && opp
-      ? (opp.grade === 'prize'
-        ? `확보 대상(${PRIZE_TIER_LABELS[opp.tier] || opp.tier} · ${PRIZE_AXIS_LABELS[opp.axis] || opp.axis}) ${opp.usesRemaining}회 남음`
-        : `보급품 ${opp.usesRemaining}회 남음`)
-      : null,
+    describeOpportunity(run, n, opp, knowledge, debugReveal),
     camera ? `카메라 ${run.disabledCameraIds?.includes(camera.id) ? '파괴됨' : (isCameraHackActive(run, camera.id) ? '해킹됨' : '작동 중')}` : null,
     accessInterface ? `접속 인터페이스 ${run.hackedInterfaceIds?.includes(accessInterface.id) ? '해킹됨' : '미해킹'}` : null,
     generator ? `배터리 발전기 ${run.disabledGeneratorIds.includes(generator.id) ? '무력화됨' : '작동 중'}` : null,
@@ -441,8 +554,11 @@ export function MapScreen() {
   const [logOpen, setLogOpen] = useState(false);
   const [debugReveal, setDebugReveal] = useState(false); // 디버그: 안개/미발견 상태 무시하고 전부 표시(순수 뷰 전환 — 실제 run 상태는 안 건드림)
   const [farmPlan, setFarmPlan] = useState(null);
+  const [edgeApproachMode, setEdgeApproachMode] = useState('normal'); // 특수 엣지 개방의 접근 방식(안전/표준/강행)
+  const [capabilityOpen, setCapabilityOpen] = useState(false); // Capability 블록은 기본 접힘 — 행동이 위로 온다
   const [farmToast, setFarmToast] = useState(null);
   const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0, moved: false });
+  const nodeRefs = useRef({}); // nodeId -> 히트 영역 엘리먼트(화살표 이동이 포커스를 옮길 때 쓴다)
   const snapshot = snapshotSignal.value;
   const ps = snapshot.playerState;
   const run = snapshot.facilityRunState;
@@ -494,6 +610,9 @@ export function MapScreen() {
   const currentInterfaceHacked = !!currentInterface && (run.hackedInterfaceIds || []).includes(currentInterface.id);
   const cameraRange = cameraHackRange(capabilities.hacking);
   const cameraHops = bfsHopDistances(run.graph.edges, run.playerNodeId);
+  // 같은 표를 위치 서술(`통신·관제탑 · 인접 1홉`)에도 쓴다 — 노드 id는 지도에서 찾을 수 없다.
+  const playerHops = cameraHops;
+  const whereIs = (nodeId) => describeNodeLocation(run, nodeId, playerHops);
   const canHackDevice = (nodeId) => {
     if (capabilities.hacking < 1) return false;
     const targetSectorId = run.graph.nodes.find((node) => node.id === nodeId)?.sectorId;
@@ -525,9 +644,12 @@ export function MapScreen() {
   );
   const currentSpecialEdges = run.graph.edges.filter((e) => openableEdgeIds.has(e.id));
   /** 이 엣지를 여는 데 필요한 Capability 수치와 현재 유효치. 승강기처럼 1보다 높은 것이 있다. */
+  // 층계 판정은 원시 수치를 그대로 쓴다(capabilityCosts.capabilityStep). 여기서 max(0, x)로
+  // 자르면 화면만 엔진과 다른 판정을 하게 되고, 그러면 버튼이 "열 수 있다"고 예고한 문을
+  // 클릭 핸들러가 거절한다.
   const edgeOpenRequirement = (edge) => {
     const kind = edge.features.includes('electronic') ? 'hacking' : 'force';
-    return { kind, required: edge.requiredCapability ?? 1, current: effectiveForRequirement(capabilities[kind]) };
+    return { kind, required: edge.requiredCapability ?? 1, current: capabilities[kind] };
   };
   const pickableEdgeIds = fieldPicker && fieldPicker.contract.fieldAction.targetKind === 'edge'
     ? new Set(candidateEdgesInRange(run.graph, run.playerNodeId, fieldPicker.contract.fieldAction.range).map((e) => e.id))
@@ -543,12 +665,48 @@ export function MapScreen() {
     )
     : null;
 
-  function runCommand(command) {
+  /**
+   * 커맨드를 보내고, 스냅샷이 그대로면 실패 사유를 말한다. "행동 실패 — 조건을 확인하세요"만
+   * 띄우면 플레이어는 무엇이 막았는지 알 수 없다 — 대부분은 조우이고, 그건 화면에 이미
+   * 드러나 있는 정보다.
+   * @param {object} command @param {string} [reason] 호출부가 아는 더 구체적인 사유.
+   */
+  function runCommand(command, reason) {
     const before = snapshotSignal.value;
     dispatch(command);
-    if (snapshotSignal.value === before) setError('행동 실패 — 조건을 확인하세요.');
-    else { setError(''); setFieldPicker(null); }
+    if (snapshotSignal.value !== before) { setError(''); setFieldPicker(null); return; }
+    if (encounterBlocks(run)) setError('조우 중이라 막혔습니다 — 회피하거나 전투에 들어가세요.');
+    else setError(reason || '행동 실패 — 조건을 확인하세요.');
   }
+
+  // 탭 정지점 하나 = 지금 선택한 노드(없으면 현재 위치). 화살표는 연결된 통로를 따라 옮긴다 —
+  // 지도는 격자가 아니므로 방향키는 "그 방향에 가장 가까운 이웃"으로 읽는다.
+  const focusedNodeId = selectedNodeId && chartedNodeIds.has(selectedNodeId) ? selectedNodeId : run.playerNodeId;
+  const ARROW_VECTORS = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  const moveFocusFrom = (nodeId, key) => {
+    const vector = ARROW_VECTORS[key];
+    const from = positions[nodeId];
+    if (!vector || !from) return false;
+    const neighbors = run.graph.edges
+      .map((e) => (e.from === nodeId ? e.to : e.to === nodeId ? e.from : null))
+      .filter((id) => id && chartedNodeIds.has(id));
+    let best = null;
+    let bestScore = 0;
+    for (const id of neighbors) {
+      const to = positions[id];
+      const length = Math.hypot(to.x - from.x, to.y - from.y) || 1;
+      const score = ((to.x - from.x) * vector[0] + (to.y - from.y) * vector[1]) / length;
+      if (score > 0.3 && score > bestScore) { best = id; bestScore = score; }
+    }
+    if (!best) return false;
+    setSelectedNodeId(best);
+    nodeRefs.current[best]?.focus?.();
+    return true;
+  };
+  const handleNodeKeyDown = (ev, nodeId) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { handleNodeSelect(nodeId); return; }
+    if (ARROW_VECTORS[ev.key] && moveFocusFrom(nodeId, ev.key)) ev.preventDefault();
+  };
 
   const handleNodeSelect = (nodeId) => {
     if (dragRef.current.moved) return; // 지도 드래그 끝에 이어진 클릭은 무시
@@ -557,6 +715,7 @@ export function MapScreen() {
 
   const handleMove = (nodeId) => {
     if (!isTrueAdjacent(run, nodeId)) return;
+    if (encounterBlocks(run)) { setError('조우 중이라 막혔습니다 — 회피하거나 전투에 들어가세요.'); return; }
     runCommand({ type: 'MOVE_TO_NODE', nodeId });
     setSelectedNodeId(null);
   };
@@ -569,13 +728,16 @@ export function MapScreen() {
       return;
     }
     if (!openableEdgeIds.has(edge.id)) return;
+    if (encounterBlocks(run)) { setError('조우 중이라 막혔습니다 — 회피하거나 전투에 들어가세요.'); return; }
     const requirement = edgeOpenRequirement(edge);
-    if (requirement.current < requirement.required) {
-      setError(`${requirement.kind === 'hacking' ? 'Hacking' : 'Force'} ${requirement.required} 이상이 있어야 이 통로를 열 수 있습니다 (현재 ${requirement.current}).`);
+    // 층계(D8) 이후로 요구치 미달은 잠김이 아니라 "더 비싸게 열린다"이다. 버튼과 지도가 그렇게
+    // 예고하므로 클릭 가드도 같은 판정을 써야 한다 — 정말 막히는 것은 불가 단계뿐이다.
+    if (capabilityStep(requirement.current, requirement.required) === 'impossible') {
+      const kindLabel = requirement.kind === 'hacking' ? 'Hacking' : 'Force';
+      setError(`${kindLabel} ${requirement.required}이 표준, ${requirement.required - 2} 이상이면 대가를 치르고 열 수 있습니다(현재 ${requirement.current}).`);
       return;
     }
-    const kind = edge.features.includes('electronic') ? 'hacking' : 'force';
-    runCommand({ type: 'OPEN_SPECIAL_EDGE', edgeId: edge.id, capabilityKind: kind, mode: 'normal' });
+    runCommand({ type: 'OPEN_SPECIAL_EDGE', edgeId: edge.id, capabilityKind: requirement.kind, mode: edgeApproachMode });
   };
 
   const zoomBy = (factor) => setView((v) => ({ ...v, scale: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v.scale * factor)) }));
@@ -605,6 +767,11 @@ export function MapScreen() {
   const showHover = (ev, text) => setHover({ x: ev.clientX, y: ev.clientY, text });
   const hideHover = () => setHover(null);
   const recenterAt = (canvasX, canvasY) => setView((v) => ({ ...v, x: -(canvasX - CANVAS_CENTER) * v.scale, y: -(canvasY - CANVAS_CENTER) * v.scale }));
+  /** 패널 줄을 눌렀을 때 지도를 그 노드로 옮긴다 — 위치를 말로만 읽어 주면 결국 눈으로 찾아야 한다. */
+  const focusOnNode = (nodeId) => {
+    const pos = positions[nodeId];
+    if (pos) recenterAt(pos.x, pos.y);
+  };
 
   // 현재 뷰(팬/줌)에서 실제로 보이는 캔버스 좌표 범위 — 미니맵 뷰포트 사각형 계산용.
   const visibleRect = {
@@ -625,6 +792,18 @@ export function MapScreen() {
     && !(run.disabledCameraIds || []).includes(selectedCamera.id)
     && !isCameraHackActive(run, selectedCamera.id);
 
+  // 시간에 관한 화면 정보는 전부 mapTimeline의 순수 함수에서 온다 — 여기서 다시 세지 않는다.
+  const encounterBlocked = encounterBlocks(run);
+  const countdowns = runCountdowns(run);
+  const cooldownLabels = Object.fromEntries(fieldEquipment.map((eq) => [
+    eq.instanceId, FIELD_ACTION_LABELS[eq.contract.fieldAction.kind] || eq.contract.fieldAction.kind,
+  ]));
+  const timeline = upcomingEvents(run, TIMELINE_HORIZON, { cooldownLabels });
+  const threatMoves = observableThreatMoves(run);
+  const staleSightings = staleThreatSightings(run);
+  const interruption = interruptionNotice(run);
+  const waitNotice = waitBatchNotice(run);
+
   return html`
     <div style=${{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid var(--color-divider)', padding: 'var(--space-3) var(--space-6)', flexShrink: 0 }}>
@@ -643,11 +822,7 @@ export function MapScreen() {
               <${IconHeart} /><span>HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
             </div>
           <//>
-          <${Tooltip} content=${`시설이 붕괴되기까지 남은 시간입니다. ${RUN_COLLAPSE_TIME}에 도달하면 즉시 런이 종료됩니다(탈출 실패).`}>
-            <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
-              <${IconClock} /><span>시간 <strong>${run.time}</strong>/${RUN_COLLAPSE_TIME}</span>
-            </div>
-          <//>
+          <${MapClock} run=${run} countdowns=${countdowns} />
           <${Tooltip} content="현재 장착 장비가 만드는 과부화 바닥선 위로는 전투/현장 행동으로 계속 쌓입니다. 100을 넘겨도 런은 종료되지 않지만, 초과분은 전투 중 상태이상 카드로 전환됩니다.">
             <div style=${{ display: 'flex', alignItems: 'center', width: '130px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
               <${OverloadGauge} overload=${ps.overload} floor=${run.overloadFloor} compact=${true} />
@@ -690,26 +865,46 @@ export function MapScreen() {
       ${run.lastCameraDetection ? (() => {
         const elapsed = run.time - run.lastCameraDetection.detectedAt;
         const recent = elapsed <= CAMERA_DETECTION_BANNER_WINDOW; // 최근 한동안만 "긴급"으로 강조 — 계속 안 사라지면 지금도 쫓기는 중처럼 읽혀서 오해를 줌.
+        const where = describeNodeLocation(run, run.lastCameraDetection.nodeId, playerHops);
         return html`
-          <div style=${{
-            fontSize: '12px', fontWeight: 800, padding: '7px var(--space-6)', flexShrink: 0,
-            color: recent ? 'var(--color-bg)' : 'var(--color-text)',
-            background: recent ? 'var(--color-negative, #dd2b0f)' : 'var(--color-neutral-200)',
-          }}>
-            카메라 발각 — ${run.lastCameraDetection.nodeId}에서 ${elapsed}포인트 전 위치가 노출됐습니다.${recent ? ' 반경 3홉 내 적이 이 위치로 이동했습니다.' : ''}
+          <div
+            style=${{
+              fontSize: '12px', fontWeight: 800, padding: '7px var(--space-6)', flexShrink: 0, cursor: 'pointer',
+              color: recent ? 'var(--color-bg)' : 'var(--color-text)',
+              background: recent ? 'var(--color-negative, #dd2b0f)' : 'var(--color-neutral-200)',
+            }}
+            onMouseEnter=${() => setHoveredNodeId(run.lastCameraDetection.nodeId)}
+            onMouseLeave=${() => setHoveredNodeId(null)}
+            onClick=${() => focusOnNode(run.lastCameraDetection.nodeId)}
+          >
+            카메라 발각 — ${where}에서 ${elapsed}칸 전 위치가 노출됐습니다.${recent ? ' 반경 3홉 내 적이 이 위치로 이동했습니다.' : ''}
           </div>
         `;
       })() : null}
 
-      ${run.encounter ? html`<${EncounterPanel} run=${run} capabilities=${capabilities} />` : null}
+      ${interruption ? html`
+        <div style=${{
+    fontSize: '12px', fontWeight: 700, padding: '7px var(--space-6)', flexShrink: 0,
+    color: 'var(--color-bg)', background: '#b45309',
+  }}>
+          ${interruption.text}
+        </div>
+      ` : null}
 
-      ${farmToast ? (() => {
-        const loot = farmLootDisplay(farmToast.loot);
-        return html`<div style=${{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, minWidth: '240px', padding: '10px 14px', border: '1px solid #15803d', borderLeft: '4px solid #15803d', background: '#f0fdf4', boxShadow: 'var(--shadow-lg)', color: '#14532d', fontSize: '12px' }}>
-          <div style=${{ fontWeight: 800, marginBottom: '2px' }}>파밍 획득</div>
-          <div><strong style=${{ color: loot.color }}>${loot.name}</strong>${loot.sub ? ` · ${loot.sub}` : ''}</div>
-        </div>`;
-      })() : null}
+      ${/* 떠 있는 것들은 한 컨테이너에 세로로 쌓는다 — 전에는 조우 패널과 파밍 토스트가 같은
+          좌표에 겹쳐 떠서, 파밍 직후 매복이 나면 그 사실을 알리는 토스트가 조우 패널 뒤에 가려졌다. */ null}
+      ${run.encounter || farmToast ? html`
+        <div style=${{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 30, display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', pointerEvents: 'none' }}>
+          ${farmToast ? (() => {
+            const loot = farmLootDisplay(farmToast.loot);
+            return html`<div style=${{ minWidth: '240px', padding: '10px 14px', border: '1px solid #15803d', borderLeft: '4px solid #15803d', background: '#f0fdf4', boxShadow: 'var(--shadow-lg)', color: '#14532d', fontSize: '12px', pointerEvents: 'auto' }}>
+              <div style=${{ fontWeight: 800, marginBottom: '2px' }}>파밍 획득</div>
+              <div><strong style=${{ color: loot.color }}>${loot.name}</strong>${loot.sub ? ` · ${loot.sub}` : ''}</div>
+            </div>`;
+          })() : null}
+          ${run.encounter ? html`<div style=${{ pointerEvents: 'auto' }}><${EncounterPanel} run=${run} capabilities=${capabilities} /></div>` : null}
+        </div>
+      ` : null}
 
       <div style=${{ display: 'flex', flex: 1, minHeight: 0 }}>
         <div style=${{ position: 'relative', flex: 1, background: 'var(--color-bg)' }}
@@ -807,11 +1002,15 @@ export function MapScreen() {
                   // 같은 배치 원형이 방들 사이에 묻히지 않고 한눈에 읽힌다.
                   const isSpine = !special && PASSAGE_TYPES.has(nodeTypeById[e.from]) && PASSAGE_TYPES.has(nodeTypeById[e.to]);
                   const stroke = barrier ? 'var(--color-neutral-900)' : pickable ? 'var(--color-accent)' : openable ? 'var(--color-accent-2-700)' : highGround ? '#7c3aed' : 'var(--color-divider)';
-                  const barrierLabel = barrier ? ` — 임시 장벽 활성(적 이동 차단, 만료 ${barrier.expiresAt})` : '';
+                  const barrierLabel = barrier ? ` — 임시 장벽 활성(적 이동 차단, ${leftTicksText(barrier.expiresAt, run.time)})` : '';
                   const oneWay = e.bidirectional === false && revealed;
                   const levelNote = special && !opened && (e.requiredCapability ?? 1) > 1
-                    ? ` · ${e.features.includes('electronic') ? 'Hacking' : 'Force'} ${e.requiredCapability} 필요` : '';
-                  const edgeLabel = `${e.from} ${oneWay ? '→' : '↔'} ${e.to} — 이동 시간 ${e.timeCost}${oneWay ? ' — 일방통행(역방향 이동 불가)' : ''}${special ? ` — 특수 엣지(${e.features.join('/')})${opened ? ' · 개방됨' : ' · 미개방'}${levelNote}` : ''}${barrierLabel}`;
+                    ? ` · ${e.features.includes('electronic') ? 'Hacking' : 'Force'} ${e.requiredCapability}이 표준` : '';
+                  // 이동 시간은 **내 Mobility를 얹은 뒤**의 값이다 — 통로의 기본 비용만 보여 주면
+                  // 그 숫자로 도착 시각을 계산한 플레이어가 매번 틀린다.
+                  const walkTime = moveTimeCost(e, capabilities.mobility);
+                  const walkNote = walkTime === e.timeCost ? `${walkTime}칸` : `${walkTime}칸(기본 ${e.timeCost})`;
+                  const edgeLabel = `${whereIs(e.from)} ${oneWay ? '→' : '↔'} ${whereIs(e.to)} — 이동 시간 ${walkNote}${oneWay ? ' — 일방통행(역방향 이동 불가)' : ''}${special ? ` — 특수 엣지(${featureText(e.features)})${opened ? ' · 개방됨' : ' · 미개방'}${levelNote}` : ''}${barrierLabel}`;
                   const { d: pathD, midX, midY, angleDeg } = edgePath(from, to);
                   return html`
                     <g key=${e.id}>
@@ -842,7 +1041,11 @@ export function MapScreen() {
                 // displayKnowledge: 디버그 모드에서 색/투명도만 "다 보임"으로 바꾼다(진짜 knowledge는
                 // 그대로 둬서 이동 가능 판정 등 다른 로직은 안개 규칙을 그대로 따른다).
                 const displayKnowledge = debugReveal ? (n.id === run.playerNodeId ? 'current' : 'fresh') : knowledge;
-                const opportunity = debugReveal ? run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0) : null;
+                // 정찰로 등급을 확인한 확보 대상은 지도에 ◆로 남는다 — 4칸을 쓴 대가가 화면에
+                // 계속 보여야 "어디를 정찰할까"가 결정이 된다.
+                const opportunity = debugReveal
+                  ? run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0)
+                  : run.graph.opportunities.find((o) => o.nodeId === n.id && o.usesRemaining > 0 && scoutedGradeOf(run, n.id, o.id));
                 const nodeTitle = describeNode(run, n, threatsByNode, exitByNode, debugReveal).title;
                 const isSelected = n.id === selectedNodeId || (!selectedNodeId && n.id === run.playerNodeId);
                 const activelyObserved = activeReconNodeIds.has(n.id);
@@ -873,17 +1076,21 @@ export function MapScreen() {
                     ${camera ? html`<text x=${pos.x - 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledCameraIds?.includes(camera.id) ? '#64748b' : (isCameraHackActive(run, camera.id) ? '#0ea5e9' : '#dc2626')} pointer-events="none">C</text>` : null}
                     ${hasInterface ? html`<text x=${pos.x + 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill="#7c3aed" pointer-events="none">I</text>` : null}
                     ${generator ? html`<text x=${pos.x} y=${pos.y + 22} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledGeneratorIds.includes(generator.id) ? '#64748b' : '#ca8a04'} pointer-events="none">G</text>` : null}
+                    ${/* roving tabindex — 탭 순서에 노드가 160개 들어가면 키보드로는 사이드바에
+                        닿을 수 없다. 탭 정지점은 지금 보고 있는 노드 하나뿐이고, 나머지는 그
+                        자리에서 화살표로 옮겨 다닌다. */ null}
                     <circle
+                      ref=${(el) => { if (el) nodeRefs.current[n.id] = el; else delete nodeRefs.current[n.id]; }}
                       cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="transparent"
                       style=${{ cursor: 'pointer' }}
                       onClick=${() => handleNodeSelect(n.id)}
                       onMouseEnter=${(ev) => { showHover(ev, nodeTitle); setHoveredNodeId(n.id); }}
                       onMouseMove=${(ev) => showHover(ev, nodeTitle)}
                       onMouseLeave=${() => { hideHover(); setHoveredNodeId(null); }}
-                      tabindex="0"
+                      tabindex=${n.id === focusedNodeId ? 0 : -1}
                       onFocus=${(ev) => { showHover(ev, nodeTitle); setHoveredNodeId(n.id); }}
                       onBlur=${() => { hideHover(); setHoveredNodeId(null); }}
-                      onKeyDown=${(ev) => { if (ev.key === 'Enter' || ev.key === ' ') handleNodeSelect(n.id); }}
+                      onKeyDown=${(ev) => handleNodeKeyDown(ev, n.id)}
                     ></circle>
                   </g>
                 `;
@@ -956,13 +1163,13 @@ export function MapScreen() {
               <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', width: 'fit-content' }}>
                 경계도 ${currentSectorAlert ? currentSectorAlert.level : '-'}/3${(() => {
     const cut = (run.powerCuts || []).find((c) => c.sectorId === currentSectorId && c.expiresAt > run.time);
-    return cut ? ` · 전원 차단 중(${cut.expiresAt}까지 상승 멈춤)` : '';
+    return cut ? ` · 전원 차단 중(${leftTicksText(cut.expiresAt, run.time)} · 그동안 상승 멈춤)` : '';
   })()}
               </div>
             <//>
             ${currentSectorId && run.revealedPatrolRouteSectorIds.includes(currentSectorId) && run.reinforcements?.[currentSectorId] ? html`
               <${Tooltip} align="left" content="통제실을 장악해 이 구역의 교대 일정이 보입니다. 증원은 구역 관문(⇄)으로 들어오며, 전투로 비운 자리만 채웁니다.">
-                <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', width: 'fit-content' }}>다음 증원 ${run.reinforcements[currentSectorId].nextAt}</div>
+                <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', width: 'fit-content' }}>다음 증원 ${inTicksText(run.reinforcements[currentSectorId].nextAt, run.time)}</div>
               <//>
             ` : null}
             <div style=${{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap' }}>
@@ -978,32 +1185,79 @@ export function MapScreen() {
           </div>
 
           <div style=${{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--color-divider)' }}>
-            <h4 style=${{ margin: '0 0 8px' }}>Capability</h4>
-            <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-              ${CAPABILITY_ORDER.map((key) => {
-                const raw = capabilities[key];
-                const eff = effectiveForRequirement(raw);
-                return html`
-                  <${Tooltip} key=${key} width=${240} align="left" content=${`${CAPABILITY_LABELS[key]} — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(요구치 판정 시 유효치 ${eff}). ${capabilityActionSummary(key, raw)}`}>
-                    <span class="tag tag-outline">${CAPABILITY_SHORT[key]} ${raw >= 0 ? '+' : ''}${raw}</span>
-                  <//>
-                `;
-              })}
-            </div>
+            <${Tooltip} align="left" width=${260} content=${`지금부터 ${TIMELINE_HORIZON}칸 안에 일어나는, 지금 알 수 있는 사건만 시각순으로 보여줍니다. 그보다 먼 것은 위의 카운터 숫자로 읽습니다. 관측하지 못한 위협의 위치와 이동은 여기 나오지 않습니다.`}>
+              <h4 style=${{ margin: '0 0 6px', width: 'fit-content' }}>앞으로 ${TIMELINE_HORIZON}칸</h4>
+            <//>
+            ${timeline.length === 0
+    ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)' }}>${TIMELINE_HORIZON}칸 안에 예정된 사건이 없습니다.</div>`
+    : html`<div style=${{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              ${timeline.map((event) => html`
+                <div
+                  key=${`${event.at}:${event.text}`}
+                  style=${{
+                    display: 'flex', gap: '6px', fontSize: '10.5px', cursor: event.nodeId ? 'pointer' : 'default',
+                    ...(event.kind === 'collapse' || event.kind === 'closure' ? deadlineStyle(event.inTicks) : { color: 'var(--color-neutral-700)' }),
+                  }}
+                  onMouseEnter=${() => { if (event.nodeId) setHoveredNodeId(event.nodeId); }}
+                  onMouseLeave=${() => { if (event.nodeId) setHoveredNodeId(null); }}
+                  onClick=${() => { if (event.nodeId) focusOnNode(event.nodeId); }}
+                >
+                  <span style=${{ minWidth: '40px', fontWeight: 800, textAlign: 'right' }}>${event.inTicks}칸 후</span>
+                  <span>${event.text}</span>
+                </div>
+              `)}
+            </div>`}
+          </div>
+
+          <div style=${{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--color-divider)' }}>
+            <h4 style=${{ margin: '0 0 6px' }}>위협</h4>
+            ${threatMoves.length === 0 && staleSightings.length === 0
+    ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)' }}>지금 보고 있는 위협이 없습니다.</div>`
+    : html`<div style=${{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              ${threatMoves.map((threat) => html`
+                <${Tooltip} key=${threat.id} align="left" width=${250} content=${`${whereIs(threat.nodeId)}에서 관측 중입니다. 지금 상태(${THREAT_MODE_LABELS[threat.mode] || threat.mode})를 유지하면 ${threat.interval}칸마다 한 번 움직입니다 — 추적으로 바뀌면 더 빨라집니다. 어디로 갈지는 알 수 없습니다. 줄을 누르면 지도가 그 자리로 갑니다.`}>
+                  <div
+                    style=${{ fontSize: '10.5px', color: 'var(--color-negative, #dd2b0f)', fontWeight: 700, width: 'fit-content', cursor: 'pointer' }}
+                    onMouseEnter=${() => setHoveredNodeId(threat.nodeId)}
+                    onMouseLeave=${() => setHoveredNodeId(null)}
+                    onClick=${() => focusOnNode(threat.nodeId)}
+                  >
+                    ${whereIs(threat.nodeId)} · 다음 이동까지 ${threat.ticksUntilMove}칸
+                  </div>
+                <//>
+              `)}
+              ${staleSightings.slice(0, 4).map((sighting) => html`
+                <div
+                  key=${sighting.nodeId}
+                  style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', cursor: 'pointer', width: 'fit-content' }}
+                  onMouseEnter=${() => setHoveredNodeId(sighting.nodeId)}
+                  onMouseLeave=${() => setHoveredNodeId(null)}
+                  onClick=${() => focusOnNode(sighting.nodeId)}
+                >
+                  ${whereIs(sighting.nodeId)} · ${sighting.ticksAgo}칸 전 관측
+                </div>
+              `)}
+            </div>`}
           </div>
 
           <div style=${{ padding: 'var(--space-3) var(--space-4)', flex: 1 }}>
             <h4 style=${{ margin: '0 0 4px' }}>${selectedNodeId && selectedNodeId !== run.playerNodeId ? '선택 노드' : '현재 노드'}</h4>
             ${inspected ? html`
               <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>${inspected.title}</div>
-              ${inspected.knowledge === 'stale' && inspectedObservedAt != null ? html`<div style=${{ fontSize: '10.5px', fontStyle: 'italic', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>마지막 관측: 시간 ${inspectedObservedAt} 시점 — 그 사이 상황이 바뀌었을 수 있습니다.</div>` : null}
+              ${inspected.knowledge === 'stale' && inspectedObservedAt != null ? html`<div style=${{ fontSize: '10.5px', fontStyle: 'italic', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>${run.time - inspectedObservedAt}칸 전 관측 (시각 ${inspectedObservedAt}) — 그 사이 상황이 바뀌었을 수 있습니다.</div>` : null}
 
-              ${selectedNodeId && selectedNodeId !== run.playerNodeId && inspected.knowledge === 'fresh' ? html`
-                <button class="btn btn-primary" disabled=${!selectedEdgeTraversable} style=${{ fontSize: '12px', width: '100%', marginBottom: '2px' }} onClick=${() => handleMove(selectedNodeId)}>이 노드로 이동</button>
+              ${/* 이동 가능 여부는 "관측이 최신인가"가 아니라 "통로로 이어져 있는가"다 — 대기로
+                    인접 관측이 낡아도 옆 방으로 걸어갈 수 있다. */ null}
+              ${selectedNodeId && selectedNodeId !== run.playerNodeId && isTrueAdjacent(run, selectedNodeId) ? html`
+                <${Tooltip} align="left" width=${260} content=${encounterBlocked ? ENCOUNTER_BLOCK_NOTE : '인접 노드로 이동합니다. 이동 소음은 출발 시각에 나고, 도착 판정은 완료 칸에 한 번 합니다.'}>
+                  <button class="btn btn-primary" disabled=${!selectedEdgeTraversable || encounterBlocked} style=${{ fontSize: '12px', width: '100%', marginBottom: '2px' }} onClick=${() => handleMove(selectedNodeId)}>이 노드로 이동</button>
+                <//>
                 <div style=${{ fontSize: '10.5px', color: selectedEdgeTraversable ? 'var(--color-neutral-600)' : 'var(--color-negative, #dd2b0f)', marginBottom: '10px' }}>
                   ${selectedEdge?.features.includes('highGround') && capabilities.mobility < 3
                     ? `높은 지형 — Mobility 3 필요 (현재 ${capabilities.mobility})`
-                    : `기본 시간 ${selectedEdge?.timeCost ?? '?'} · Mobility 보정 적용`}
+                    : (selectedEdge
+                      ? describeForecast(forecastAction('move', { edge: selectedEdge, value: capabilities.mobility }), '이동')
+                      : '경로 없음')}
                 </div>
                 ${selectedEdgeTraversable ? html`<div style=${{ fontSize: '10.5px', color: movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).color, marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).label}</div>` : null}
                 ${selectedCameraActive && capabilities.stealth < 3 ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>카메라 감시: Stealth 3 미만으로 진입하면 발각되어 주변 적이 추적합니다.</div>` : null}
@@ -1013,15 +1267,41 @@ export function MapScreen() {
                 <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
                     <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>정찰</div>
-                    <${Tooltip} align="left" content="현재 노드와 인접 노드에 위협이 있는지 없는지만 확인합니다(정확한 수·경계 상태는 알 수 없음). 시간 80 소요, 소음 없음, 항상 성공합니다.">
-                      <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%' }} onClick=${() => runCommand({ type: 'BASIC_RECON' })}>기본 정찰</button>
-                    <//>
+                    <${ActionButton}
+                      run=${run} actionId="recon"
+                      label="기본 정찰"
+                      tip="현재 노드와 인접 노드에 위협이 있는지 없는지만 확인합니다(정확한 수·경계 상태는 알 수 없음). 소음 없이 항상 성공하며, 완료 시점의 상태를 관측합니다. 도중에 적이 도착하면 중단되어 아무것도 얻지 못합니다."
+                      onClick=${() => runCommand({ type: 'BASIC_RECON' })}
+                    />
                     ${run.activeRecon ? html`
                       <div style=${{ marginTop: '5px', padding: '5px 7px', borderLeft: '3px solid #0ea5e9', background: 'rgba(14, 165, 233, 0.10)', fontSize: '10.5px' }}>
                         실시간 정찰 중 · ${run.activeRecon.source === 'camera' ? `카메라 ${run.activeRecon.sourceNodeId}` : '현재 위치'}
-                        ${run.activeRecon.expiresAt == null ? ' · 이동/다른 정찰 전까지 유지' : ` · ${run.activeRecon.expiresAt}까지`}
+                        ${run.activeRecon.expiresAt == null ? ' · 이동/다른 정찰 전까지 유지' : ` · ${leftTicksText(run.activeRecon.expiresAt, run.time)}`}
                       </div>
                     ` : null}
+                  </div>
+
+                  <div>
+                    <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>대기</div>
+                    <div style=${{ display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                      <div style=${{ flex: 1 }}>
+                      <${ActionButton}
+                        run=${run} actionId="wait"
+                        label="대기"
+                        tip="시계를 1칸 진행시킵니다. HP·과부화·경계도는 회복되지 않습니다 — 개방·쿨다운·적 위치를 기다리는 용도입니다."
+                        onClick=${() => runCommand({ type: 'WAIT' })}
+                      />
+                      </div>
+                      <div style=${{ flex: 1 }}>
+                        <${ActionButton}
+                          run=${run} actionId="waitBatch" opts=${{ ticks: WAIT_BATCH_MAX_TICKS }}
+                          label="묶음 대기"
+                          tip=${`최대 ${WAIT_BATCH_MAX_TICKS}칸을 1칸씩 기다립니다. 새 조우, 출구 개방/폐쇄, 붕괴가 생기면 즉시 멈추고 실제로 흐른 칸만 소모됩니다 — 아래 칸 수는 그 최대치입니다.`}
+                          onClick=${() => runCommand({ type: 'WAIT_BATCH', ticks: WAIT_BATCH_MAX_TICKS })}
+                        />
+                      </div>
+                    </div>
+                    ${waitNotice ? html`<div style=${{ marginTop: '4px', fontSize: '10.5px', color: '#b45309', fontWeight: 700 }}>${waitNotice.text}</div>` : null}
                   </div>
 
                   ${(() => {
@@ -1035,9 +1315,12 @@ export function MapScreen() {
                         ${active
                           ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-accent-700)', fontWeight: 800 }}>사용 중 · 은신 +${run.activeConcealment.bonus} (이 노드를 벗어나면 사라짐)</div>`
                           : html`
-                            <${Tooltip} align="left" content=${`이 노드에 배치된 은엄폐(+${concealmentValue})를 사용해 이 자리에 머무는 동안 실효 Stealth를 올립니다. 시간 20 소요. 다른 노드로 이동하면 사라집니다.`}>
-                              <button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', borderColor: 'var(--color-accent)', color: 'var(--color-accent-700)' }} onClick=${() => runCommand({ type: 'USE_CONCEALMENT' })}>은엄폐 사용 (은신 +${concealmentValue}, 시간 20)</button>
-                            <//>
+                            <${ActionButton}
+                              run=${run} actionId="concealment"
+                              label=${`은엄폐 사용 (은신 +${concealmentValue})`}
+                              tip=${`이 노드에 배치된 은엄폐(+${concealmentValue})를 사용해 이 자리에 머무는 동안 실효 Stealth를 올립니다. 다른 노드로 이동하면 사라집니다.`}
+                              onClick=${() => runCommand({ type: 'USE_CONCEALMENT' })}
+                            />
                           `}
                       </div>
                     `;
@@ -1052,26 +1335,26 @@ export function MapScreen() {
     : `미해킹 · 이 노드에서 먼저 접속 인터페이스를 해킹해야 구역 원격 접속이 열립니다. Hacking ${capabilities.hacking}의 직접 사거리는 ${cameraRange}홉입니다.`}
                       </div>
                       ${!currentInterfaceHacked ? html`
-                        <${LadderButton}
-                          kind="hacking" value=${capabilities.hacking}
-                          label="접속 인터페이스 해킹 (시간 100 · 과부화 +6)"
+                        <${ActionButton}
+                          run=${run} actionId="hackInterface" opts=${{ value: capabilities.hacking }}
+                          label="접속 인터페이스 해킹"
                           tip="이 노드의 접속 인터페이스를 장악하면, 이 구역에서 이미 발견한 카메라·발전기에 거리와 무관하게 원격 접속할 수 있습니다."
                           onClick=${() => runCommand({ type: 'HACK_ACCESS_INTERFACE', interfaceId: currentInterface.id })}
                         />
                       ` : null}
                       ${hackableCameras.length > 0 ? hackableCameras.map((camera) => html`
-                        <${LadderButton}
-                          key=${camera.id} kind="hacking" value=${capabilities.hacking}
+                        <${ActionButton}
+                          key=${camera.id} run=${run} actionId="hackCamera" opts=${{ value: capabilities.hacking }}
                           label=${`${camera.nodeId} 카메라 해킹 (${currentInterfaceHacked ? '구역 원격' : `${cameraHops.get(camera.nodeId) ?? '?'}홉 직접`})`}
-                          tip="그 카메라를 300시간 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다. 시간 100 · 과부화 +6."
+                          tip=${`그 카메라를 ${CAMERA_HACK_DURATION}칸 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다.`}
                           onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}
                         />
                       `) : null}
                       ${hackableGenerators.map((generator) => html`
-                        <${LadderButton}
-                          key=${generator.id} kind="hacking" value=${capabilities.hacking}
-                          label=${`배터리 발전기 ${currentInterfaceHacked ? '원격' : '직접'} 무력화 (${currentInterfaceHacked ? '구역 원격' : `${cameraHops.get(generator.nodeId) ?? '?'}홉`} · 과부화 +6)`}
-                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다. 시간 100 · 과부화 +6."
+                        <${ActionButton}
+                          key=${generator.id} run=${run} actionId="disableGeneratorHack" opts=${{ value: capabilities.hacking }}
+                          label=${`배터리 발전기 ${currentInterfaceHacked ? '원격' : '직접'} 무력화 (${currentInterfaceHacked ? '구역 원격' : `${cameraHops.get(generator.nodeId) ?? '?'}홉`})`}
+                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다."
                           onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}
                         />
                       `)}
@@ -1083,18 +1366,18 @@ export function MapScreen() {
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>직접 해킹</div>
                       <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>Hacking ${capabilities.hacking} · 현재 노드는 Hacking 1부터, 이후 레벨마다 직접 사거리가 1홉씩 늘어납니다.</div>
                       ${hackableCameras.map((camera) => html`
-                        <${LadderButton}
-                          key=${camera.id} kind="hacking" value=${capabilities.hacking}
+                        <${ActionButton}
+                          key=${camera.id} run=${run} actionId="hackCamera" opts=${{ value: capabilities.hacking }}
                           label=${`${camera.nodeId} 카메라 해킹 (${cameraHops.get(camera.nodeId)}홉)`}
-                          tip="그 카메라를 300시간 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다. 시간 100 · 과부화 +6."
+                          tip=${`그 카메라를 ${CAMERA_HACK_DURATION}칸 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다.`}
                           onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}
                         />
                       `)}
                       ${hackableGenerators.map((generator) => html`
-                        <${LadderButton}
-                          key=${generator.id} kind="hacking" value=${capabilities.hacking}
-                          label=${`배터리 발전기 해킹 무력화 (${cameraHops.get(generator.nodeId)}홉 · 과부화 +6)`}
-                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다. 시간 100 · 과부화 +6."
+                        <${ActionButton}
+                          key=${generator.id} run=${run} actionId="disableGeneratorHack" opts=${{ value: capabilities.hacking }}
+                          label=${`배터리 발전기 해킹 무력화 (${cameraHops.get(generator.nodeId)}홉)`}
+                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다."
                           onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}
                         />
                       `)}
@@ -1107,12 +1390,12 @@ export function MapScreen() {
                       <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
                         ${(run.disabledCameraIds || []).includes(currentCamera.id)
     ? '파괴됨 · 더 이상 감지하지 않습니다.'
-    : '해킹은 300시간 동안 정찰을 제공하고, 파괴는 영구적으로 감지를 막지만 소음을 발생시킵니다.'}
+    : `해킹은 ${CAMERA_HACK_DURATION}칸 동안 정찰을 제공하고, 파괴는 영구적으로 감지를 막지만 소음을 발생시킵니다.`}
                       </div>
                       ${!(run.disabledCameraIds || []).includes(currentCamera.id) ? html`
-                        <${LadderButton}
-                          kind="force" value=${capabilities.force}
-                          label="카메라 파괴 (시간 100 · 소음 2)"
+                        <${ActionButton}
+                          run=${run} actionId="destroyCamera" opts=${{ value: capabilities.force }}
+                          label="카메라 파괴"
                           tip="이 노드의 카메라를 영구히 부숩니다. 해킹과 달리 되살아나지 않지만 소음이 크고, Force가 모자라면 장착 무기의 내구도까지 깎입니다."
                           onClick=${() => runCommand({ type: 'DESTROY_CAMERA', cameraId: currentCamera.id })}
                         />
@@ -1125,9 +1408,9 @@ export function MapScreen() {
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#ca8a04', marginBottom: '4px' }}>배터리 발전기</div>
                       <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>${run.disabledGeneratorIds.includes(currentGenerator.id) ? '무력화됨 — 이 구역 적의 시작 갑옷 보너스가 없습니다.' : '가동 중 — 이 구역 모든 적은 전투 시작 시 갑옷 5를 얻습니다.'}</div>
                       ${!run.disabledGeneratorIds.includes(currentGenerator.id) ? html`
-                        <${LadderButton}
-                          kind="force" value=${capabilities.force}
-                          label="Force로 발전기 무력화 (시간 100 · 소음 2)"
+                        <${ActionButton}
+                          run=${run} actionId="disableGeneratorForce" opts=${{ value: capabilities.force }}
+                          label="Force로 발전기 무력화"
                           tip="발전기를 부숴 이 구역 적의 전투 시작 갑옷 5를 없앱니다. 해킹과 달리 이 노드에 서 있어야 하고 소음이 큽니다."
                           onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: currentGenerator.id, capabilityKind: 'force' })}
                         />` : null}
@@ -1135,10 +1418,14 @@ export function MapScreen() {
                   ` : null}
 
                   ${currentLandmark ? (() => {
-                    const level = Math.max(0, Math.min(3, effectiveForRequirement(capabilities.hacking)));
+                    // 엔진과 같은 식으로 센다(runEngine.hackControlRoom: max(1, 해킹)). 화면만
+                    // max(0, …)으로 자르면 해킹 0으로 장악했을 때 1레벨이 잠긴 것처럼 보인다.
+                    const level = Math.min(3, Math.max(1, capabilities.hacking));
                     const rows = [
                       { level: 1, label: '순찰경로 영구 표시' },
-                      { level: 2, label: `경계도 -${Math.max(0, level - 1)}` },
+                      // 잠긴 줄은 아직 값이 정해지지 않았다 — `경계도 -0`이라고 적으면 도달해도
+                      // 아무 일도 없는 것처럼 읽힌다. 그 줄에는 공식을 그대로 보인다.
+                      { level: 2, label: level >= 2 ? `경계도 -${level - 1}` : '경계도 −(해킹−1)' },
                       { level: 3, label: '인접 구역 경계도 -1' },
                     ];
                     return html`
@@ -1158,10 +1445,10 @@ export function MapScreen() {
                             </div>
                           `)}
                         </div>
-                        <${LadderButton}
-                          kind="hacking" value=${capabilities.hacking}
-                          label="통제실 해킹 실행"
-                          tip="구역 랜드마크 노드에서만 시도할 수 있습니다. 접속 인터페이스 해킹과는 별개입니다. 시간 150 · 과부화 +10. Hacking이 모자라도 시도할 수 있지만, 그때 얻는 것은 1레벨(순찰경로 공개)까지입니다."
+                        <${ActionButton}
+                          run=${run} actionId="controlRoom" opts=${{ value: capabilities.hacking }}
+                          label="통제실 장악"
+                          tip="구역 랜드마크 노드에서만 시도할 수 있습니다. 접속 인터페이스 해킹과는 별개입니다. Hacking이 모자라도 시도할 수 있지만, 그때 얻는 것은 1레벨(순찰경로 공개)까지입니다."
                           onClick=${() => runCommand({ type: 'HACK_CONTROL_ROOM' })}
                         />
                       </div>
@@ -1181,9 +1468,11 @@ export function MapScreen() {
                       statusLine = atObjective ? '물건을 확보하세요.' : `목표부(${SECTOR_NAMES[contract.sectorId]} · ${LANDMARKS_BY_SECTOR[contract.sectorId].name})에서 확보할 수 있습니다.`;
                       // Stealth와 Mobility 중 높은 쪽으로 친다 — 엔진이 그렇게 판정하므로 표시도 같아야 한다.
                       const kind = capabilities.mobility > capabilities.stealth ? 'mobility' : 'stealth';
-                      button = html`<${LadderButton}
-                        kind=${kind} value=${Math.max(capabilities.stealth, capabilities.mobility)} disabled=${!atObjective}
-                        label="물건 확보 (시간 120 · 과부화 +8)"
+                      button = html`<${ActionButton}
+                        run=${run} actionId="contractRetrieve"
+                        opts=${{ value: Math.max(capabilities.stealth, capabilities.mobility), capabilityKind: kind }}
+                        disabled=${!atObjective}
+                        label="물건 확보"
                         tip="조용히든 빠르게든 물건을 들고 나옵니다 — Stealth와 Mobility 중 높은 쪽으로 판정하고, 모자라면 그 수단의 통화로 값을 치릅니다. 확보하는 순간 봉쇄가 켜집니다."
                         onClick=${() => runCommand({ type: 'ACQUIRE_CONTRACT_GOODS' })}
                       />`;
@@ -1191,25 +1480,25 @@ export function MapScreen() {
                       statusLine = '물건을 들고 탈출구를 밟으면 완료됩니다. 버리면 계약이 실패합니다.';
                     } else if (contract.type === 'destroy' && contract.status === 'accepted') {
                       statusLine = atObjective ? '목표를 파괴하세요.' : `목표부(${SECTOR_NAMES[contract.sectorId]} · ${LANDMARKS_BY_SECTOR[contract.sectorId].name})에서 파괴할 수 있습니다.`;
-                      button = html`<${LadderButton}
-                        kind="force" value=${capabilities.force} disabled=${!atObjective}
-                        label="목표 파괴 (시간 180 · 과부화 +15)"
+                      button = html`<${ActionButton}
+                        run=${run} actionId="contractDestroy" opts=${{ value: capabilities.force }} disabled=${!atObjective}
+                        label="목표 파괴"
                         tip="목표부를 부숩니다. 확보와 완료가 동시라 이 한 번으로 계약이 끝나지만, 그 순간 봉쇄가 켜집니다."
                         onClick=${() => runCommand({ type: 'DESTROY_CONTRACT_TARGET' })}
                       />`;
                     } else if (contract.type === 'intel' && contract.status === 'accepted') {
                       statusLine = atObjective ? '데이터를 확보하세요.' : `목표부(${SECTOR_NAMES[contract.sectorId]} · ${LANDMARKS_BY_SECTOR[contract.sectorId].name})에서 확보할 수 있습니다.`;
-                      button = html`<${LadderButton}
-                        kind="hacking" value=${capabilities.hacking} disabled=${!atObjective}
-                        label="데이터 확보 (시간 120 · 과부화 +8)"
+                      button = html`<${ActionButton}
+                        run=${run} actionId="contractIntel" opts=${{ value: capabilities.hacking }} disabled=${!atObjective}
+                        label="데이터 확보"
                         tip="목표부에서 데이터를 땁니다. 이것만으로는 완료가 아니며, 이후 아무 구역 랜드마크에서 송출해야 합니다. 확보하는 순간 봉쇄가 켜집니다."
                         onClick=${() => runCommand({ type: 'ACQUIRE_CONTRACT_INTEL' })}
                       />`;
                     } else if (contract.type === 'intel' && contract.status === 'acquired') {
                       statusLine = atAnyLandmark ? '아무 랜드마크에서나 송출할 수 있습니다.' : '아무 구역 랜드마크에서나 송출하면 완료됩니다.';
-                      button = html`<${LadderButton}
-                        kind="hacking" value=${capabilities.hacking} disabled=${!atAnyLandmark}
-                        label="데이터 송출 (시간 100 · 과부화 +10)"
+                      button = html`<${ActionButton}
+                        run=${run} actionId="contractTransmit" opts=${{ value: capabilities.hacking }} disabled=${!atAnyLandmark}
+                        label="데이터 송출"
                         tip="확보한 데이터를 내보내면 계약이 완료됩니다. 목표부일 필요는 없고 아무 구역 랜드마크면 됩니다."
                         onClick=${() => runCommand({ type: 'TRANSMIT_CONTRACT_INTEL' })}
                       />`;
@@ -1235,24 +1524,27 @@ export function MapScreen() {
                     return html`
                       <div>
                         <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-negative, #dd2b0f)', marginBottom: '4px' }}>수습</div>
-                        ${cut ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>전원 차단 중 — ${cut.expiresAt}까지 이 구역 경계도가 오르지 않습니다(전자 자물쇠도 해킹 불가).</div>` : null}
+                        ${cut ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>전원 차단 중 — ${leftTicksText(cut.expiresAt, run.time)}. 그동안 이 구역 경계도가 오르지 않습니다(전자 자물쇠도 해킹 불가).</div>` : null}
                         ${currentCorpse ? html`
-                          <${Tooltip} align="left" content="여기 남은 시체를 치웁니다. 두고 가면 위협이 밟는 순간 신고되어 이 구역 경계도가 오르고 조사가 몰립니다.">
-                            <button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }} onClick=${() => runCommand({ type: 'DISPOSE_CORPSE' })}>시체 처리 (시간 200)</button>
-                          <//>
+                          <${ActionButton}
+                            run=${run} actionId="corpse"
+                            label="시체 처리"
+                            tip="여기 남은 시체를 치웁니다. 두고 가면 위협이 밟는 순간 신고되어 이 구역 경계도가 오르고 조사가 몰립니다."
+                            onClick=${() => runCommand({ type: 'DISPOSE_CORPSE' })}
+                          />
                         ` : null}
                         ${canClean ? html`
-                          <${LadderButton}
-                            kind="perception" value=${capabilities.perception}
-                            label=${`흔적 정리 ${currentTraces.length}개`}
-                            tip=${`이 노드에 남은 흔적 ${currentTraces.length}개를 지웁니다. 강한 흔적은 발견되면 경계도를 올리므로, 원인을 미리 없애는 수단입니다. 시간이 크고 그동안 무방비입니다.`}
+                          <${ActionButton}
+                            run=${run} actionId="cleanTraces" opts=${{ value: capabilities.perception }}
+                            label=${`흔적 정리(${currentTraces.length}개)`}
+                            tip=${`이 노드에 남은 흔적 ${currentTraces.length}개를 지웁니다. 강한 흔적은 발견되면 경계도를 올리므로, 원인을 미리 없애는 수단입니다. Perception이 높을수록 짧아지고, 그동안 무방비입니다.`}
                             onClick=${() => runCommand({ type: 'CLEAN_TRACES' })}
                           />
                         ` : null}
                         ${canCut ? html`
-                          <${LadderButton}
-                            kind="force" value=${capabilities.force}
-                            label="전원 차단 (기본 소음 3)"
+                          <${ActionButton}
+                            run=${run} actionId="cutPower" opts=${{ value: capabilities.force }}
+                            label="전원 차단"
                             tip="배전을 끊어 이 구역 경계도 상승을 한동안 멈춥니다. 낮추는 게 아니라 미루는 것입니다. 큰 소음이 나고, 그동안 이 구역 전자 자물쇠는 해킹으로 열 수 없습니다(Force로 뜯는 것은 됩니다)."
                             onClick=${() => runCommand({ type: 'CUT_POWER' })}
                           />
@@ -1265,10 +1557,10 @@ export function MapScreen() {
                             ? `${SECTOR_NAMES[target]}은 이미 경계도 3입니다 — 더 받을 수 없어 넘길 수 없습니다.`
                             : `이 구역 경계도를 1 낮추고 ${SECTOR_NAMES[target]}에 그만큼 넘깁니다. 총량은 그대로이고, 그쪽으로 위협의 시선까지 옮겨갑니다.`;
                           return html`
-                            <${LadderButton}
-                              key=${target} kind="deception" value=${capabilities.deception} disabled=${full}
-                              label=${`가짜 목표 → ${SECTOR_NAMES[target]} (경계도 ${run.sectorAlerts[target]?.level || 0}/3)`}
-                              tip=${tip}
+                            <${ActionButton}
+                              key=${target} run=${run} actionId="falseBroadcast" opts=${{ value: capabilities.deception }} disabled=${full}
+                              label=${`가짜 목표 → ${SECTOR_NAMES[target]}`}
+                              tip=${`${tip} 대상 구역 경계도는 현재 ${run.sectorAlerts[target]?.level || 0}/3입니다.`}
                               onClick=${() => runCommand({ type: 'BROADCAST_FALSE_TARGET', targetSectorId: target })}
                             />
                           `;
@@ -1285,17 +1577,26 @@ export function MapScreen() {
                         // 고른다(D10·D11). 누르기 전에 그 차이가 보여야 "저기까지 갈 만한가"를 묻는다.
                         const isPrize = opp.grade === 'prize';
                         const tier = opp.tier || 'normal';
-                        const time = isPrize ? PRIZE_FARM_TIME[tier] : SUPPLY_FARM_TIME;
-                        const noise = isPrize ? PRIZE_FARM_NOISE[tier] : SUPPLY_FARM_NOISE;
-                        const name = isPrize ? `확보 대상 · ${PRIZE_TIER_LABELS[tier]}` : '보급품';
+                        // 확보 대상의 등급·축은 그 노드를 정찰해야 보인다. 모르는 채로도 팔 수 있지만
+                        // (정보 없이 거는 도박을 남긴다) 그때는 값을 하나로 약속할 수 없어 범위로 적고,
+                        // 완료 시각·타이머 계산은 최악(상급)을 기준으로 보수적으로 낸다.
+                        const graded = !isPrize || debugReveal || prizeGradeKnown(run, opp.id, run.playerNodeId);
+                        const range = graded ? null : forecastUnknownPrizeFarm('normal');
+                        // 예고 = 실제 청구. 표준 접근 기준 칸 수와 소음을 엔진과 같은 함수에서 받는다.
+                        const forecast = forecastAction('farm', { isPrize, tier: graded ? tier : 'elite', mode: 'normal' });
+                        const timeText = range ? range.timeText : `${forecast.timeCost}칸`;
+                        const noiseText = range ? range.noiseText : `${forecast.noise}`;
+                        const name = isPrize ? `확보 대상 · ${graded ? PRIZE_TIER_LABELS[tier] : '등급 미확인'}` : '보급품';
                         const tip = isPrize
-                          ? `${PRIZE_AXIS_LABELS[opp.axis] || opp.axis} 계열 후보 ${PRIZE_OPTION_COUNT}개 중 하나를 골라 가져갑니다. 시간 ${time} · 소음 ${noise}로 길고 시끄러우며, 고르기 전에 이 자리를 뜨면 후보는 사라집니다. 앞으로 ${opp.usesRemaining}번 더 파밍할 수 있습니다.`
-                          : `이 노드의 보급품을 바로 챙깁니다. 시간 ${time} · 소음 ${noise}로 짧고 조용하며, 고를 것은 없습니다. 앞으로 ${opp.usesRemaining}번 더 파밍할 수 있습니다.`;
+                          ? (graded
+                            ? `${PRIZE_AXIS_LABELS[opp.axis] || opp.axis} 계열 후보 ${PRIZE_OPTION_COUNT}개 중 하나를 골라 가져갑니다. 표준 접근 ${timeText} · 소음 ${noiseText}로 길고 시끄러우며, 고르기 전에 이 자리를 뜨면 후보는 사라집니다. 앞으로 ${opp.usesRemaining}번 더 파밍할 수 있습니다.`
+                            : `등급과 역할축은 이 노드를 정찰해야 보입니다. 모르는 채로 팔 수 있고, 표준 접근 ${timeText} · 소음 ${noiseText} 중 실제 등급의 값이 그대로 청구됩니다. 후보 ${PRIZE_OPTION_COUNT}개는 파고 나서야 무슨 계열인지 알 수 있습니다.`)
+                          : `이 노드의 보급품을 바로 챙깁니다. 표준 접근 ${timeText} · 소음 ${noiseText}로 짧고 조용하며, 고를 것은 없습니다. 앞으로 ${opp.usesRemaining}번 더 파밍할 수 있습니다.`;
                         return html`
-                          <${Tooltip} key=${opp.id} align="left" content=${tip}>
-                            <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%', marginBottom: '4px' }} onClick=${() => setFarmPlan(opp)}>
-                              ${name}${currentOpportunities.length > 1 ? ` #${idx + 1}` : ''} (${opp.usesRemaining}회 남음)
-                              ${isPrize ? html`<span style=${{ fontSize: '10px', fontWeight: 800, color: '#b45309' }}> · ${PRIZE_AXIS_LABELS[opp.axis] || opp.axis} · 시간 ${time}</span>` : null}
+                          <${Tooltip} key=${opp.id} align="left" width=${260} content=${forecastTooltip(run, forecast, name, tip, encounterBlocked ? ENCOUNTER_BLOCK_NOTE : '')}>
+                            <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%', marginBottom: '4px' }} disabled=${encounterBlocked} onClick=${() => setFarmPlan(opp)}>
+                              ${name}${currentOpportunities.length > 1 ? ` #${idx + 1}` : ''} (${opp.usesRemaining}회 남음) · ${timeText}${forecast.noise ? ` · 소음 ${noiseText}` : ''}
+                              ${isPrize && graded ? html`<span style=${{ fontSize: '10px', fontWeight: 800, color: '#b45309' }}> · ${PRIZE_AXIS_LABELS[opp.axis] || opp.axis}</span>` : null}
                             </button>
                           <//>
                         `;
@@ -1306,15 +1607,23 @@ export function MapScreen() {
                     <div style=${{ padding: '8px', border: '1px solid #b45309', background: '#fffbeb', fontSize: '11px' }}>
                       <strong>파밍 계획</strong> · 실행 전 접근 방식을 고르거나 중단할 수 있습니다. 행동 중 적 유입 시 전투가 발생할 수 있습니다.
                       <div style=${{ display: 'flex', gap: '5px', marginTop: '6px', flexWrap: 'wrap' }}>
-                        <${Tooltip} content="시간 +40, 소음 -1(최소 0). 적 유입 위험은 낮지만 시설 붕괴 시간은 더 소비합니다.">
-                          <button class="btn btn-secondary" onClick=${() => { runCommand({ type: 'USE_OPPORTUNITY', opportunityId: farmPlan.id, mode: 'safe' }); setFarmPlan(null); }}>안전</button>
-                        <//>
-                        <${Tooltip} content=${`기본 시간 ${farmPlan.grade === 'prize' ? PRIZE_FARM_TIME[farmPlan.tier || 'normal'] : SUPPLY_FARM_TIME}, 기본 소음 ${farmPlan.grade === 'prize' ? PRIZE_FARM_NOISE[farmPlan.tier || 'normal'] : SUPPLY_FARM_NOISE}으로 파밍합니다. 시간과 위험의 표준 선택입니다.`}>
-                          <button class="btn btn-primary" onClick=${() => { runCommand({ type: 'USE_OPPORTUNITY', opportunityId: farmPlan.id, mode: 'normal' }); setFarmPlan(null); }}>파밍 실행</button>
-                        <//>
-                        <${Tooltip} content="시간 -40(최소 20), 소음 +1(최대 3). 빠르지만 적 유입·추적 위험이 커집니다.">
-                          <button class="btn btn-secondary" onClick=${() => { runCommand({ type: 'USE_OPPORTUNITY', opportunityId: farmPlan.id, mode: 'rush' }); setFarmPlan(null); }}>강행</button>
-                        <//>
+                        ${[
+    { mode: 'safe', label: '안전', note: '적 유입 위험은 낮지만 붕괴까지의 시간을 더 씁니다.' },
+    { mode: 'normal', label: '파밍 실행', note: '시간과 위험의 표준 선택입니다.' },
+    { mode: 'rush', label: '강행', note: '빠르지만 적 유입·추적 위험이 커집니다.' },
+  ].map(({ mode, label, note }) => {
+    const planIsPrize = farmPlan.grade === 'prize';
+    const planGraded = !planIsPrize || debugReveal || prizeGradeKnown(run, farmPlan.id, run.playerNodeId);
+    const planRange = planGraded ? null : forecastUnknownPrizeFarm(mode);
+    const forecast = forecastAction('farm', { isPrize: planIsPrize, tier: planGraded ? (farmPlan.tier || 'normal') : 'elite', mode });
+    const planTimeText = planRange ? planRange.timeText : `${forecast.timeCost}칸`;
+    const planNoiseText = planRange ? planRange.noiseText : `${forecast.noise}`;
+    return html`
+                          <${Tooltip} key=${mode} width=${260} content=${forecastTooltip(run, forecast, label, `${note} 소음 ${planNoiseText}.${planRange ? ' 등급을 모르므로 범위로 적습니다 — 실제 청구는 실제 등급의 값입니다.' : ''}`, '')}>
+                            <button class=${mode === 'normal' ? 'btn btn-primary' : 'btn btn-secondary'} onClick=${() => { runCommand({ type: 'USE_OPPORTUNITY', opportunityId: farmPlan.id, mode }); setFarmPlan(null); }}>${label} · ${planTimeText}${forecast.noise ? ` · 소음 ${planNoiseText}` : ''}</button>
+                          <//>
+                        `;
+  })}
                         <${Tooltip} content="아직 파밍을 시작하지 않고 선택창만 닫습니다. 시간·소음·아이템 변화가 없습니다.">
                           <button class="btn btn-secondary" onClick=${() => setFarmPlan(null)}>중단</button>
                         <//>
@@ -1365,20 +1674,31 @@ export function MapScreen() {
                   ${currentSpecialEdges.length > 0 ? html`
                     <div>
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>환경 조작</div>
+                      ${/* 파밍과 같은 3모드 선택 — 개방도 "시간을 더 쓰고 조용히"와 "빨리 시끄럽게"의
+                           선택이므로, 한쪽에만 모드를 주면 같은 결정을 두 규칙으로 배우게 된다. */ null}
+                      <div style=${{ display: 'flex', gap: '4px', marginBottom: '5px' }}>
+                        ${[['safe', '안전'], ['normal', '표준'], ['rush', '강행']].map(([mode, modeLabel]) => html`
+                          <button
+                            key=${mode}
+                            class=${edgeApproachMode === mode ? 'btn btn-primary' : 'btn btn-secondary'}
+                            style=${{ fontSize: '10px', padding: '2px 8px' }}
+                            onClick=${() => setEdgeApproachMode(mode)}
+                          >${modeLabel}</button>
+                        `)}
+                      </div>
                       ${currentSpecialEdges.map((edge) => {
-                        const kind = edge.features.includes('electronic') ? 'hacking' : 'force';
+                        const { kind, required, current } = edgeOpenRequirement(edge);
                         const kindLabel = kind === 'hacking' ? 'Hacking' : 'Force';
-                        const overOverload = wouldExceedOverload(run, ps, (s) => openSpecialEdge(s, edge.id, kind, capabilities[kind], 'normal'));
-                        const { required } = edgeOpenRequirement(edge);
                         // 층계(D8) 이후 요구치 미달은 잠김이 아니라 "더 비싸게 열린다"이다 — 그 대가를
                         // 버튼에 붙여 눌리기 전에 보이게 한다. 정말 막히는 것은 요구치보다 3 이상 낮을 때뿐.
-                        const ladder = ladderNote(kind, capabilities[kind], required);
                         return html`
-                          <${Tooltip} key=${edge.id} align="left" content=${`이 통로는 특수 엣지(${edge.features.join('/')})로 막혀 있습니다. ${kindLabel} ${required}이 표준이고, 모자라면 ${ladder.blocked ? '' : `대가를 치르고 열 수 있습니다(${ladder.note}). `}현재 ${kindLabel} 유효치: ${capabilities[kind]}. 지도에서 이 엣지를 직접 클릭해도 됩니다.${ladder.blocked ? ` ${ladder.note}.` : ''}${overOverload ? ' 지금 열면 과부화가 100을 넘어 비활성화되어 있습니다.' : ''}`}>
-                            <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%', marginBottom: '4px' }} disabled=${overOverload || ladder.blocked} onClick=${() => handleEdgeClick(edge)}>
-                              특수 엣지 개방 (${edge.features.join('/')})${required > 1 ? ` · ${kindLabel} ${required}` : ''} <${StepBadge} ladder=${ladder} />
-                            </button>
-                          <//>
+                          <${ActionButton}
+                            key=${edge.id} run=${run} actionId="openEdge"
+                            opts=${{ value: current, capabilityKind: kind, edge, mode: edgeApproachMode }}
+                            label=${`${featureText(edge.features)} 통로 개방`}
+                            tip=${`이 통로는 ${featureText(edge.features)}으로 막혀 있습니다. ${kindLabel} ${required}이 표준, ${required - 2} 이상이면 대가를 치르고 열 수 있습니다(현재 ${current}). 지도에서 이 엣지를 직접 클릭해도 됩니다.`}
+                            onClick=${() => handleEdgeClick(edge)}
+                          />
                         `;
                       })}
                     </div>
@@ -1392,20 +1712,20 @@ export function MapScreen() {
                         const label = FIELD_ACTION_LABELS[fa.kind] || fa.kind;
                         const onCooldown = (run.fieldCooldowns[eq.instanceId] || 0) > run.time;
                         const needsTarget = fa.targetKind !== 'node_contents';
-                        const overOverload = wouldExceedOverload(run, ps, (s) => applyOverloadDelta(s, fa.overloadGain));
-                        const disabled = onCooldown || overOverload;
+                        const disabled = onCooldown;
                         const handleClick = () => {
                           if (needsTarget) setFieldPicker({ instanceId: eq.instanceId, contract: eq.contract });
                           else runCommand({ type: 'USE_FIELD_EQUIPMENT', instanceId: eq.instanceId });
                         };
                         return html`
-                          <${Tooltip} key=${eq.instanceId} align="left" content=${`${eq.equipmentId} 능동 효과. ${FIELD_TARGET_LABELS[fa.targetKind] || fa.targetKind}. 시간 ${fa.timeCost}, 과부화 +${fa.overloadGain}, 재사용 대기 ${fa.cooldown}${fa.duration ? `, 지속 ${fa.duration}` : ''}.${onCooldown ? ' (현재 재사용 대기 중)' : ''}${overOverload ? ' 지금 쓰면 과부화가 100을 넘어 비활성화되어 있습니다.' : ''}${fa.targetKind === 'edge' ? ' 지도에서 강조된 엣지를 직접 클릭해 지정할 수 있습니다.' : ''}`}>
-                            <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%', marginBottom: '4px' }}
-                              disabled=${disabled}
-                              onClick=${handleClick}>
-                              ${label} 사용${needsTarget ? '…' : ''}
-                            </button>
-                          <//>
+                          <${ActionButton}
+                            key=${eq.instanceId} run=${run} actionId="fieldEquipment" opts=${{ contract: fa }}
+                            disabled=${disabled}
+                            label=${`${label} 사용${needsTarget ? '…' : ''}`}
+                            tip=${`${eq.equipmentId} 능동 효과. ${FIELD_TARGET_LABELS[fa.targetKind] || fa.targetKind}. 과부화 +${fa.overloadGain}, 재사용 대기 ${fa.cooldown}칸${fa.duration ? `, 지속 ${fa.duration}칸` : ''}.${fa.targetKind === 'edge' ? ' 지도에서 강조된 엣지를 직접 클릭해 지정할 수 있습니다.' : ''}`}
+                            disabledNote=${onCooldown ? `재사용 대기 중 — ${leftTicksText(run.fieldCooldowns[eq.instanceId] || 0, run.time)}.` : ''}
+                            onClick=${handleClick}
+                          />
                         `;
                       })}
                     </div>
@@ -1414,9 +1734,12 @@ export function MapScreen() {
                   ${currentExit && currentExit.kind === 'standard' && currentExit.status === 'closed' ? html`
                     <div>
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>탈출구</div>
-                      <${Tooltip} align="left" content="탈출구를 여는 절차를 시작합니다. 요청 후 Hacking Capability가 높을수록 개방까지 대기 시간이 짧아지고, 열리면 이 노드에서 다음 행동이 끝나는 즉시 자동으로 탈출합니다(별도 확정 불필요). 일정 시간이 지나면 창이 다시 닫힙니다.">
-                        <button class="btn btn-primary" style=${{ fontSize: '12px', width: '100%' }} onClick=${() => runCommand({ type: 'REQUEST_EXTRACTION', exitId: currentExit.exitId })}>탈출구 ${currentExit.exitId} 개방 요청 (Hacking ${effectiveForRequirement(capabilities.hacking)})</button>
-                      <//>
+                      <${ActionButton}
+                        run=${run} actionId="requestExtraction"
+                        label=${`탈출구 ${currentExit.exitId} 개방 요청 (Hacking ${capabilities.hacking})`}
+                        tip="탈출구를 여는 절차를 시작합니다. 요청 후 Hacking Capability가 높을수록 개방까지 대기 시간이 짧아지고, 열리면 이 노드에서 다음 행동이 끝나는 즉시 자동으로 탈출합니다(별도 확정 불필요). 일정 시간이 지나면 창이 다시 닫힙니다."
+                        onClick=${() => runCommand({ type: 'REQUEST_EXTRACTION', exitId: currentExit.exitId })}
+                      />
                     </div>
                   ` : null}
 
@@ -1428,29 +1751,46 @@ export function MapScreen() {
                           : `대상 노드 선택 (사거리 ${fieldPicker.contract.fieldAction.range})`}</strong>
                         <button class="btn btn-secondary" style=${{ fontSize: '10px', padding: '2px 7px' }} onClick=${() => setFieldPicker(null)}>취소</button>
                       </div>
-                      ${wouldExceedOverload(run, ps, (s) => applyOverloadDelta(s, fieldPicker.contract.fieldAction.overloadGain))
-                        ? html`<div style=${{ color: 'var(--color-negative, #dd2b0f)' }}>지금 이 장비를 쓰면 과부화가 100을 넘어, 어떤 대상을 골라도 실행할 수 없습니다.</div>`
-                        : html`
-                          <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                            ${fieldPicker.contract.fieldAction.targetKind === 'edge'
-                              ? candidateEdgesInRange(run.graph, run.playerNodeId, fieldPicker.contract.fieldAction.range).map((edge) => html`
-                                <button key=${edge.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
-                                  onClick=${() => runCommand({ type: 'USE_FIELD_EQUIPMENT', instanceId: fieldPicker.instanceId, targetId: edge.id })}>
-                                  ${edge.from} ↔ ${edge.to}
-                                </button>
-                              `)
-                              : candidateNodesInRange(run.graph, run.playerNodeId, fieldPicker.contract.fieldAction.range).map((node) => html`
-                                <button key=${node.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
-                                  onClick=${() => runCommand({ type: 'USE_FIELD_EQUIPMENT', instanceId: fieldPicker.instanceId, targetId: node.id })}>
-                                  ${SECTOR_NAMES[node.sectorId]} · ${node.id}
-                                </button>
-                              `)}
-                          </div>
-                        `}
+                      <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                        ${fieldPicker.contract.fieldAction.targetKind === 'edge'
+                          ? candidateEdgesInRange(run.graph, run.playerNodeId, fieldPicker.contract.fieldAction.range).map((edge) => html`
+                            <button key=${edge.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
+                              onClick=${() => runCommand({ type: 'USE_FIELD_EQUIPMENT', instanceId: fieldPicker.instanceId, targetId: edge.id })}>
+                              ${whereIs(edge.from)} ↔ ${whereIs(edge.to)}
+                            </button>
+                          `)
+                          : candidateNodesInRange(run.graph, run.playerNodeId, fieldPicker.contract.fieldAction.range).map((node) => html`
+                            <button key=${node.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
+                              onClick=${() => runCommand({ type: 'USE_FIELD_EQUIPMENT', instanceId: fieldPicker.instanceId, targetId: node.id })}>
+                              ${whereIs(node.id)}
+                            </button>
+                          `)}
+                      </div>
                     </div>
                   ` : null}
                 </div>
               ` : null}
+            ` : null}
+          </div>
+          <div style=${{ padding: 'var(--space-3) var(--space-4)', borderTop: '1px solid var(--color-divider)' }}>
+            ${/* 로드아웃은 런 중에 거의 바뀌지 않는다 — 매번 읽을 것이 아니라 확인할 것이므로
+                기본은 접어 두고, 행동 버튼이 사이드바 위쪽을 차지하게 한다. */ null}
+            <button
+              class="btn btn-secondary"
+              style=${{ fontSize: '11px', width: '100%', textAlign: 'left' }}
+              onClick=${() => setCapabilityOpen((v) => !v)}
+            >${capabilityOpen ? '▾' : '▸'} Capability — ${CAPABILITY_ORDER.map((key) => `${CAPABILITY_SHORT[key]} ${capabilities[key] >= 0 ? '+' : ''}${capabilities[key]}`).join(' · ')}</button>
+            ${capabilityOpen ? html`
+              <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', marginTop: '6px' }}>
+                ${CAPABILITY_ORDER.map((key) => {
+                  const raw = capabilities[key];
+                  return html`
+                    <${Tooltip} key=${key} width=${240} align="left" content=${`${CAPABILITY_LABELS[key]} — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다). ${capabilityActionSummary(key, raw)}`}>
+                      <span class="tag tag-outline">${CAPABILITY_SHORT[key]} ${raw >= 0 ? '+' : ''}${raw}</span>
+                    <//>
+                  `;
+                })}
+              </div>
             ` : null}
           </div>
         </div>

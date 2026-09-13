@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0054 and amended by ADR-0068
+status: superseded by ADR-0054 and amended by ADR-0075 and implementation spec (3칸·5~15칸)
 ---
 
 # 탈출구 활성화 뒤 30포인트 카운트다운과 자유 이동을 사용한다

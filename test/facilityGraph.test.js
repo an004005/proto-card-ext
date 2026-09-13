@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateFacilityGraph, computeWeightedDistance } from '../src/engine/facilityGraph.js';
-import { countEdgeDisjointPaths, reachableSet } from '../src/engine/graphUtils.js';
+import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { countEdgeDisjointPaths, reachableSet, baselineWalkDistances, baselineWalkArcs } from '../src/engine/graphUtils.js';
 import {
-  SECTOR_IDS, SECTOR_LAYOUTS, TOTAL_NODES, THREAT_COUNT_BY_SECTOR, EXIT_DISTANCE_RANGES,
+  SECTOR_IDS, SECTOR_LAYOUTS, TOTAL_NODES, THREAT_COUNT_BY_SECTOR, EXIT_AB_MIN_DISTANCE,
   ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR, TOWER_ELEVATOR_REQUIREMENT, NODE_MIN_SEPARATION,
   SECTOR_NODE_RADIUS,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
@@ -90,8 +90,17 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
   }
 });
 
-// #3 세 탈출구가 서로 다른 구역, A<열쇠<B, 각 범위 안, 2개 edge-disjoint 경로. fallback 사용률도 확인.
-test('exit placement satisfies distance ranges, ordering, distinct sectors, and 2 edge-disjoint paths', () => {
+/** ADR-0076 판정과 같은 기준의 A–B 거리 — 두 방향 중 짧은 쪽. */
+function abDistance(graph) {
+  const byId = Object.fromEntries(graph.exits.map((e) => [e.exitId, e.nodeId]));
+  return Math.min(
+    baselineWalkDistances(graph.edges, byId.A).get(byId.B) ?? Infinity,
+    baselineWalkDistances(graph.edges, byId.B).get(byId.A) ?? Infinity,
+  );
+}
+
+// #3 세 탈출구는 서로 다른 구역, 시작 구역 제외, 2개 edge-disjoint 경로. fallback 사용률도 확인.
+test('exit placement uses three distinct non-start sectors with 2 edge-disjoint paths', () => {
   let fallbackCount = 0;
   const sampleSize = 300;
   for (let seed = 0; seed < sampleSize; seed++) {
@@ -101,32 +110,47 @@ test('exit placement satisfies distance ranges, ordering, distinct sectors, and 
     assert.equal(graph.exits.length, 3, `seed ${seed}: exit count`);
     const bySectorSet = new Set(graph.exits.map((e) => e.sectorId));
     assert.equal(bySectorSet.size, 3, `seed ${seed}: exits must be in 3 distinct sectors`);
-
-    // §2.2 distance ranges are validated against the base facility graph (standard corridors
-    // only) at placement time and stored on the exit — that stored value is authoritative.
-    // Special edges (§4.2) are layered on afterwards as bonus shortcuts a player may or may not
-    // have the capability to use, so they can only ever make the *actual* graph distance equal
-    // or shorter, never invalidate the placement; we only sanity-check that direction here.
-    const byId = Object.fromEntries(graph.exits.map((e) => [e.exitId, e]));
-    for (const exitId of ['A', 'key', 'B']) {
-      const range = EXIT_DISTANCE_RANGES[exitId];
-      const stored = byId[exitId].weightedDistanceFromStart;
-      assert.ok(stored >= range.min && stored <= range.max, `seed ${seed}: exit ${exitId} distance ${stored} out of [${range.min},${range.max}]`);
-      const distWithSpecialEdges = computeWeightedDistance(graph.edges, graph.startNodeId, byId[exitId].nodeId);
-      assert.ok(distWithSpecialEdges <= stored, `seed ${seed}: exit ${exitId} full-graph distance ${distWithSpecialEdges} exceeds stored ${stored}`);
-    }
-    assert.ok(byId.A.weightedDistanceFromStart < byId.key.weightedDistanceFromStart, `seed ${seed}: A < key`);
-    assert.ok(byId.key.weightedDistanceFromStart < byId.B.weightedDistanceFromStart, `seed ${seed}: key < B`);
-
     for (const exit of graph.exits) {
-      const paths = countEdgeDisjointPaths(graph.edges, graph.startNodeId, exit.nodeId, 2);
-      assert.equal(paths, 2, `seed ${seed}: exit ${exit.exitId} has only ${paths} edge-disjoint path(s)`);
+      assert.notEqual(exit.sectorId, 'entrance', `seed ${seed}: exit ${exit.exitId} in the start sector`);
+      assert.equal(
+        graph.nodes.find((node) => node.id === exit.nodeId)?.sectorId, exit.sectorId,
+        `seed ${seed}: exit ${exit.exitId} sectorId disagrees with its node`,
+      );
+      // 퇴로는 **실제로 걸을 수 있는 간선**으로만 세야 한다 — 잠긴 통로는 물론이고 고지대
+      // (유효 Mobility 3 필요)와 환풍구의 역방향(일방통행)도 길이 아니다. 무향으로 세면
+      // 되돌아올 수 없는 통로가 두 번째 퇴로로 인정된다(시드 표본의 20%가 그렇게 통과했다).
+      const paths = countEdgeDisjointPaths(baselineWalkArcs(graph.edges), graph.startNodeId, exit.nodeId, 2, { directed: true });
+      assert.equal(paths, 2, `seed ${seed}: exit ${exit.exitId} has only ${paths} walkable edge-disjoint path(s)`);
     }
   }
   // §11.3 인수 기준 3의 99.5% 목표는 10,000 seed 전수 검증용. 여기서는 빠른 스모크 체크로,
   // 이 표본에서도 fallback이 드물게만 쓰이는지 확인한다 (전수 10,000-seed 검증은 별도 느린 스크립트로 돌린다).
   const fallbackRate = fallbackCount / sampleSize;
   assert.ok(fallbackRate < 0.05, `fallback used too often in sample: ${fallbackCount}/${sampleSize}`);
+});
+
+// ADR-0076: 출구 배치의 유일한 거리 규칙 — 완성 그래프(특수 엣지 포함)에서 A와 B가 최소 거리만큼
+// 떨어져 있다. 상한 안에 못 찾은 시드는 relaxed로 표시되고 그때만 이 규칙에서 빠진다.
+test('exits A and B are at least EXIT_AB_MIN_DISTANCE apart on the finished graph', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const measured = abDistance(graph);
+    assert.equal(graph.exitPlacement.abDistance, measured, `seed ${seed}: 기록된 A–B 거리와 실측이 다르다`);
+    assert.equal(graph.exitPlacement.relaxed, measured < EXIT_AB_MIN_DISTANCE, `seed ${seed}: relaxed 표시`);
+    if (!graph.exitPlacement.relaxed) {
+      assert.ok(measured >= EXIT_AB_MIN_DISTANCE, `seed ${seed}: A–B 거리 ${measured} < ${EXIT_AB_MIN_DISTANCE}`);
+    }
+  }
+});
+
+test('exit placement is deterministic for a seed', () => {
+  for (const seed of [1, 7, 42]) {
+    const first = generateFacilityGraph(seed).graph;
+    const second = generateFacilityGraph(seed).graph;
+    assert.deepEqual(first.exits, second.exits, `seed ${seed}: exits`);
+    assert.equal(first.startNodeId, second.startNodeId, `seed ${seed}: start node`);
+    assert.deepEqual(first.exitPlacement, second.exitPlacement, `seed ${seed}: placement meta`);
+  }
 });
 
 test('every node is reachable from the start node', () => {

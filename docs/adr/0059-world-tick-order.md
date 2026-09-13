@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068 and implementation spec §5
+status: amended by ADR-0075 and implementation spec (nextMoveAt 예약)
 ---
 
 # 시간 틱은 상태 갱신 뒤 적 이동을 처리한다

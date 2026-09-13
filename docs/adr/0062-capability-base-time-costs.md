@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0068
+status: superseded by ADR-0075 and implementation spec §6
 ---
 
 # Capability 행동은 단계별 기본 시간 비용을 가진다

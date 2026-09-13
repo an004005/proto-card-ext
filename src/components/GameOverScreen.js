@@ -22,7 +22,7 @@ export function GameOverScreen() {
       <h1 style=${{ margin: 0, fontSize: '64px' }}>사망</h1>
       <div style=${{ display: 'flex', gap: 'var(--space-8)', margin: 'var(--space-4) 0', fontSize: '14px' }}>
         <span>사인 <strong>${causeOfDeath(run)}</strong></span>
-        <span>경과 시간 <strong>${run ? run.time : 0}</strong>/${RUN_COLLAPSE_TIME}</span>
+        <span>붕괴까지 <strong>${Math.max(0, RUN_COLLAPSE_TIME - (run ? run.time : 0))}</strong>칸 남은 시점 (시각 ${run ? run.time : 0} / ${RUN_COLLAPSE_TIME})</span>
         <span>탐사 노드 <strong>${visitedCount}</strong>/${TOTAL_NODES}</span>
       </div>
       <p style=${{ fontSize: '12px', opacity: 0.6 }}>미회수 점수: ${score}크레드</p>

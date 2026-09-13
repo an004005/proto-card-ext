@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068
+status: amended by ADR-0075 (5칸)
 ---
 
 # 위협 마커는 사전 생성된 순찰 경로를 따른다

@@ -4,6 +4,9 @@
 // progress) that has no equivalent in the live CombatState yet.
 
 import { reportNoise, advanceTime } from './runEngine.js';
+import { COMBAT_ROUND_TIME_COST } from '../data/facilityLayout.js';
+
+export { COMBAT_ROUND_TIME_COST };
 
 /**
  * §9.1 전투 소음 게이지: a cumulative gauge (capacity 10) filled by each played card's
@@ -48,14 +51,16 @@ export function applyCombatCardNoise(runState, nodeId, gauge, lastIntensity, car
 }
 
 /**
- * §9.1.1: apply the round's fixed time cost to the facility run (noise is no longer batched per
- * round — see `applyCombatCardNoise`, called immediately on each card play instead).
+ * planned §8: 전투 1라운드(플레이어 행동 구간 + 적 반응)에 드는 맵 칸을 시설 런에 청구한다.
+ * 적 개체 수나 낸 카드 수로 늘어나지 않는 고정값이고, 이 3칸 동안 맵의 쿨다운·개방·증원·효과
+ * 만료가 함께 진행된다(교전 중인 위협만 `run.engagedThreatId`로 멈춰 있다).
  * @param {import('./types.js').FacilityRunState} runState
  * @param {number} [roundTimeCost]
  * @returns {import('./types.js').FacilityRunState}
  */
-export function applyCombatRoundTimeToRunState(runState, roundTimeCost = 60) {
-  return advanceTime(runState, runState.time + roundTimeCost);
+export function applyCombatRoundTimeToRunState(runState, roundTimeCost = COMBAT_ROUND_TIME_COST) {
+  // 전투 라운드도 유료 행동이다 — 대기로 끊겼던 인접 실시간 관측은 여기서 다시 살아난다.
+  return advanceTime({ ...runState, lastWaitEndedAt: null }, runState.time + roundTimeCost);
 }
 
 export const DISENGAGE_REQUIRED_PROGRESS = 2;

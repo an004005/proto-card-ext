@@ -1,7 +1,7 @@
 import { html } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { SECTOR_NAMES, LANDMARKS_BY_SECTOR } from '../data/facilityLayout.js';
+import { SECTOR_NAMES, LANDMARKS_BY_SECTOR, RUN_COLLAPSE_TIME, LOCKDOWN_EXIT_CLOSE_WINDOW } from '../data/facilityLayout.js';
 
 const TYPE_LABEL = { retrieval: '회수', destroy: '파괴', intel: '정보' };
 const TYPE_COMPLETION = {
@@ -30,6 +30,10 @@ function ContractCard({ contract }) {
           : html`<span>완료 보상: +${contract.completionRewardValue}cr</span>`}
         <span>위약(미완수 시): -${contract.penaltyValue}cr</span>
         <span style=${{ opacity: 0.7 }}>${TYPE_COMPLETION[contract.type]}</span>
+        ${/* 계약 화면에서 미리 알아야 할 시간은 둘뿐이다 — 시설이 언제 무너지는가, 그리고
+            목표를 집는 순간 출구 B가 얼마나 앞당겨지는가. */ null}
+        <span style=${{ opacity: 0.7 }}>확보 즉시 봉쇄 — 출구 B가 +${LOCKDOWN_EXIT_CLOSE_WINDOW}칸으로 앞당겨집니다</span>
+        <span style=${{ opacity: 0.7 }}>시설 붕괴 ${RUN_COLLAPSE_TIME}칸</span>
       </div>
       <button
         class="btn btn-primary"

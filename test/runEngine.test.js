@@ -16,8 +16,10 @@ import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
   OVERLOAD_MELTDOWN, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
-  TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_SPEED_MULTIPLIER, LOCKDOWN_EXIT_CLOSE_WINDOW,
+  TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_EXIT_CLOSE_WINDOW,
   ADJACENT_SECTOR_IDS, REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
+  NOISE_DURATION, CAMERA_FORCE_TIME, GENERATOR_FORCE_TIME,
+  MOVE_MIN_TIME, MOBILITY_MOVE_TIME_DELTA, CAPABILITY_STEP_TIME_DELTA,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
 
@@ -32,19 +34,19 @@ test('advanceTime is deterministic for the same seed and target', () => {
   assert.deepEqual(a, b);
 });
 
-// #4 행동 시간 30은 정확히 세 번의 상태 틱을 만들고, 위협의 엣지 이동은 nextMoveAt에 의해서만 발생한다.
-test('advancing by 30 lands on time 30 and only moves threats whose nextMoveAt was due', () => {
+// #4 행동 시간 2칸은 정확히 두 번의 칸 경계를 만들고, 위협의 엣지 이동은 nextMoveAt에 의해서만 발생한다.
+test('advancing by 2 ticks lands on time 2 and only moves threats whose nextMoveAt was due', () => {
   const initial = makeRun(3);
-  const after = advanceTime(initial, 30);
-  assert.equal(after.time, 30);
+  const after = advanceTime(initial, 2);
+  assert.equal(after.time, 2);
   for (const threat of Object.values(after.threats)) {
     const before = initial.threats[threat.id];
-    if (before.nextMoveAt > 30) {
+    if (before.nextMoveAt > 2) {
       assert.equal(threat.nodeId, before.nodeId, `threat ${threat.id} moved before its nextMoveAt`);
     }
   }
-  // every patrol-mode threat starts with nextMoveAt = THREAT_MOVE_INTERVAL.patrol (100), so at
-  // t=30 none of them should have moved yet.
+  // every patrol-mode threat starts with nextMoveAt = THREAT_MOVE_INTERVAL.patrol (5칸), so at
+  // t=2 none of them should have moved yet.
   for (const threat of Object.values(after.threats)) {
     assert.equal(threat.nodeId, initial.threats[threat.id].nodeId);
   }
@@ -68,8 +70,8 @@ test('a threat left alone eventually walks its patrol route and wraps around', (
 // #6/#7 일반 탈출구 요청/개방/재차단/비활성/붕괴 전이, Hacking별 개방 대기.
 test('exit request lifecycle: requesting -> opening -> open -> closed, and reopens', () => {
   let state = makeRun(5);
-  const hacking = 2; // -2..4 index 4 -> EXIT_OPEN_WAIT_BY_HACKING[4] = 200
-  // §6.2: 요청 자체가 시간 50을 소비하는 행동이라, 호출이 끝난 시점엔 이미 requesting 판정 경계
+  const hacking = 2; // -2..4 index 4 -> EXIT_OPEN_WAIT_BY_HACKING[4] = 10칸
+  // §6.2: 요청 자체가 EXIT_REQUEST_TIME칸을 소비하는 행동이라, 호출이 끝난 시점엔 이미 requesting 판정 경계
   // (interactionEndsAt)까지 시간이 흘러 'opening'으로 넘어가 있다.
   state = requestExtraction(state, 'A', hacking);
   assert.equal(state.exits.A.status, 'opening');
@@ -131,9 +133,9 @@ test('exit A cannot be requested once disabled, and B collapse grace ends the ru
 
 test('collapse at RUN_COLLAPSE_TIME takes priority even mid-request', () => {
   let state = makeRun(11);
-  state = advanceTime(state, EXIT_B_DISABLED_AT - 50); // request just before B disables
-  state = requestExtraction(state, 'B', 4); // fastest wait tier: 100
-  state = advanceTime(state, RUN_COLLAPSE_TIME + 1000); // target way past collapse
+  state = advanceTime(state, EXIT_B_DISABLED_AT - 10); // request just before B disables
+  state = requestExtraction(state, 'B', 4); // fastest wait tier
+  state = advanceTime(state, RUN_COLLAPSE_TIME + 50); // target way past collapse
   assert.equal(state.phase, 'collapsed');
   assert.equal(state.time, RUN_COLLAPSE_TIME);
 });
@@ -145,14 +147,14 @@ test('all EXIT_OPEN_WAIT_BY_HACKING tiers are honored', () => {
     state = requestExtraction(state, 'A', hacking);
     state = advanceTime(state, EXIT_REQUEST_TIME);
     const expectedWait = EXIT_OPEN_WAIT_BY_HACKING[Math.max(-2, Math.min(4, hacking)) + 2];
-    state = advanceTime(state, EXIT_REQUEST_TIME + expectedWait - 10);
+    state = advanceTime(state, EXIT_REQUEST_TIME + expectedWait - 1);
     assert.equal(state.exits.A.status, 'opening', `hacking ${hacking}: opened too early`);
     state = advanceTime(state, EXIT_REQUEST_TIME + expectedWait);
     assert.equal(state.exits.A.status, 'open', `hacking ${hacking}: did not open on schedule`);
   }
 });
 
-// #5 소음 0~3은 각각 0~3홉만 영향을 주고 100포인트 뒤 만료된다.
+// #5 소음 0~3은 각각 0~3홉만 영향을 주고 NOISE_DURATION칸 뒤 만료된다.
 test('noise events expire after their duration and only reach threats within hop range', () => {
   let state = makeRun(13);
   const threatId = Object.keys(state.threats)[0];
@@ -160,11 +162,12 @@ test('noise events expire after their duration and only reach threats within hop
   // Put noise far outside the threat's sector at low intensity so it's out of range (patrol
   // fallback should remain the target), then re-check with a matching high-intensity event.
   state = reportNoise(state, threat.patrolRoute[0], 1, 0);
-  const stillPatrolling = advanceTime(state, 5); // before any world tick even runs
+  const stillPatrolling = advanceTime(state, NOISE_DURATION - 1); // 만료 직전
   assert.ok(stillPatrolling.noiseEvents.length === 1);
 
-  const expired = advanceTime(state, 101);
-  assert.equal(expired.noiseEvents.length, 0, 'noise event should have expired by t=101');
+  // 효과는 [C, C+D)이므로 만료 시각 자체에는 이미 없다.
+  const expired = advanceTime(state, NOISE_DURATION);
+  assert.equal(expired.noiseEvents.length, 0, `noise event should have expired at t=${NOISE_DURATION}`);
 });
 
 // D16/D17: 도면은 처음부터 보이고 내용물만 감춘다. 비인가 통로는 도면에 없는 유일한 예외다.
@@ -230,14 +233,14 @@ test('a locked edge carries sound but not footsteps: the threat hears through it
 
   // 세기 1은 1홉까지만 들린다. 승강기 너머 1층 소음이 들려야 하고(들리는 거리), 그래도 위협은
   // 승강기를 타지 못하고 계단으로 한 층만 내려와야 한다(가는 거리).
-  const heard = advanceTime(reportNoise(state, bottom.id, 1, 50), 101);
+  const heard = advanceTime(reportNoise(state, bottom.id, 1, 1), THREAT_MOVE_INTERVAL.patrol);
   const moved = heard.threats[listener.id];
   assert.equal(moved.target.kind, 'noise', 'the threat should have heard the noise through the locked elevator');
   assert.equal(moved.nodeId, towerCorridors[towerCorridors.length - 2].id, 'the threat should take the stairs one floor down');
 
   // 승강기를 열면 위협에게도 열린다 — 지름길을 얻는 대신 층 격리를 스스로 깬다.
   const opened = { ...state, openedEdgeIds: [elevator.id] };
-  const rode = advanceTime(reportNoise(opened, bottom.id, 1, 50), 101);
+  const rode = advanceTime(reportNoise(opened, bottom.id, 1, 1), THREAT_MOVE_INTERVAL.patrol);
   assert.equal(rode.threats[listener.id].nodeId, bottom.id, 'once the elevator is open the threat rides it');
 });
 
@@ -263,12 +266,19 @@ test('high-ground edges require Mobility 3 and Mobility scales movement time', (
   state = { ...state, graph: { ...state.graph, edges: state.graph.edges.map((entry) => entry.id === edge.id ? { ...entry, features: ['highGround'] } : entry) } };
   assert.throws(() => moveToAdjacentNode(state, destination, 2, 3), /reachable/);
   const fast = moveToAdjacentNode(state, destination, 3, 3);
-  assert.equal(fast.time, Math.round(edge.timeCost * 0.7));
+  // Mobility는 저장된 통로 비용에 칸을 더하고 뺄 뿐이다(ADR-0075) — 배율이 아니다.
+  assert.equal(fast.time, Math.max(MOVE_MIN_TIME, edge.timeCost + MOBILITY_MOVE_TIME_DELTA[3 + 2]));
 });
 
 test('an unhacked camera detects Stealth below 3 and directs nearby threats to the player', () => {
   let state = makeRun(21);
-  const edge = state.graph.edges.find((entry) => entry.from === state.playerNodeId || entry.to === state.playerNodeId);
+  // 위협이 경보를 듣고 실제로 달려올 수 있어야 하므로 잠기지도 막히지도 않은 보통 복도를 고르고,
+  // 그중에서도 가장 짧은 것을 쓴다 — 이동에 시간이 오래 걸리면 도착 전에 추격이 식는다.
+  const edge = state.graph.edges
+    .filter((entry) => entry.features.length === 0
+      && (entry.from === state.playerNodeId || entry.to === state.playerNodeId))
+    .sort((a, b) => a.timeCost - b.timeCost)[0];
+  assert.ok(edge, 'fixture needs a plain corridor out of the start node');
   const destination = edge.from === state.playerNodeId ? edge.to : edge.from;
   const threatId = Object.keys(state.threats)[0];
   state = {
@@ -327,12 +337,12 @@ test('camera destruction is a local, loud Force action and permanently stops cam
   assert.throws(() => destroyCamera(state, 'camera_test', -2), /force/);
   // Force 0은 막히지 않는다 — 더 오래 걸리고 더 시끄럽다(D8 층계).
   const strained = destroyCamera(state, 'camera_test', 0);
-  assert.ok(strained.time - state.time > 100, 'Force가 모자라면 오래 걸린다');
+  assert.ok(strained.time - state.time > CAMERA_FORCE_TIME, 'Force가 모자라면 오래 걸린다');
   assert.ok(strained.noiseEvents[strained.noiseEvents.length - 1].intensity > CAMERA_FORCE_NOISE, '그리고 더 시끄럽다');
 
   const destroyed = destroyCamera(state, 'camera_test', 1);
   assert.ok(destroyed.disabledCameraIds.includes('camera_test'));
-  assert.equal(destroyed.time, state.time + 100);
+  assert.equal(destroyed.time, state.time + CAMERA_FORCE_TIME);
 });
 
 test('basic recon stays live across ticks and stops on movement', () => {
@@ -344,7 +354,7 @@ test('basic recon stays live across ticks and stops on movement', () => {
     ...state,
     threats: { ...state.threats, [threatId]: { ...state.threats[threatId], nodeId: watchedNodeId, nextMoveAt: 99999 } },
   };
-  state = advanceTime(state, state.time + 10);
+  state = advanceTime(state, state.time + 1);
   assert.equal(state.observations[watchedNodeId].hasThreat, true);
   state = moveToAdjacentNode(state, watchedNodeId, 4, 3);
   assert.equal(state.activeRecon, null);
@@ -364,39 +374,39 @@ test('sector alert rises by exactly 1 per resolved event, not per investigating 
   let state = makeRun(4);
   // Move the player node away from everywhere so no investigation ever "finds" the player.
   state = { ...state, playerNodeId: 'nowhere' };
-  // Advance a little first so the noise event's expiry (createdAt+100) lands strictly after the
-  // threat's first patrol-interval check at t=100 — reporting it at t=0 would have it expire on
-  // the exact same tick the threat first looks for it (both are round-100), which is a genuine
-  // "noise already expired" case per §5.1.2's expire-before-target-selection ordering, not a bug.
-  state = advanceTime(state, 50);
+  // Advance a little first so the noise event's expiry (createdAt+NOISE_DURATION) lands strictly
+  // after the threat's first patrol-interval check — reporting it at t=0 would have it expire on
+  // the exact same 칸 the threat first looks for it, which is a genuine "noise already expired"
+  // case per the expire-before-target-selection ordering, not a bug.
+  state = advanceTime(state, 3);
   const sectorId = Object.values(state.threats)[0].sectorId;
   const sectorThreat = Object.values(state.threats).find((t) => t.sectorId === sectorId);
   state = reportNoise(state, sectorThreat.nodeId, 3, state.time);
   const before = state.sectorAlerts[sectorId].level;
-  state = advanceTime(state, 500);
+  state = advanceTime(state, 30);
   const after = state.sectorAlerts[sectorId].level;
   assert.equal(after, before + 1, 'a single noise event must resolve to exactly +1, not more');
   assert.equal(state.sectorAlerts[sectorId].resolvedEventIds.length, 1);
 
   // advancing further without any new stimulus must not escalate it again.
-  state = advanceTime(state, 900);
+  state = advanceTime(state, 60);
   assert.equal(state.sectorAlerts[sectorId].level, after);
 });
 
 test('sector alert never decays with time — only a control room can bring it down (ADR-0073)', () => {
   let state = makeRun(4);
   state = { ...state, playerNodeId: 'nowhere' };
-  state = advanceTime(state, 50);
+  state = advanceTime(state, 3);
   const sectorId = Object.values(state.threats)[0].sectorId;
   const sectorThreat = Object.values(state.threats).find((t) => t.sectorId === sectorId);
   state = reportNoise(state, sectorThreat.nodeId, 3, state.time);
-  state = advanceTime(state, 500);
+  state = advanceTime(state, 30);
   const escalated = state.sectorAlerts[sectorId].level;
   assert.ok(escalated >= 1);
 
   // 저절로 회복되는 페널티는 결정을 만들지 않는다 — 아무리 조용히 오래 있어도 내려가지 않는다.
-  state = advanceTime(state, 4000);
-  assert.equal(state.sectorAlerts[sectorId].level, escalated, 'alert holds across thousands of time points');
+  state = advanceTime(state, 200);
+  assert.equal(state.sectorAlerts[sectorId].level, escalated, 'alert holds across hundreds of 칸');
   assert.equal(state.sectorAlerts[sectorId].resolvedEventIds.length, 1);
 
   // 조용한 구역은 애초에 오르지 않았으므로 0 그대로다.
@@ -610,8 +620,8 @@ test('battery generators can be hacked directly or through a hacked same-sector 
   assert.throws(() => disableGenerator({ ...state, playerNodeId: localInterface.nodeId, disabledGeneratorIds: [] }, generator.id, 'force', 2));
   const forced = disableGenerator({ ...state, playerNodeId: generator.nodeId, disabledGeneratorIds: [] }, generator.id, 'force', 2);
   assert.ok(forced.disabledGeneratorIds.includes(generator.id));
-  // 요구치 1에 Force 2 — 여유(surplus)라 표준 100보다 빨리 끝난다(D8: 윗칸은 비용 감소만).
-  assert.equal(forced.time, state.time + 75);
+  // 요구치 1에 Force 2 — 여유(surplus)라 표준 GENERATOR_FORCE_TIME보다 빨리 끝난다(D8).
+  assert.equal(forced.time, state.time + GENERATOR_FORCE_TIME + CAPABILITY_STEP_TIME_DELTA.surplus);
 });
 
 test('useConcealment applies its node\'s fixed bonus, costs CONCEALMENT_ACTION_TIME_COST, and only affects the node it was used at', () => {
@@ -728,10 +738,12 @@ test('getSectorLandmarkArrowTarget points at the current sector\'s landmark unti
 
 // ---- 계약(§3단계, D3·D4·D21·D22) ----
 
+// 계약 행동 자체를 보는 테스트라 위협을 비운다 — 현장 작업이 적 접촉으로 중단되는 규칙
+// (planned §9.4)은 taskScheduling.test.js에서 따로 본다.
 function withContract(seed, contractId) {
   const contract = CONTRACT_DEFS.find((c) => c.id === contractId);
   const { graph } = generateFacilityGraph(seed);
-  return createRunState(graph, seed, { contract });
+  return { ...createRunState(graph, seed, { contract }), threats: {} };
 }
 
 test('acquireContractGoods requires being at the objective and Stealth or Mobility 1+, then sets acquired + lockdown + accelerates exit B', () => {
@@ -750,10 +762,11 @@ test('acquireContractGoods requires being at the objective and Stealth or Mobili
 
   const acquired = acquireContractGoods(at, 1, 0);
   assert.equal(acquired.contract.status, 'acquired');
-  assert.equal(acquired.contract.acquiredAt, state.time);
+  // 확보는 작업 **완료 시각**에 일어난다 — 봉쇄도 그때 켜진다(planned §9.5).
+  assert.equal(acquired.contract.acquiredAt, acquired.time);
   assert.ok(acquired.lockdown, 'lockdown should activate on acquisition');
-  assert.equal(acquired.lockdown.startedAt, state.time);
-  assert.equal(acquired.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, state.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+  assert.equal(acquired.lockdown.startedAt, acquired.time);
+  assert.equal(acquired.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, acquired.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
 
   assert.throws(() => acquireContractGoods(acquired, 1, 1), /no retrieval contract/, 'already-acquired contract cannot be acquired again');
 });
@@ -767,9 +780,9 @@ test('destroyContractTarget requires Force 1+ and completes the contract in one 
 
   const done = destroyContractTarget(at, 1);
   assert.equal(done.contract.status, 'completed');
-  assert.equal(done.contract.completedAt, state.time);
+  assert.equal(done.contract.completedAt, done.time);
   assert.ok(done.lockdown);
-  assert.equal(done.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, state.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+  assert.equal(done.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, done.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
 });
 
 test('intel contracts need a two-step acquire-then-transmit at any landmark, and only the acquire step activates lockdown', () => {
@@ -800,18 +813,18 @@ test('intel contracts need a two-step acquire-then-transmit at any landmark, and
 // D22: 신규 위협 스폰 시스템이 없어 "증원 가속"을 기존 위협 전원의 이동 간격 단축으로
 // 구현했다(사용자 확정). resolveMoveInterval은 비공개라 advanceTime으로 실제 재스케줄
 // 결과를 비교해 관찰 가능한 성질로 확인한다.
-test('lockdown shortens every threat\'s move interval by LOCKDOWN_THREAT_SPEED_MULTIPLIER', () => {
+test('lockdown uses the fixed LOCKDOWN_THREAT_MOVE_INTERVAL table, not a multiplier', () => {
   const base = makeRun(1);
   const threatId = Object.keys(base.threats)[0];
   assert.equal(base.threats[threatId].nextMoveAt, THREAT_MOVE_INTERVAL.patrol);
 
-  const past = THREAT_MOVE_INTERVAL.patrol + 20;
-  const normal = advanceTime(base, past);
-  const locked = advanceTime({ ...base, lockdown: { startedAt: 0 } }, past);
+  // 평상시: 예약대로 5칸에 움직이고 다음 예약은 +5칸.
+  const normal = advanceTime(base, THREAT_MOVE_INTERVAL.patrol);
+  assert.equal(normal.threats[threatId].nextMoveAt, THREAT_MOVE_INTERVAL.patrol * 2);
 
-  const normalInterval = normal.threats[threatId].nextMoveAt - THREAT_MOVE_INTERVAL.patrol;
-  const lockedInterval = locked.threats[threatId].nextMoveAt - THREAT_MOVE_INTERVAL.patrol;
-  assert.equal(normalInterval, THREAT_MOVE_INTERVAL.patrol);
-  assert.equal(lockedInterval, Math.round(THREAT_MOVE_INTERVAL.patrol * LOCKDOWN_THREAT_SPEED_MULTIPLIER));
-  assert.ok(lockedInterval < normalInterval, 'locked-down threats should reschedule sooner');
+  // 봉쇄: 간격이 3칸 고정으로 줄어 min 규칙이 첫 예약을 1+3칸으로 당기고, 이동 뒤 다시 +3칸.
+  const lockedInterval = LOCKDOWN_THREAT_MOVE_INTERVAL.patrol;
+  const locked = advanceTime({ ...base, lockdown: { startedAt: 0 } }, THREAT_MOVE_INTERVAL.patrol);
+  assert.equal(locked.threats[threatId].nextMoveAt, (1 + lockedInterval) + lockedInterval);
+  assert.ok(lockedInterval < THREAT_MOVE_INTERVAL.patrol, 'locked-down threats should reschedule sooner');
 });

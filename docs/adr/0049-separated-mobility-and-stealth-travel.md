@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0068
+status: amended by ADR-0075 (2~13칸)
 ---
 
 # Mobility는 이동 시간, Stealth는 이동 소음을 결정한다

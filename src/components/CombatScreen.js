@@ -5,7 +5,9 @@ import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileC
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 import { isCardPlayable, getCardTargetKind } from '../engine/combatEngine.js';
-import { canDisengage, DISENGAGE_REQUIRED_PROGRESS } from '../engine/combatMapIntegration.js';
+import { canDisengage, DISENGAGE_REQUIRED_PROGRESS, COMBAT_ROUND_TIME_COST } from '../engine/combatMapIntegration.js';
+import { runCountdowns } from '../engine/mapTimeline.js';
+import { MapClock } from './MapClock.js';
 import { Tooltip } from './Tooltip.js';
 import { NoiseGauge } from './NoiseGauge.js';
 import { PlayerStatusBar } from './PlayerStatusBar.js';
@@ -18,6 +20,9 @@ import { HistoryControls } from './HistoryControls.js';
 import { PlayLog } from './PlayLog.js';
 import { InventoryPopup } from './InventoryPopup.js';
 import { PileListPopup } from './PileListPopup.js';
+
+/** 전투 중 마감 배너를 띄우는 시간 창(칸). 한 턴이 3칸이니 다섯 턴 남짓이다. */
+const COMBAT_DEADLINE_BANNER_WINDOW = 15;
 
 export function CombatScreen() {
   const [draggingCard, setDraggingCard] = useState(null);
@@ -63,15 +68,34 @@ export function CombatScreen() {
 
   const enemyNames = [...new Set(enemies.map((e) => e.name))].join(', ');
 
+  // 전투 중에도 맵 시계는 턴마다 흐른다. 같은 시계 블록과 같은 색 규칙을 쓰고, 붕괴나 출구
+  // 폐쇄가 눈앞이면 배너로 한 번 더 말한다 — 그 사실을 모르고 두 턴을 더 쓰면 런이 끝난다.
+  const run = snapshotSignal.value.facilityRunState;
+  const countdowns = run ? runCountdowns(run) : null;
+  const urgent = countdowns
+    ? [
+      ...(countdowns.collapseIn <= COMBAT_DEADLINE_BANNER_WINDOW ? [`시설 붕괴까지 ${countdowns.collapseIn}칸`] : []),
+      ...countdowns.exits
+        .filter((exit) => !exit.closed && exit.inTicks <= COMBAT_DEADLINE_BANNER_WINDOW)
+        .map((exit) => `출구 ${exit.exitId} 폐쇄까지 ${exit.inTicks}칸`),
+    ]
+    : [];
+
   return html`
     <div
       style=${{ flex: 1, display: 'flex', flexDirection: 'column', padding: 'var(--space-6) var(--space-8)', gap: 'var(--space-4)', '--combat-step-ms': `${playbackDuration}ms` }}
       onDragOver=${(e) => e.preventDefault()}
       onDrop=${handleDropAnywhere}
     >
+      ${urgent.length > 0 ? html`
+        <div style=${{ fontSize: '12px', fontWeight: 800, padding: '7px var(--space-4)', color: 'var(--color-bg)', background: 'var(--color-negative, #dd2b0f)' }}>
+          ${urgent.join(' · ')} — 턴 하나에 맵 ${COMBAT_ROUND_TIME_COST}칸이 나갑니다.
+        </div>
+      ` : null}
       <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
           <h3 style=${{ margin: 0 }}>전투 — ${enemyNames}</h3>
+          ${run ? html`<${MapClock} run=${run} countdowns=${countdowns} compact=${true} />` : null}
           <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }} onClick=${() => setShowInventory(true)}>인벤토리</button>
           <label style=${{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px' }}>
             <span>연출</span>

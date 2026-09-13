@@ -1,11 +1,13 @@
 import { html } from '../lib.js';
 import { snapshotSignal } from '../state/runState.js';
+import { RUN_COLLAPSE_TIME } from '../data/facilityLayout.js';
 import { computeInventoryScore, computeContractOutcome, startNewRun } from './runEndHelpers.js';
 
 export function ExtractionCompleteScreen() {
   const snapshot = snapshotSignal.value;
   const ps = snapshot.playerState;
-  const outcome = computeContractOutcome(snapshot.facilityRunState);
+  const run = snapshot.facilityRunState;
+  const outcome = computeContractOutcome(run);
   const score = computeInventoryScore(ps.inventory) + (outcome?.scoreDelta ?? 0);
 
   return html`
@@ -13,6 +15,7 @@ export function ExtractionCompleteScreen() {
       <h6 style=${{ color: 'var(--color-bg)', opacity: 0.8 }}>EXTRACTION SUCCESSFUL · 탈출 성공</h6>
       <h1 style=${{ margin: 0, fontSize: '64px' }}>탈출 성공</h1>
       <div style=${{ display: 'flex', gap: 'var(--space-8)', margin: 'var(--space-4) 0', fontSize: '14px' }}>
+        <span>붕괴까지 <strong>${Math.max(0, RUN_COLLAPSE_TIME - (run ? run.time : 0))}</strong>칸 남기고 탈출 (시각 ${run ? run.time : 0} / ${RUN_COLLAPSE_TIME})</span>
         <span>최종 체력 HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
         <span>최종 과부화 <strong>${ps.overload}</strong>/100</span>
         <span>회수 점수 <strong>${score}</strong>크레드</span>

@@ -5,11 +5,13 @@ import { weightedPick } from './rng.js';
 import {
   moveToAdjacentNode, requestExtraction, basicRecon, openSpecialEdge, useOpportunity,
   useFieldEquipment, isAtOpenExit, refreshLocalObservations, hackCamera, hackAccessInterface, destroyCamera,
-  disableGenerator, advanceTime, useConcealment, hackControlRoom,
+  disableGenerator, useConcealment, hackControlRoom,
   computeThreatPerception, computeEncounterTier, effectiveStealthWithConcealment,
   acquireContractGoods, destroyContractTarget, acquireContractIntel, transmitContractIntel,
-  disposeCorpse,
+  disposeCorpse, scheduleTask, taskCompleted, waitOneTick, evadeThreat,
 } from './runEngine.js';
+import { WAIT_BATCH_MAX_TICKS } from '../data/facilityLayout.js';
+import { actionTimeCost } from './actionCosts.js';
 import { cleanTraces, cutPower, broadcastFalseTarget } from './recovery.js';
 import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
 import { computeFloorOverload, computeOverloadGainMultiplier, applyDurabilityDecay, MAX_DURABILITY } from './equipmentEngine.js';
@@ -19,11 +21,10 @@ import { startCombat } from './combatReducer.js';
 import { getAllEquipmentIds, equipItem, unequipItem, unequipImplant, unequipConsumable } from './inventoryReducer.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 
-/** 맵에서 장비를 교체할 때 건당 부과되는 시간 비용 — 정찰/파밍 등 다른 맵 액션과 같은 결로,
- * 그동안 위협이 도착하면 아래 triggerCombatIfNeeded가 강제 전투로 전환한다. */
-export const MAP_EQUIP_TIME_COST = 50;
-/** 맵에서 회복류 소모품을 즉시 사용할 때 부과되는 시간 비용. */
-export const MAP_CONSUMABLE_TIME_COST = 30;
+// 장비 교체·소모품 사용의 칸도 다른 유료 행동과 같은 비용 사양표에 있다(actionCosts.js) —
+// UI 예고와 청구가 같은 표를 읽게 하려면 상수를 여기 따로 두면 안 된다. 기존 호출부가
+// facilityReducer에서 가져가고 있으므로 그대로 재수출한다.
+export { MAP_EQUIP_TIME_COST, MAP_CONSUMABLE_TIME_COST } from './actionCosts.js';
 
 /** @typedef {import('./types.js').GameSnapshot} GameSnapshot */
 
@@ -162,6 +163,8 @@ function withFacilityRunState(snapshot, fn) {
   // 층계의 HP 대가(D8)로도 죽을 수 있다. 전투 밖에서 HP가 0이 되는 유일한 경로이므로 여기서
   // 잡지 않으면 HP 0인 채로 런이 계속된다.
   if (playerState.hp <= 0) return { ...result, currentScreen: 'gameOver' };
+  // 열린 출구 위에서 탈출 조건이 성립하면, 같은 칸에 적이 도착했더라도 탈출이 먼저 성립한다 —
+  // 문턱을 넘은 뒤에 붙잡히지는 않는다. 조우는 탈출이 성립하지 않을 때만 처리한다.
   if (extracting) return { ...result, currentScreen: 'extractionComplete' };
   return triggerCombatIfNeeded(result);
 }
@@ -177,10 +180,15 @@ function withFacilityRunState(snapshot, fn) {
 function withMapEquipTimeCost(snapshot, applyEquip) {
   if (snapshot.currentScreen !== 'map') return applyEquip(snapshot);
   if (isBlockedByEncounter(snapshot)) return snapshot;
-  const equipped = applyEquip(snapshot);
   // 거부된 시도(파손 장비 재장착 등)는 실제로 아무것도 바뀌지 않은 것 — 시간을 물리지 않는다.
-  if (equipped === snapshot) return snapshot;
-  return withFacilityRunState(equipped, (run) => advanceTime(run, run.time + MAP_EQUIP_TIME_COST));
+  // 불가 요청과 취소는 0칸이다(planned §10).
+  if (applyEquip(snapshot) === snapshot) return snapshot;
+  // 교체는 예약해 두고 **완료 시각에** 적용된다. 그 3칸 안에 위협이 도착하면 교체는 일어나지
+  // 않고 경과한 칸만 소모된다 — "제자리에서 장비만 계속 바꾸면 안전하다"는 구멍도 그대로 막힌다.
+  const afterTime = withFacilityRunState(snapshot, (run) => scheduleTask(run, { kind: 'equipSwap', timeCost: actionTimeCost('equipSwap') }));
+  if (afterTime === snapshot) return snapshot;
+  if (afterTime.currentScreen !== 'map' || !taskCompleted(afterTime.facilityRunState)) return afterTime;
+  return applyEquip(afterTime);
 }
 
 /** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
@@ -235,9 +243,61 @@ function applyMapConsumable(snapshot, itemId) {
 export function useMapConsumableCommand(snapshot, itemId) {
   if (snapshot.currentScreen !== 'map') return snapshot;
   if (isBlockedByEncounter(snapshot)) return snapshot;
-  const applied = applyMapConsumable(snapshot, itemId);
-  if (applied === snapshot) return snapshot;
-  return withFacilityRunState(applied, (run) => advanceTime(run, run.time + MAP_CONSUMABLE_TIME_COST));
+  if (applyMapConsumable(snapshot, itemId) === snapshot) return snapshot;
+  // 치료도 완료돼야 효과가 난다 — 중단되면 소모품을 쓰지도, 회복하지도 않는다(planned §9.4).
+  const afterTime = withFacilityRunState(snapshot, (run) => scheduleTask(run, { kind: 'mapConsumable', timeCost: actionTimeCost('mapConsumable') }));
+  if (afterTime === snapshot) return snapshot;
+  if (afterTime.currentScreen !== 'map' || !taskCompleted(afterTime.facilityRunState)) return afterTime;
+  return applyMapConsumable(afterTime, itemId);
+}
+
+/**
+ * 대기(planned §4) — 1칸씩 진행한다. 아무것도 회복시키지 않고 개방·쿨다운·적 위치를 기다리는
+ * 용도다. 묶음 대기(최대 5칸)는 1칸 대기를 반복하며 새 조우, 출구 개방/폐쇄, 붕괴가 나면
+ * 즉시 멈추므로 실제로 흐른 칸만 소모된다.
+ * @param {GameSnapshot} snapshot
+ * @param {number} [ticks]
+ * @returns {GameSnapshot}
+ */
+export function waitCommand(snapshot, ticks = 1) {
+  const total = Math.max(1, Math.min(WAIT_BATCH_MAX_TICKS, Math.floor(ticks) || 1));
+  const startedAt = snapshot.facilityRunState?.time ?? 0;
+  let s = snapshot;
+  /** @type {'encounter'|'exitChange'|'runEnded'|'blocked'|null} */
+  let stopReason = null;
+  for (let i = 0; i < total; i++) {
+    const before = s;
+    s = withFacilityRunState(s, (run) => waitOneTick(run));
+    if (s === before) { stopReason = 'blocked'; break; } // 조우에 막혔거나 런이 이미 끝났다
+    if (s.currentScreen !== 'map') { stopReason = 'runEnded'; break; } // 붕괴·사망·탈출
+    const run = s.facilityRunState;
+    if (!run || run.phase !== 'active') { stopReason = 'runEnded'; break; }
+    if (run.encounter) { stopReason = 'encounter'; break; } // 새 조우
+    if (exitStatusesOf(before.facilityRunState) !== exitStatusesOf(run)) { stopReason = 'exitChange'; break; } // 개방/폐쇄
+  }
+  // 몇 칸을 실제로 썼고 왜 멈췄는지는 화면이 말해야 하는 정보다 — 5칸을 눌렀는데 2칸만 흘렀다면
+  // 그 사이에 무슨 일이 생긴 것이고, 그것이 다음 결정의 근거다.
+  const run = s.facilityRunState;
+  if (!run) return s;
+  return {
+    ...s,
+    facilityRunState: {
+      ...run,
+      lastWaitBatch: { requested: total, elapsed: run.time - startedAt, reason: stopReason, completedAt: run.time },
+    },
+  };
+}
+
+/**
+ * 출구 A/B의 상태를 한 문자열로 — 대기 중 개방/폐쇄가 일어났는지 비교하는 용도.
+ * @param {import('./types.js').FacilityRunState|null|undefined} run
+ * @returns {string}
+ */
+function exitStatusesOf(run) {
+  if (!run) return '';
+  return /** @type {const} */ (['A', 'B'])
+    .map((id) => /** @type {import('./types.js').StandardExitRuntimeState|undefined} */ (run.exits[id])?.status)
+    .join('|');
 }
 
 /**
@@ -287,6 +347,8 @@ export function acquireContractGoodsCommand(snapshot) {
   const before = snapshot.facilityRunState?.contract;
   const s = withFacilityRunState(snapshot, (run) => acquireContractGoods(run, capabilities.stealth, capabilities.mobility));
   if (s === snapshot || !before) return s;
+  // 중단된 확보는 물건을 들고 나오지 못한 것이다 — 인벤토리에도 아무것도 들어오지 않는다.
+  if (!taskCompleted(s.facilityRunState)) return s;
   let inventory = s.playerState.inventory;
   for (let i = 0; i < (before.goodsSlots || 0); i++) {
     inventory = addItem(inventory, createItem('contractGoods', { contractId: before.id, value: before.goodsValuePerSlot }));
@@ -391,6 +453,8 @@ export function useOpportunityCommand(snapshot, opportunityId, mode) {
   // snapshot` alone already fully captures "the action failed," no separate success flag needed.
   const s = withFacilityRunState(snapshot, (run) => useOpportunity(run, opportunityId, mode).state);
   if (s === snapshot) return s;
+  // 완료 전에 적이 접촉하면 파밍은 중단이다 — 기회도 소모되지 않고 보상도 없다(planned §9.4).
+  if (!taskCompleted(s.facilityRunState)) return s;
 
   // 확보 대상은 여기서 아무것도 주지 않는다 — runEngine이 세워둔 후보 셋을 플레이어가 고르면
   // selectFarmRewardCommand가 지급한다(D11). 매복이 떠서 후보가 서지 못했다면 그것이 강행의
@@ -523,11 +587,10 @@ export function encounterEvadeCommand(snapshot) {
   if (!encounter || (encounter.tier !== 'advantage' && encounter.tier !== 'even')) return snapshot;
   const threat = run.threats[encounter.threatId];
   if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
-  const threats = {
-    ...run.threats,
-    [encounter.threatId]: { ...threat, mode: 'patrol', pursuitStrength: 0, lastKnownPlayerNodeId: null, target: null },
-  };
-  return { ...snapshot, facilityRunState: { ...run, threats, encounter: null } };
+  // 조우를 먼저 닫아야 공통 래퍼의 조우 차단('even')에 자기 자신이 막히지 않는다. 회피는
+  // 1칸짜리 유료 행동이고(planned §4), 그 1칸 동안 다른 위협과 붕괴는 정상 판정된다.
+  const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  return withFacilityRunState(cleared, (r) => evadeThreat(r, encounter.threatId));
 }
 
 /**

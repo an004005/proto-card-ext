@@ -13,7 +13,7 @@
 ## 제안 상태 ADR
 
 아직 구현되지 않은 결정이다. 현재 동작의 근거로 사용하지 않는다. 상세는
-[맵 재설계 확정 사항](../proposals/map-redesign-decisions.md)에 있다.
+[맵 재설계 확정 사항](../proposals/map-redesign-decisions.md)과 [확정됐지만 미구현](../planned.md)에 있다.
 
 | ADR | 내용 |
 |---|---|
@@ -26,39 +26,41 @@
 | 0009 탐사 안개 | superseded | ADR-0072 |
 | 0033 탐사 안개 확장 | superseded | ADR-0072 |
 | 0001 숨은 탈출 지점 | superseded | ADR-0025 |
-| 0002 재방문과 이동 시간 1 | amended | ADR-0068, 구현 명세 §6.2 |
-| 0003 기본 행동 10·매 틱 적 이동 | amended | ADR-0068, 구현 명세 §5, §9 |
+| 0002 재방문과 이동 시간 1 | amended | ADR-0075, 구현 명세 §6.2 |
+| 0003 기본 행동 10·매 틱 적 이동 | amended | ADR-0075, 구현 명세 §5, §9 |
 | 0005 확률 은신 판정 | superseded | ADR-0063 |
-| 0008 기본 비용 10·신속 -1 | amended | ADR-0068, 구현 명세 §6 |
+| 0008 기본 비용 10·신속 -1 | amended | ADR-0075, 구현 명세 §6 |
 | 0010 다섯 맵 행동 | amended | 구현 명세 §6, §11.2 |
 | 0011 위험 정보 행동 | amended | ADR-0040의 결정론적 대가 |
-| 0012 장비 스왑 5 | amended | 구현 명세 §6.2의 50 |
+| 0012 장비 스왑 5 | amended | ADR-0075, 구현 명세의 3칸 |
 | 0013 모든 장비 Capability | amended | ADR-0043의 Capability 없는 장비 허용 |
 | 0014 Capability 0~4 | superseded | ADR-0052의 -2~4 |
 | 0017 모든 월드 상태 영구 | amended | ADR-0056, 구현 명세 §6.3의 일시 전자 무력화 |
-| 0021 증원 20 | amended | 구현 명세 §9.1의 120/60 |
+| 0021 증원 20 | amended | ADR-0075, 구현 명세의 90/45칸 |
 | 0022 Perception 0~4 | amended | ADR-0052의 음수 단계 추가 |
 | 0023 Perception 0~4 | amended | ADR-0052의 음수 단계 추가 |
-| 0026 탈출 요청 10·대기 30 | superseded/amended | ADR-0054, ADR-0068, 구현 명세 §2 |
+| 0026 탈출 요청 10·대기 30 | superseded/amended | ADR-0054, ADR-0075, 구현 명세의 3칸·5~15칸 |
 | 0027 32노드 | superseded | ADR-0054의 48노드 |
-| 0029 장비 스왑 5 | amended | 구현 명세 §6.2의 50 |
+| 0029 장비 스왑 5 | amended | ADR-0075, 구현 명세의 3칸 |
 | 0032 경로 단절 허용 | amended | ADR-0070의 장비 독립 비상 복구 |
-| 0034 순찰 이동 10 | amended | ADR-0068의 100 |
+| 0034 순찰 이동 10 | amended | ADR-0075의 5칸 |
 | 0037 카드별 전투 소음 사건 | amended | 구현 명세 §7.1의 라운드 소음 봉투 |
-| 0038 일반 소음 지속 10 | amended | ADR-0068, 구현 명세 §7.1의 100 |
+| 0038 일반 소음 지속 10 | amended | ADR-0075, 구현 명세의 5칸 |
 | 0039 조용한 해킹 소음 1 | amended | ADR-0056, 구현 명세 §6의 소음 0 |
 | 0041 모든 상호작용 공통 접근 모드 | amended | 구현 명세 §6.1의 템플릿별 지원 모드 |
 | 0042 모든 장비 Capability | superseded | ADR-0043 |
 | 0044 Capability 0~4 clamp | amended | ADR-0052의 -2~4 |
 | 0048 일반 이동 10·소음 0 | superseded | ADR-0049 |
-| 0049 이동 시간 6~14 | amended | ADR-0068의 60~140 |
+| 0049 이동 시간 6~14 | amended | ADR-0075의 2~13칸 |
 | 0050 Mobility·Stealth만 음수 | amended | ADR-0052, ADR-0068 |
 | 0051 Capability 0~4 | amended | ADR-0052 |
-| 0054 노드 거리·대기 10~30 | amended | ADR-0068, 구현 명세 §2의 가중 시간 거리·100~300 |
-| 0055 정찰 10/20/30 | amended | ADR-0068, 구현 명세 §6.2의 80/140/200 |
-| 0059 매 틱 위협 한 칸 이동 | amended | ADR-0068, 구현 명세 §5의 `nextMoveAt` |
+| 0054 노드 거리·대기 10~30 | amended | ADR-0075, ADR-0076, 구현 명세의 가중 칸 거리·개방 대기 5~15칸 |
+| 0055 정찰 10/20/30 | amended | ADR-0075, 구현 명세의 정찰 4칸·파밍 5/10/13칸 |
+| 0059 매 틱 위협 한 칸 이동 | amended | ADR-0075, 구현 명세의 `nextMoveAt` 예약 |
 | 0060 카드별 소음 사건 | amended | 구현 명세 §7.1의 라운드 소음 봉투 |
-| 0061 접근 시간 ±10 | amended | ADR-0068, 구현 명세 §6.1의 ±40 |
-| 0062 Capability 시간 10~40 | superseded | ADR-0068, 구현 명세 §6 |
+| 0061 접근 시간 ±10 | amended | ADR-0075의 ±2칸 |
+| 0062 Capability 시간 10~40 | superseded | ADR-0075, 구현 명세 §6 |
+| 0068 10분 런 페이싱 | amended | ADR-0075, ADR-0076, 구현 명세의 정수 칸 값 |
+| 0069 조사 실패 경계도 상승 | amended | ADR-0075, 구현 명세의 조사 주기 정수 칸 |
 
 새 ADR이 기존 결정을 바꾸면 새 ADR 본문에 대상을 적고, 같은 변경에서 이전 ADR의 `status`와 이 표를 함께 갱신한다.
