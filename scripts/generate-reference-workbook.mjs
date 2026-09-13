@@ -40,7 +40,7 @@ const KOREAN_TERMS = {
   self: '자신', enemy: '적', player: '플레이어', all_enemies: '모든 적',
   block: '방어도', draw: '카드 뽑기', heal: '회복', reload: '장전',
   applyStatus: '상태이상 부여', applyStun: '스턴 부여',
-  exhaust: '소멸', discard: '버리기', gainOverload: '과부화 획득',
+  exhaust: '소멸', discard: '버리기',
   temporary_barrier: '임시 차단막', snapshot_scan: '스냅샷 스캔', remote_intrusion: '원격 침투',
   edge: '통로', node_contents: '노드 내부', electronic_device: '전자 장치',
   // Capability 6종 — 용어집(docs/terminology.md)과 같은 이름을 쓴다.
@@ -50,7 +50,7 @@ const KOREAN_TERMS = {
   weapon: '무기', top: '상의', bottom: '하의', module: '모듈', implant: '임플란트',
   kind: '유형', value: '수치', amount: '수치', target: '대상', status: '상태',
   count: '횟수', damage: '피해', hits: '타수', attackKind: '공격 종류',
-  ignoresBlock: '방어 무시', duration: '지속 시간', timeCost: '시간 비용', overloadGain: '과부화',
+  ignoresBlock: '방어 무시', duration: '지속 시간', timeCost: '시간 비용',
   cooldown: '재사용 대기시간', range: '범위', targetKind: '대상 종류',
   defId: '카드 ID', equipmentId: '장비 ID', requiresWeapon: '필요 무기',
   insertStatusCard: '삽입 상태이상 카드', insertStatusCardCount: '상태이상 카드 수', summon: '소환', selfDestruct: '자폭',
@@ -115,7 +115,6 @@ function categoryForConstant(name) {
   if (name.includes('COMBAT')) return '전투';
   if (name.includes('WAIT') || name.includes('EVADE')) return '행동';
   if (name.includes('APPROACH') || name.includes('RECON') || name.includes('FARM') || name.includes('HACKING') || name.includes('FORCE') || name.includes('MOBILITY')) return '행동';
-  if (name.includes('OVERLOAD')) return '과부화';
   return '기타';
 }
 
@@ -191,10 +190,9 @@ function buildWorkbook() {
     ['전투', '기본 에너지', BASE_ENERGY, '플레이어 턴 시작 시 회복', 'src/engine/combatEngine.js'],
     ['전투', '기본 드로우', HAND_SIZE, '추가 드로우 효과 적용 전', 'src/engine/combatEngine.js'],
     ['전투', '피해 소수점', '올림', '단계 보정과 취약 등 피해 계산에서 발생한 소수점은 올림. 약화 계산만 내림', 'src/engine/statusEngine.js'],
-    ['과부화', '0단계', '0~29', '기본 수치와 기본 카드 비용', 'src/engine/overloadEngine.js'],
-    ['과부화', '1단계', '30~69', '단계 적용 피해·방어도 +25%', 'src/engine/overloadEngine.js'],
-    ['과부화', '2단계', '70~100', '단계 적용 피해·방어도 +25%, 모든 카드 비용 +1', 'src/engine/overloadEngine.js'],
-    ['과부화', '100 초과', '초과 10당 올림 1장', '과부화를 즉시 100으로 고정하고 뽑을 더미 무작위 위치에 상태이상 카드 삽입', 'src/engine/combatEngine.js'],
+    ['과부화', '0단계 (OFF)', '토글 꺼짐', '기본 수치와 기본 카드 비용', 'src/engine/overloadEngine.js'],
+    ['과부화', '1단계 (ON)', '토글 켜짐', '단계 적용 피해·방어도 +25%, 모듈 보정 상향', 'src/engine/overloadEngine.js'],
+    ['과부화', '전환 대가', '없음', '지도와 전투 플레이어 턴에서 언제든 무료로 전환', 'src/engine/combatReducer.js'],
     ['장비', '최대 내구도', MAX_DURABILITY, '임플란트 제외', 'src/engine/equipmentEngine.js'],
     ['장비', '드롭 내구도', `${LOOT_DURABILITY_MIN}~${LOOT_DURABILITY_MAX}`, '장비 드롭 생성 범위', 'src/engine/rewardEngine.js'],
     ['장비', '카드 사용 내구도 감소 확률', `${DURABILITY_DECAY_CHANCE * 100}%`, '장비 소속 카드 사용마다 판정, 전투 종료 후 적용', 'src/engine/combatEngine.js'],
@@ -211,7 +209,7 @@ function buildWorkbook() {
     ['탈출', '개방 요청 행동', FACILITY.EXIT_REQUEST_TIME, '요청 상호작용 시간', 'src/data/facilityLayout.js'],
     ['탈출', '개방 대기', FACILITY.EXIT_OPEN_WAIT_BY_HACKING.join('/'), '유효 Hacking -2~4별 요청 완료 후 개방까지', 'src/data/facilityLayout.js'],
     ['탈출', '개방 유지', FACILITY.EXIT_OPEN_WINDOW, '열린 뒤 추출 가능한 시간', 'src/data/facilityLayout.js'],
-    ['맵 행동', '작업 예약', '완료 시 적용', '현장 작업은 시작 시 대상·비용·자원을 예약만 하고, 보상·효과·쿨다운·과부화·소음을 완료 시각 C에 한 번에 확정한다', 'src/engine/runEngine.js'],
+    ['맵 행동', '작업 예약', '완료 시 적용', '현장 작업은 시작 시 대상·비용·자원을 예약만 하고, 보상·효과·쿨다운·경계도·소음을 완료 시각 C에 한 번에 확정한다', 'src/engine/runEngine.js'],
     ['맵 행동', '작업 중단', '적 접촉', '완료 전에 새 위협이 도착하면 경과한 칸만 소모하고 미완료 효과는 하나도 적용하지 않는다. 임의 취소는 불가', 'src/engine/runEngine.js'],
     ['맵 행동', '대기', `1 / 최대 ${FACILITY.WAIT_BATCH_MAX_TICKS}칸`, '아무것도 회복시키지 않는다. 묶음 대기는 새 조우·출구 개방/폐쇄·붕괴에서 즉시 멈춘다', 'src/engine/facilityReducer.js'],
     ['맵 행동', '조우 회피', FACILITY.ENCOUNTER_EVADE_TIME, '그 위협의 추적을 해제한다. 같은 위협은 다음 유료 행동 종료 때 재판정한다', 'src/engine/runEngine.js'],
@@ -237,7 +235,7 @@ function buildWorkbook() {
 
   const cards = Object.values(CARD_DEFINITIONS).map((def) => ({
     id: def.id, name: def.name, type: def.type, attackKind: def.attackKind ?? '', cost: def.cost ?? '',
-    ammoCost: def.ammoCost ?? '', overloadGain: def.overloadGain ?? 0, exhausts: !!def.exhausts,
+    ammoCost: def.ammoCost ?? '', exhausts: !!def.exhausts,
     type: koreanTerm(def.type), attackKind: koreanTerm(def.attackKind ?? ''),
     exhausts: def.exhausts ? '예' : '아니오', stageScale: def.scalesWithStage ? '적용' : '미적용', unplayable: def.unplayable ? '예' : '아니오', innate: def.innate ? '예' : '아니오',
     retain: def.retain ? '예' : '아니오', volatile: def.volatile ? '예' : '아니오', sly: def.sly ? '예' : '아니오',
@@ -249,7 +247,7 @@ function buildWorkbook() {
     { key: 'id', header: '카드 ID', width: 28 }, { key: 'name', header: '이름', width: 20 },
     { key: 'type', header: '타입', width: 11 }, { key: 'attackKind', header: '공격 종류', width: 12 },
     { key: 'cost', header: '에너지', width: 9, numeric: true }, { key: 'ammoCost', header: '탄약', width: 8, numeric: true },
-    { key: 'overloadGain', header: '과부화', width: 9, numeric: true }, { key: 'exhausts', header: '소멸', width: 8 },
+    { key: 'exhausts', header: '소멸', width: 8 },
     { key: 'stageScale', header: '단계 보정', width: 10 }, { key: 'unplayable', header: '사용 불가', width: 10 },
     { key: 'innate', header: '선천성', width: 8 }, { key: 'retain', header: '보존', width: 8 },
     { key: 'volatile', header: '휘발성', width: 8 }, { key: 'sly', header: '교활', width: 8 },
@@ -277,11 +275,11 @@ function buildWorkbook() {
 
   const implants = Object.values(IMPLANT_DEFINITIONS).map((def) => {
     const map = capability(def.id);
-    return { id: def.id, name: def.name, floor: def.floorOverload, effect: koreanJson(def.effect), description: def.description, capability: map.modifiers, fieldAction: map.fieldAction, mapInfo: map.mapInfo, axis: map.axis };
+    return { id: def.id, name: def.name, effect: koreanJson(def.effect), description: def.description, capability: map.modifiers, fieldAction: map.fieldAction, mapInfo: map.mapInfo, axis: map.axis };
   });
   sheet(workbook, '임플란트', '임플란트 스펙', 'src/data/implants.js, src/data/facilityEquipmentCapabilities.js', [
     { key: 'id', header: '임플란트 ID', width: 18 }, { key: 'name', header: '이름', width: 22 },
-    { key: 'floor', header: '과부화 하한', width: 13, numeric: true }, { key: 'effect', header: '패시브 효과 데이터', width: 52 },
+    { key: 'effect', header: '패시브 효과 데이터', width: 52 },
     { key: 'description', header: '설명', width: 36 }, { key: 'capability', header: 'Capability', width: 36 },
     { key: 'fieldAction', header: '능동 현장 효과', width: 50 },
     { key: 'mapInfo', header: '맵 정보 효과', width: 12 }, { key: 'axis', header: '역할축', width: 10 },

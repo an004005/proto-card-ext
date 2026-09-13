@@ -70,7 +70,6 @@ export function buildSlots(cat, loadout) {
       filled: !!def,
       name: def?.name,
       cardCount: cardCountOf(def),
-      floorOverload: def?.floorOverload,
       description: def?.description,
       cardList: def?.cardList,
     });

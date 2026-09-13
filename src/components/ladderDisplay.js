@@ -43,7 +43,7 @@ export function ladderNote(forecast, extra = '') {
   // 층계 가감을 받지 않으므로, 층계표를 그대로 베끼면 버튼이 없는 대가를 말하게 된다.
   const timeDelta = forecast.parts.filter((part) => part.label === '능력').reduce((acc, part) => acc + part.delta, 0);
   if (timeDelta !== 0) parts.push(`시간 ${timeDelta > 0 ? '+' : ''}${timeDelta}칸`);
-  // 소음과 과부화는 **총량**이다. `+`를 붙이면 "지금보다 2 더"로 읽히지만 실제로는 "이 행동이
+  // 소음은 **총량**이다. `+`를 붙이면 "지금보다 2 더"로 읽히지만 실제로는 "이 행동이
   // 낼 소음이 2"라는 뜻이다. 층계가 그 값을 바꿨을 때만 기본값과의 차이를 괄호로 덧붙인다.
   const amount = (label, value, baseValue) => {
     const delta = value - baseValue;
@@ -51,7 +51,6 @@ export function ladderNote(forecast, extra = '') {
     return `${label} ${value}(기본 ${baseValue} ${delta > 0 ? '+' : '−'} ${STEP_LABELS[step]} ${Math.abs(delta)})`;
   };
   if (cost.noise !== 0 || forecast.baseNoise !== 0) parts.push(amount('소음', cost.noise, forecast.baseNoise));
-  if (cost.overload !== 0 || forecast.baseOverload !== 0) parts.push(amount('과부화', cost.overload, forecast.baseOverload));
   if (cost.hpCost) parts.push(`HP -${cost.hpCost}`);
   if (cost.durabilityLoss) parts.push(`장비 내구도 -${cost.durabilityLoss}`);
   if (cost.duration != null) parts.push(`지속 ${cost.duration}칸`);
@@ -80,7 +79,7 @@ export const LADDER_EXPLAINER = html`<div>
     불가(−3 이하) 시도 불가
   </div>
   <div style=${{ marginTop: '5px', opacity: 0.85 }}>
-    통화는 Capability마다 다릅니다 — Hacking은 과부화, Force는 소음과 장비 내구도, Stealth는 강한 흔적과 경계도, Mobility는 HP, Deception은 효과 지속, Perception은 시간.
+    통화는 Capability마다 다릅니다 — Hacking은 구역 경계도, Force는 소음과 장비 내구도, Stealth는 강한 흔적과 경계도, Mobility는 HP, Deception은 효과 지속, Perception은 시간.
   </div>
   <div style=${{ marginTop: '5px', opacity: 0.85 }}>
     전용 시간 규칙을 쓰는 행동(이동·고지대 통과·흔적 정리)은 층계 시간 가감을 중복으로 받지 않고, 0칸짜리 조우 속이기는 시간 대신 성공 기준이 높아집니다.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
-  openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment, isAtOpenExit,
+  openSpecialEdge, basicRecon, useOpportunity, useFieldEquipment, isAtOpenExit,
   hackCamera, hackAccessInterface, destroyCamera, cameraHackRange, disableGenerator,
   useConcealment, effectiveStealthWithConcealment, refreshActiveRecon, hackControlRoom,
   isOnFloorPlan, isNodeCharted, canTraverseEdge,
@@ -15,7 +15,7 @@ import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabil
 import {
   EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
-  OVERLOAD_MELTDOWN, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
+  BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
   TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_EXIT_CLOSE_WINDOW,
   REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
   NOISE_DURATION, CAMERA_FORCE_TIME, GENERATOR_FORCE_TIME,
@@ -24,9 +24,9 @@ import {
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
 
-function makeRun(seed = 1, overloadConfig) {
+function makeRun(seed = 1, runConfig) {
   const { graph } = generateFacilityGraph(seed);
-  return createRunState(graph, seed, overloadConfig);
+  return createRunState(graph, seed, runConfig);
 }
 
 test('advanceTime is deterministic for the same seed and target', () => {
@@ -570,7 +570,6 @@ test('module_spatial snapshot_scan reveals threat presence within its range and 
   const startNodeId = state.playerNodeId;
   state = useFieldEquipment(state, 'inst1', contract);
   assert.equal(state.time, before + contract.timeCost);
-  assert.equal(state.overload, contract.overloadGain);
   const hops = bfsHopDistances(state.graph.edges, startNodeId);
   const observedWithinRange = Object.keys(state.observations).every((nodeId) => hops.get(nodeId) <= contract.range);
   assert.ok(observedWithinRange);
@@ -622,18 +621,6 @@ test('useFieldEquipment rejects out-of-range targets for remote_intrusion and te
   // unaffected: a target-less snapshot_scan still works regardless of range.
   const scanned = useFieldEquipment(state, 'inst', spatialContract);
   assert.ok(Object.keys(scanned.observations).length > 0);
-});
-
-// #9 Overload 100은 HP와 무관한 즉시 패배이며, 장착 임플란트 바닥 아래로는 감소하지 않는다.
-test('Overload >=100 keeps the run active, and reduction never drops below the floor', () => {
-  let state = makeRun(5, { overloadFloor: 15 });
-  state = applyOverloadDelta(state, 90);
-  assert.equal(state.overload, 105);
-  assert.equal(state.phase, 'active');
-
-  let floored = makeRun(6, { overloadFloor: 15 });
-  floored = applyOverloadDelta(floored, -50);
-  assert.equal(floored.overload, 15);
 });
 
 test('battery generators can be hacked directly or through a hacked same-sector interface, and Force is local', () => {

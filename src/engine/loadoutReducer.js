@@ -7,7 +7,7 @@ import { createRunState, refreshLocalObservations } from './runEngine.js';
 import { offerContracts } from './contractReducer.js';
 import { computeCapabilities } from './capabilityEngine.js';
 import {
-  computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus, computeOverloadGainMultiplier, MAX_DURABILITY,
+  computeMaxHpBonus, computeInventoryCapacityBonus, MAX_DURABILITY,
 } from './equipmentEngine.js';
 import { createInventory, addItem, removeItem, createItem, addAmmo } from './inventoryEngine.js';
 import { WAREHOUSE_STARTING_POOL, FARMING_ONLY_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
@@ -79,7 +79,7 @@ export function newRun(seed) {
   return {
     currentScreen: 'contract',
     playerState: {
-      hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, overload: 0,
+      hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, overloadActive: false,
       loadout,
       inventory: createInventory(BASE_INVENTORY_CAPACITY),
       warehouse: buildStartingWarehouse(loadout),
@@ -129,17 +129,15 @@ export function confirmLoadout(snapshot) {
   if (snapshot.currentScreen !== 'loadout') return snapshot;
   const loadout = snapshot.playerState.loadout;
   const maxHp = BASE_MAX_HP + computeMaxHpBonus(loadout);
-  const floor = computeFloorOverload(loadout);
   const capacity = BASE_INVENTORY_CAPACITY + computeInventoryCapacityBonus(loadout);
   // 인벤토리로 옮겨둔 아이템(탄약 포함)은 그대로 런으로 이어간다 — 새로 만드는 건 용량 갱신뿐.
   // 탄약은 더 이상 여기서 자동 지급되지 않는다 — 창고에서 인벤토리로 직접 옮겨온 만큼만 시작 탄약이 된다.
   const inventory = { ...snapshot.playerState.inventory, capacity };
-  const playerState = { ...snapshot.playerState, hp: maxHp, maxHp, overload: floor, inventory };
+  const playerState = { ...snapshot.playerState, hp: maxHp, maxHp, inventory };
   const seed = snapshot.rngState;
   const { graph, rngState } = generateFacilityGraph(seed, snapshot.runSectorIds);
   const contract = snapshot.activeContract;
   const facilityRunState = refreshLocalObservations(createRunState(graph, seed, {
-    overloadFloor: floor, overloadGainMultiplier: computeOverloadGainMultiplier(loadout),
     contract, revealLandmarkSectorIds: contract ? [contract.sectorId] : [],
   }), computeCapabilities(loadout).perception);
   return {

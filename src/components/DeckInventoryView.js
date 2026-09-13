@@ -5,7 +5,7 @@ import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } f
 import { MODULE_DEFINITIONS } from '../data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../data/implants.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
-import { buildDeckFromLoadout, computeFloorOverload, computeInventoryCapacityBonus } from '../engine/equipmentEngine.js';
+import { buildDeckFromLoadout, computeInventoryCapacityBonus } from '../engine/equipmentEngine.js';
 import { buildAllEquipSlots, buildDeckGroups, buildBurdenGroups } from '../data/loadoutDisplay.js';
 import { getEffectiveCost } from '../engine/combatEngine.js';
 import { getStage } from '../engine/overloadEngine.js';
@@ -93,16 +93,14 @@ function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleCl
   `;
 }
 
-export function DeckInventoryView({ loadout, inventory = null, warehouse = null, manage = false, overload = null }) {
+export function DeckInventoryView({ loadout, inventory = null, warehouse = null, manage = false, overloadActive = false }) {
   const [dragPayload, setDragPayload] = useState(null);
   const [tab, setTab] = useState('inventory'); // 'inventory' | 'deck'
   const [useMenuItem, setUseMenuItem] = useState(null); // 더블클릭/우클릭으로 연 "사용" 팝업 대상
   const deckSize = buildDeckFromLoadout(loadout).length;
-  // 덱 탭의 카드 코스트·피해는 어느 과부화 단계로 보여줄 것인가. 창고(출격 준비)에서는 아직
-  // 런이 없으므로 장착 바닥이 최선의 근사지만, 런 중에는 **지금 과부화**가 실제 기준이다 —
-  // 바닥으로 보여주면 과열(2단계)에서 코스트 +1이 붙은 카드를 0단계 값으로 읽게 된다(리뷰 B7).
-  const floor = computeFloorOverload(loadout);
-  const deckOverload = overload ?? floor;
+  // 덱 탭의 카드 코스트·피해는 지금 과부화가 켜져 있는지를 그대로 따른다 — 화면마다 다른
+  // 단계로 읽히면 플레이어가 실제로 낼 코스트를 알 수 없다(리뷰 B7).
+  const deckStage = getStage(overloadActive);
   const capacity = BASE_INVENTORY_CAPACITY + computeInventoryCapacityBonus(loadout);
   const deckGroups = [...buildDeckGroups(loadout), ...buildBurdenGroups(inventory)];
   const allEquipSlots = buildAllEquipSlots(loadout);
@@ -176,9 +174,9 @@ export function DeckInventoryView({ loadout, inventory = null, warehouse = null,
               ${g.cards.map((c, i) => {
                 const def = CARD_DEFINITIONS[c.defId];
                 const type = TYPE_INFO[def.type] || TYPE_INFO.skill;
-                const cost = getEffectiveCost(def, getStage(deckOverload), {});
+                const cost = getEffectiveCost(def, deckStage, {});
                 return html`
-                  <${Tooltip} key=${i} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${deckOverload} item=${c.item} />`}>
+                  <${Tooltip} key=${i} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overloadActive=${overloadActive} item=${c.item} />`}>
                     <div style=${{ aspectRatio: '3/4', border: `2px solid ${g.color}`, background: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', cursor: 'default' }}>
                       <span style=${{ fontSize: '9px', fontWeight: 800, textAlign: 'center', lineHeight: 1.2 }}>${c.name}</span>
                     </div>

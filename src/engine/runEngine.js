@@ -13,7 +13,6 @@
 import { createRngState, pick } from './rng.js';
 import { RuleViolation } from './errors.js';
 import { bfsHopDistances, buildAdjacency, isEdgeUnlocked } from './graphUtils.js';
-import { gainOverload, reduceOverload } from './overloadEngine.js';
 import { effectiveForRequirement } from './capabilityEngine.js';
 import { capabilityStep, resolveCapabilityCost } from './capabilityCosts.js';
 import { requireActionCost, forecastAction, actionTimeCost, moveTimeCost } from './actionCosts.js';
@@ -28,17 +27,16 @@ import {
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
-  HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN,
-  CAMERA_STEALTH_THRESHOLD, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME, CAMERA_HACK_OVERLOAD,
+  CAMERA_STEALTH_THRESHOLD, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME,
   CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
   MOBILITY_MOVE_TIME_DELTA, MOVE_MIN_TIME,
-  GENERATOR_HACK_TIME, GENERATOR_HACK_OVERLOAD, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
-  CONCEALMENT_ACTION_TIME_COST, HALL_STEALTH_PENALTY, CONTROL_ROOM_HACK_TIME, CONTROL_ROOM_HACK_OVERLOAD,
+  GENERATOR_HACK_TIME, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
+  CONCEALMENT_ACTION_TIME_COST, HALL_STEALTH_PENALTY, CONTROL_ROOM_HACK_TIME,
   STEALTH_CONTEXT_CAMERA, STEALTH_CONTEXT_POWER_CUT, STEALTH_CONTEXT_LOCKDOWN,
   ENCOUNTER_DECEIVE_REQUIREMENT, ENCOUNTER_DECEIVE_STEP_PENALTY, HIGH_GROUND_MOBILITY_REQUIREMENT,
   PURSUIT_DECAY_TICKS, INVESTIGATE_DECAY_TICKS, PURSUIT_DECAY_ALERT,
-  CONTRACT_ACQUIRE_TIME, CONTRACT_ACQUIRE_OVERLOAD, CONTRACT_DESTROY_TIME, CONTRACT_DESTROY_OVERLOAD,
-  CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD, LOCKDOWN_EXIT_CLOSE_WINDOW,
+  CONTRACT_ACQUIRE_TIME, CONTRACT_DESTROY_TIME,
+  CONTRACT_TRANSMIT_TIME, LOCKDOWN_EXIT_CLOSE_WINDOW,
   LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL,
   CORPSE_DISPOSAL_TIME, DISCOVERY_NOISE_INTENSITY,
   EVIDENCE_TIER_RAISING_ALERT, REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
@@ -68,10 +66,10 @@ function exitOpenWaitFor(effectiveHacking) {
 /**
  * @param {import('./types.js').FacilityGraph} graph
  * @param {number} seed
- * @param {{overloadFloor?: number, overloadGainMultiplier?: number}} [overloadConfig] loadout-derived (equipmentEngine.computeFloorOverload/computeOverloadGainMultiplier) — Overload is a run-wide resource shared with combat, not map-specific.
+ * @param {{revealLandmarks?: boolean, revealLandmarkSectorIds?: string[], contract?: object}} [runConfig] 런 시작 조건 — 계약과 사전 정보 공개.
  * @returns {import('./types.js').FacilityRunState}
  */
-export function createRunState(graph, seed, overloadConfig = {}) {
+export function createRunState(graph, seed, runConfig = {}) {
   /** @type {Record<string, import('./types.js').ExitRuntimeState>} */
   const exits = {};
   for (const placement of graph.exits) {
@@ -130,22 +128,21 @@ export function createRunState(graph, seed, overloadConfig = {}) {
   // 위협·카메라·은엄폐·비인가 통로는 어떤 난이도에서도 공개하지 않으므로 hasThreat은 false다.
   /** @type {Record<string, {observedAt: number, hasThreat: boolean}>} */
   const observations = {};
-  if (overloadConfig.revealLandmarks) {
+  if (runConfig.revealLandmarks) {
     for (const landmark of graph.landmarks) observations[landmark.nodeId] = { observedAt: 0, hasThreat: false };
   }
   // 계약의 "사전 정보" 선불 — 계약 목표부 랜드마크만 미리 공개한다. revealLandmarks(전체
   // 공개, D17 난이도용)와는 별도 옵션이라 둘이 같이 켜져도 서로 덮어쓰지 않는다.
-  for (const sectorId of overloadConfig.revealLandmarkSectorIds || []) {
+  for (const sectorId of runConfig.revealLandmarkSectorIds || []) {
     const landmark = graph.landmarks.find((l) => l.sectorId === sectorId);
     if (landmark) observations[landmark.nodeId] = { observedAt: 0, hasThreat: false };
   }
 
-  const overloadFloor = overloadConfig.overloadFloor ?? 0;
   // 계약(§3단계). 수락된 계약을 넘겨받아 진행 상태를 이 런에 심는다 — 여기서부터는
   // facilityRunState.contract가 유일한 소스이고, 로드아웃 단계의 GameSnapshot.activeContract는
   // 더 이상 참조하지 않는다.
-  const contract = overloadConfig.contract
-    ? { ...overloadConfig.contract, status: 'accepted', acquiredAt: null, completedAt: null }
+  const contract = runConfig.contract
+    ? { ...runConfig.contract, status: 'accepted', acquiredAt: null, completedAt: null }
     : null;
   return {
     graph,
@@ -155,9 +152,6 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     playerNodeId: graph.startNodeId,
     visitedNodeIds: [graph.startNodeId],
     openedEdgeIds: [],
-    overload: overloadFloor,
-    overloadFloor,
-    overloadGainMultiplier: overloadConfig.overloadGainMultiplier ?? 1,
     observations,
     // 조우 속이기를 이미 한 번 쓴 위협(D) — 위협당 한 번뿐이다.
     deceivedThreatIds: [],
@@ -201,21 +195,6 @@ export function createRunState(graph, seed, overloadConfig = {}) {
     reinforcements: Object.fromEntries(graph.sectorIds.map((id) => [id, { nextAt: REINFORCEMENT_INTERVAL, alertSeen: 0 }])),
     powerCuts: [],
   };
-}
-
-/**
- * §8: apply an Overload change (positive = gain, respects the multiplier and rounds; negative =
- * reduction, clamped to the equipped floor — see overloadEngine.js, the same rules combat uses).
- * 100 초과는 런을 끝내지 않는다. 전투에서는 초과분이 상태이상 카드로 전환된다.
- * @param {import('./types.js').FacilityRunState} state
- * @param {number} amount
- * @returns {import('./types.js').FacilityRunState}
- */
-export function applyOverloadDelta(state, amount) {
-  const overload = amount >= 0
-    ? gainOverload(state.overload, amount, state.overloadGainMultiplier)
-    : reduceOverload(state.overload, -amount, state.overloadFloor);
-  return { ...state, overload };
 }
 
 /**
@@ -1453,7 +1432,6 @@ const TASK_ABORTS = {
 function applyTaskCost(state, cost, nodeId) {
   if (!cost) return state;
   let next = state;
-  if (cost.overload) next = applyOverloadDelta(next, cost.overload);
   if (cost.hpCost) next = { ...next, pendingHpLoss: (next.pendingHpLoss || 0) + cost.hpCost };
   if (cost.durabilityLoss) next = { ...next, pendingDurabilityLoss: (next.pendingDurabilityLoss || 0) + cost.durabilityLoss };
   if (nodeId) {
@@ -1650,7 +1628,7 @@ export function advanceTime(state, targetTime) {
     current = applyCompletionBoundary(current, t); // 3
     current = worldTick(current, t); // 4~5
     // 5단계에서 새 적 접촉이 확정되면 진행 중인 작업은 거기서 끝난다 — 경과한 칸만 소모하고
-    // 미완료 보상·개방·효과·쿨다운·과부화 대가는 하나도 적용하지 않는다(planned §9.4).
+    // 미완료 보상·개방·효과·쿨다운·대가는 하나도 적용하지 않는다(planned §9.4).
     // 중단 판정은 **집합**으로 한다. 플레이어 노드의 위협에서 이 작업이 무시하기로 한 것을 뺀
     // 나머지가 하나라도 있으면 새 접촉이다 — 대표로 뽑힌 하나가 무시 대상인지로 묻지 않는다.
     if (current.pendingTask && current.playerNodeId) {
@@ -1808,12 +1786,12 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
 
 /**
  * Capability 층계(§5단계, D8)가 정한 비용으로 현장 작업 하나를 **예약**한다. 시간은 1칸씩
- * 흐르고, 층계의 대가(과부화·HP·내구도·흔적·경계도)와 소음은 완료 시각에 한 번에 확정된다.
+ * 흐르고, 층계의 대가(HP·내구도·흔적·경계도)와 소음은 완료 시각에 한 번에 확정된다.
  * 완료 전에 적이 접촉하면 경과한 칸만 소모되고 대가는 하나도 청구되지 않는다.
  *
  * HP와 장비 내구도는 `playerState`에 있어 여기서 건드릴 수 없다. 그래서 상태에 청구서만 쌓아
- * 두고(`pendingHpLoss`/`pendingDurabilityLoss`), facilityReducer의 공통 래퍼가 overload를
- * 되돌릴 때 함께 정산한다 — 대가를 치르는 자리가 행동마다 흩어지면 빠뜨린 곳이 생긴다.
+ * 두고(`pendingHpLoss`/`pendingDurabilityLoss`), facilityReducer의 공통 래퍼가 액션을 마칠 때
+ * 함께 정산한다 — 대가를 치르는 자리가 행동마다 흩어지면 빠뜨린 곳이 생긴다.
  *
  * @param {import('./types.js').FacilityRunState} state
  * @param {import('./capabilityCosts.js').CapabilityCost} cost
@@ -2351,7 +2329,7 @@ export function selectFarmReward(state, optionIndex) {
 /**
  * §11.1/docs/map-equipment-capability-mapping.md 능동 현장 효과. `contract`는 caller가
  * capabilityEngine.listFieldActiveEquipment(loadout)에서 골라 넘긴다 — 안전/신속/강행 접근을
- * 적용하지 않으며(§6.3 매핑 문서 note) 표의 시간·Overload·지속시간이 최종값이다.
+ * 적용하지 않으며(§6.3 매핑 문서 note) 표의 시간·지속시간이 최종값이다.
  * @param {import('./types.js').FacilityRunState} state
  * @param {string} instanceId 장비 인스턴스 id — 쿨다운 키.
  * @param {import('../data/facilityEquipmentCapabilities.js').MapEquipmentContract['fieldAction']} contract
@@ -2365,7 +2343,7 @@ export function useFieldEquipment(state, instanceId, contract, targetId) {
   const readyAt = state.fieldCooldowns[instanceId] || 0;
   if (state.time < readyAt) throw new RuleViolation(`${instanceId} is on cooldown until ${readyAt}`);
 
-  // 대상·사거리는 **시작 전에** 확정한다(불가 요청은 0칸). 실제 효과와 쿨다운·과부화는 전부
+  // 대상·사거리는 **시작 전에** 확정한다(불가 요청은 0칸). 실제 효과와 쿨다운은 전부
   // 완료 시각에 생긴다 — 중단되면 아무것도 남지 않고 쿨다운도 돌지 않는다.
   if (contract.kind === 'remote_intrusion') {
     if (!targetId) throw new RuleViolation('remote_intrusion requires a target node');
@@ -2386,7 +2364,7 @@ export function useFieldEquipment(state, instanceId, contract, targetId) {
   return scheduleTask(state, {
     kind: 'fieldEquipment',
     timeCost: actionTimeCost('fieldEquipment', { contract }),
-    cost: { overload: contract.overloadGain, timeCost: contract.timeCost },
+    cost: { timeCost: contract.timeCost },
     params: {
       instanceId, kind: contract.kind, range: contract.range, duration: contract.duration, cooldown: contract.cooldown, targetId,
     },

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { capabilityStep, resolveCapabilityCost } from '../src/engine/capabilityCosts.js';
 import {
   CAPABILITY_STEP_TIME_DELTA, CAPABILITY_MIN_TIME, CAPABILITY_STEP_HP_COST,
-  CAPABILITY_STEP_OVERLOAD_DELTA, FALSE_BROADCAST_DURATION_BY_STEP, APPROACH_TIME_DELTA,
+  CAPABILITY_STEP_RAISES_ALERT, FALSE_BROADCAST_DURATION_BY_STEP, APPROACH_TIME_DELTA,
 } from '../src/data/facilityLayout.js';
 import { CAPABILITY_MIN, CAPABILITY_MAX } from '../src/data/facilityEquipmentCapabilities.js';
 
@@ -62,8 +62,8 @@ test('a lower capability always means a lower step, negatives included', () => {
   assert.equal(resolveCapabilityCost('mobility', -2, 1, { time: 1 }).hpCost, 0, 'impossible은 아무것도 치르지 않는다');
 });
 
-test('force pays in noise and durability, and nothing in overload', () => {
-  const base = { time: 100, noise: 2, overload: 0 };
+test('force pays in noise and durability, and never raises the alert', () => {
+  const base = { time: 100, noise: 2 };
   const standard = resolveCapabilityCost('force', 1, 1, base);
   const strained = resolveCapabilityCost('force', 0, 1, base);
   const severe = resolveCapabilityCost('force', 0, 2, base);
@@ -75,21 +75,21 @@ test('force pays in noise and durability, and nothing in overload', () => {
   assert.equal(strained.durabilityLoss, 0);
 
   for (const cost of [standard, strained, severe]) {
-    assert.equal(cost.overload, 0, 'Force는 과부화를 내지 않는다');
+    assert.equal(cost.raisesAlert, false, 'Force는 경계도를 올리지 않는다');
     assert.equal(cost.hpCost, 0);
     assert.equal(cost.leavesStrongTrace, false);
   }
 });
 
-test('hacking pays in overload, and leaves noise exactly as the caller gave it', () => {
-  const base = { time: 100, overload: 5, noise: 0 };
+test('hacking pays in the sector alert, and leaves noise exactly as the caller gave it', () => {
+  const base = { time: 100, noise: 0 };
   const standard = resolveCapabilityCost('hacking', 2, 2, base);
   const strained = resolveCapabilityCost('hacking', 1, 2, base);
   const severe = resolveCapabilityCost('hacking', 0, 2, base);
 
-  assert.equal(standard.overload, 5);
-  assert.equal(strained.overload, 5 + CAPABILITY_STEP_OVERLOAD_DELTA.strained);
-  assert.equal(severe.overload, 5 + CAPABILITY_STEP_OVERLOAD_DELTA.severe);
+  assert.equal(standard.raisesAlert, CAPABILITY_STEP_RAISES_ALERT.standard);
+  assert.equal(strained.raisesAlert, CAPABILITY_STEP_RAISES_ALERT.strained);
+  assert.equal(severe.raisesAlert, CAPABILITY_STEP_RAISES_ALERT.severe, '서툰 해킹은 그 자리에서 경계를 올린다');
 
   for (const cost of [standard, strained, severe]) {
     assert.equal(cost.noise, 0, 'Hacking은 조용하다 — 부족해도 소음으로 청구하지 않는다');
@@ -116,7 +116,6 @@ test('stealth pays in traces, and severe drags the sector alert up with it', () 
 
   for (const cost of [strained, severe]) {
     assert.equal(cost.noise, 0, 'Stealth 부족은 소음이 아니라 흔적으로 청구된다');
-    assert.equal(cost.overload, 0);
     assert.equal(cost.hpCost, 0);
   }
 });
@@ -132,7 +131,6 @@ test('mobility pays in HP on top of time, and perception pays in time alone', ()
   assert.equal(perception.timeCost, 80 + CAPABILITY_STEP_TIME_DELTA.strained);
   assert.equal(perception.hpCost, 0);
   assert.equal(perception.noise, 0);
-  assert.equal(perception.overload, 0);
   assert.equal(perception.durabilityLoss, 0);
   assert.equal(perception.leavesStrongTrace, false);
   assert.equal(perception.raisesAlert, false);
@@ -154,7 +152,7 @@ test('deception pays by shortening the effect, read straight off the fixed per-s
 });
 
 test('surplus is genuinely cheaper than standard in both time and the own currency', () => {
-  const base = { time: 100, noise: 2, overload: 10, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP };
+  const base = { time: 100, noise: 2, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP };
 
   const standardTime = resolveCapabilityCost('perception', 2, 2, base).timeCost;
   const surplusTime = resolveCapabilityCost('perception', 3, 2, base).timeCost;
@@ -162,7 +160,6 @@ test('surplus is genuinely cheaper than standard in both time and the own curren
   assert.equal(surplusTime, 100 + CAPABILITY_STEP_TIME_DELTA.surplus);
 
   assert.ok(resolveCapabilityCost('force', 3, 2, base).noise < resolveCapabilityCost('force', 2, 2, base).noise);
-  assert.ok(resolveCapabilityCost('hacking', 3, 2, base).overload < resolveCapabilityCost('hacking', 2, 2, base).overload);
   assert.ok(resolveCapabilityCost('deception', 3, 2, base).duration > resolveCapabilityCost('deception', 2, 2, base).duration);
 });
 
@@ -226,11 +223,10 @@ test('noise is clamped into the 0..3 band the noise pipeline understands', () =>
 
 test('impossible returns the step instead of throwing, and charges nothing', () => {
   let cost;
-  assert.doesNotThrow(() => { cost = resolveCapabilityCost('hacking', 0, 3, { time: 100, overload: 10, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP }); });
+  assert.doesNotThrow(() => { cost = resolveCapabilityCost('hacking', 0, 3, { time: 100, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP }); });
   assert.equal(cost.step, 'impossible');
   assert.equal(cost.timeCost, 0);
   assert.equal(cost.noise, 0);
-  assert.equal(cost.overload, 0);
   assert.equal(cost.hpCost, 0);
   assert.equal(cost.durabilityLoss, 0);
   assert.equal(cost.duration, null);
@@ -247,7 +243,7 @@ test('an unknown capability kind throws instead of quietly costing nothing', () 
 });
 
 test('the caller\'s base object is never mutated', () => {
-  const base = { time: 100, noise: 2, overload: 10, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP };
+  const base = { time: 100, noise: 2, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP };
   const snapshot = { ...base };
   for (const kind of ['perception', 'stealth', 'hacking', 'mobility', 'force', 'deception']) {
     for (const value of [4, 3, 2, 1, 0]) resolveCapabilityCost(kind, value, 3, base);

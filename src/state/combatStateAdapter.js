@@ -10,7 +10,7 @@ export const enemiesSignal = computed(() => combatStateSignal.value?.enemies ?? 
 export const playerCombatSignal = computed(() => combatStateSignal.value?.player ?? null);
 export const overloadStageSignal = computed(() => {
   const combat = combatStateSignal.value;
-  return combat ? getStage(combat.overload) : 0;
+  return combat ? getStage(combat.overloadActive) : 0;
 });
 export const combatSummarySignal = computed(() => snapshotSignal.value.combatSummary);
 export const pileCountsSignal = computed(() => {

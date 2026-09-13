@@ -1,6 +1,5 @@
 // 전투 시작·진행·종료·이탈 커맨드 — gameReducer.js의 책임 분리(§코드 리뷰) 중 전투 묶음.
 import { applyStatus, applyDamage } from './statusEngine.js';
-import { reduceOverload } from './overloadEngine.js';
 import {
   createCombatState, beginPlayerFirst, beginEnemyFirst, playCard, advanceTurn, checkWinLoss,
 } from './combatEngine.js';
@@ -10,7 +9,7 @@ import {
   applyCombatRoundTimeToRunState, applyCombatCardNoise, beginDisengage, cancelDisengage, addDisengageProgress, canDisengage,
 } from './combatMapIntegration.js';
 import {
-  buildDeckFromLoadout, computeFloorOverload, computeOverloadGainMultiplier, getImplantEffect,
+  buildDeckFromLoadout, getImplantEffect,
   computeMaxLoadBonus, computeDamagedStatusCardEntries, applyDurabilityDecay,
 } from './equipmentEngine.js';
 import { addItem, removeItem, isItemBurdenGivenOrder, getUsableAmmo, spendAmmo } from './inventoryEngine.js';
@@ -63,7 +62,7 @@ function endRunIfCollapsed(snapshot) {
   if (!snapshot.activeCombatState && !snapshot.combatContext) return snapshot;
   const combat = snapshot.activeCombatState;
   const playerState = combat
-    ? { ...snapshot.playerState, hp: combat.player.hp, overload: combat.overload }
+    ? { ...snapshot.playerState, hp: combat.player.hp, overloadActive: combat.overloadActive }
     : snapshot.playerState;
   return {
     ...snapshot,
@@ -115,8 +114,7 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
   let combat = createCombatState({
     deckEntries: getDeckEntries(ps), monsterIds, hpMultiplier,
     playerHp: ps.hp, playerMaxHp: ps.maxHp, usableAmmo, maxLoad,
-    overload: ps.overload, overloadFloor: computeFloorOverload(loadout),
-    overloadGainMultiplier: computeOverloadGainMultiplier(loadout),
+    overloadActive: !!ps.overloadActive,
     extraDrawPerTurn: extraDrawImplant ? extraDrawImplant.amount : 0,
     turnStartAoeDamage: aoeImplant ? aoeImplant.amount : 0,
     inventoryItemIdsInOrder: ps.inventory.items.map((i) => i.id),
@@ -254,8 +252,6 @@ export function useConsumable(snapshot, itemId) {
   if (def.effect.kind === 'healPercent') {
     const heal = Math.round(combat.player.maxHp * def.effect.amount);
     combat = { ...combat, player: { ...combat.player, hp: Math.min(combat.player.maxHp, combat.player.hp + heal) } };
-  } else if (def.effect.kind === 'reduceOverload') {
-    combat = { ...combat, overload: reduceOverload(combat.overload, def.effect.amount, combat.overloadFloor) };
   } else if (def.effect.kind === 'aoeDamage') {
     combat = { ...combat, enemies: combat.enemies.map((e) => (e.hp > 0 ? applyDamage(e, def.effect.amount, false) : e)) };
   } else if (def.effect.kind === 'aoeDebuff') {
@@ -296,7 +292,7 @@ export function finalizeIfCombatEnded(snapshot) {
   if (snapshot.facilityRunState && snapshot.facilityRunState.phase !== 'active') {
     return {
       ...snapshot,
-      playerState: { ...snapshot.playerState, hp: combat.player.hp, overload: combat.overload },
+      playerState: { ...snapshot.playerState, hp: combat.player.hp, overloadActive: combat.overloadActive },
       activeCombatState: null, currentScreen: 'gameOver', combatContext: null,
       facilityRunState: releaseEngagement(snapshot.facilityRunState),
     };
@@ -348,7 +344,7 @@ export function finalizeIfCombatEnded(snapshot) {
   }
   facilityRunState = releaseEngagement(facilityRunState);
 
-  const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, inventory, loadout: decayResult.loadout };
+  const playerState = { ...ps, hp: combat.player.hp, overloadActive: combat.overloadActive, inventory, loadout: decayResult.loadout };
   // 전투는 startCombat이 넘겨준 rngState를 자기 안에서 계속 굴린다(드로우·명중·적 행동). 그것을
   // 스냅샷으로 되돌려주지 않으면 전투에서 무엇을 했든 보상 롤은 전투 시작 시점의 시드로 굴러간다
   // — 같은 전투를 어떻게 풀었든 보상이 똑같아진다(리뷰 A3).
@@ -360,6 +356,32 @@ export function finalizeIfCombatEnded(snapshot) {
 }
 
 // ---- disengage (§9.2) ----
+
+// ---- 과부화 토글 (ADR-0080) ----
+
+/**
+ * 과부화를 켜고 끈다. 지금은 아무 대가도 없다 — 시간도, 판정도, rng도 쓰지 않는다(ADR-0080:
+ * 대가는 캐릭터 능력과 함께 온다). 그래서 지도에서든 전투에서든 같은 커맨드 하나로 처리한다.
+ *
+ * 전투 중에는 **플레이어 턴에만** 받는다. 적 행동을 재생하는 도중에 단계가 바뀌면 이미 계산이
+ * 시작된 인텐트와 화면에 보이는 수치가 어긋난다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function toggleOverloadCommand(snapshot) {
+  const combat = snapshot.activeCombatState;
+  if (combat) {
+    if (combat.phase !== 'player_turn') return snapshot;
+  } else if (snapshot.currentScreen !== 'map') {
+    return snapshot;
+  }
+  const overloadActive = !snapshot.playerState.overloadActive;
+  return {
+    ...snapshot,
+    playerState: { ...snapshot.playerState, overloadActive },
+    activeCombatState: combat ? { ...combat, overloadActive } : combat,
+  };
+}
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function beginDisengageCommand(snapshot) {
@@ -382,7 +404,7 @@ export function resolveDisengageCommand(snapshot) {
   if (!combat || !context || !canDisengage(context.disengage)) return snapshot;
   // 이탈 확정에도 별도 맵 비용은 없다 — 다만 이탈한 그 라운드는 아직 정산되지 않았다면 3칸이다.
   const settled = settleCombatRound(snapshot);
-  const playerState = { ...settled.playerState, hp: combat.player.hp, overload: combat.overload };
+  const playerState = { ...settled.playerState, hp: combat.player.hp, overloadActive: combat.overloadActive };
   const facilityRunState = releaseEngagement(settled.facilityRunState);
   const collapsed = facilityRunState && facilityRunState.phase !== 'active';
   return {

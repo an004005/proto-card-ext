@@ -181,7 +181,7 @@ test('SET_LOADOUT_SLOT toggles implant slots (3-limit) and no-ops for non-implan
   assert.deepEqual(s.playerState.loadout.implantIds, []);
   s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant1' });
   s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant3' });
-  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant5' });
+  s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant4' });
   s = gameReducer(s, { type: 'SET_LOADOUT_SLOT', slotType: 'implant', id: 'implant6' }); // 4th -> no-op
   assert.equal(s.playerState.loadout.implantIds.length, 3);
 
@@ -190,14 +190,13 @@ test('SET_LOADOUT_SLOT toggles implant slots (3-limit) and no-ops for non-implan
   assert.equal(s, before); // weapon/top/bottom/module no longer go through this command
 });
 
-test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seeds starting ammo, and generates the facility map', () => {
-  let s = startLoadout(1); // default implants: 1,3,6 -> hp+7, floor 10+5+0=15 (implant6's cost is now +15% overload gain, not a floor)
+test('CONFIRM_LOADOUT computes maxHp/capacity from equipped implants, seeds starting ammo, and generates the facility map', () => {
+  let s = startLoadout(1); // default implants: 1,3,6 -> hp+7, 인벤토리 +5
   s = equipDefaultLoadout(s);
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   assert.equal(s.currentScreen, 'map');
   assert.equal(s.playerState.maxHp, 77);
   assert.equal(s.playerState.hp, 77);
-  assert.equal(s.playerState.overload, 15);
   assert.equal(s.playerState.inventory.capacity, 15);
   // 인벤토리는 계약 선불 재화 1개만 갖고 시작한다 — 장착 안 한 farming-only 장비 18종(임플란트⑦
   // 지도가 창고 시작 풀에 추가됨), 시작 소모품 3개, 시작 탄약(16발 = 10발 스택 + 6발 스택,
@@ -207,10 +206,10 @@ test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seed
   assert.equal(items.length, 1);
   assert.equal(items[0].kind, 'currency');
   const warehouseItems = s.playerState.warehouse.items;
-  assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 18);
+  assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 17);
   assert.equal(warehouseItems.filter((i) => i.kind === 'consumable').length, 3);
   assert.deepEqual(warehouseItems.filter((i) => i.kind === 'ammo').map((i) => i.amount), [10, 6]);
-  assert.equal(warehouseItems.length, 23);
+  assert.equal(warehouseItems.length, 22);
   assert.equal(s.facilityRunState.graph.nodes.length, totalNodesFor(s.facilityRunState.graph.sectorIds));
   assert.equal(s.facilityRunState.playerNodeId, s.facilityRunState.graph.startNodeId);
 });
@@ -613,12 +612,12 @@ test('USE_MAP_CONSUMABLE heals from inventory or quickslot, costs MAP_CONSUMABLE
   assert.equal(s.playerState.hp, hpBefore2 + Math.round(s.playerState.maxHp * 0.2));
   assert.equal(s.playerState.loadout.consumableSlots[0], null);
 
-  // non-healing consumable (stabilizer) is refused
+  // non-healing consumable (grenade) is refused
   s = {
     ...s,
     playerState: {
       ...s.playerState,
-      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-stab', kind: 'consumable', defId: 'stabilizer' }] },
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-stab', kind: 'consumable', defId: 'grenade' }] },
     },
   };
   const refused = gameReducer(s, { type: 'USE_MAP_CONSUMABLE', itemId: 'item-stab' });
@@ -700,4 +699,38 @@ test('맵에서는 창고 아이템을 버릴 수 없지만 인벤토리 아이�
   };
   const discarded = gameReducer(s, { type: 'DISCARD_ITEM', itemId: 'item-junk-x' });
   assert.ok(!discarded.playerState.inventory.items.some((i) => i.id === 'item-junk-x'));
+});
+
+// ---- 과부화 토글 (ADR-0080) ----
+
+test('TOGGLE_OVERLOAD는 지도에서 자유롭게 켜고 끄며, 시간을 쓰지 않는다', () => {
+  let s = equipDefaultLoadout(startLoadout(3));
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  assert.equal(s.playerState.overloadActive, false, '런은 꺼진 채로 시작한다');
+  const timeBefore = s.facilityRunState.time;
+
+  s = gameReducer(s, { type: 'TOGGLE_OVERLOAD' });
+  assert.equal(s.playerState.overloadActive, true);
+  assert.equal(s.facilityRunState.time, timeBefore, '대가가 없으므로 시계도 흐르지 않는다');
+
+  s = gameReducer(s, { type: 'TOGGLE_OVERLOAD' });
+  assert.equal(s.playerState.overloadActive, false, '다시 끌 수 있다');
+});
+
+test('TOGGLE_OVERLOAD는 전투 플레이어 턴에서 전투 상태까지 함께 뒤집고, 적 턴에는 거부된다', () => {
+  let s = equipDefaultLoadout(startLoadout(3));
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = driveToNextCombatOrEnd(s);
+  assert.equal(s.currentScreen, 'combat', '이 시드는 전투까지 간다');
+  assert.equal(s.activeCombatState.phase, 'player_turn');
+  s = gameReducer(s, { type: 'TOGGLE_OVERLOAD' });
+  assert.equal(s.playerState.overloadActive, true);
+  assert.equal(s.activeCombatState.overloadActive, true, '전투 상태도 같은 값을 든다');
+
+  // 적 행동 재생 중(enemy_turn)에는 받지 않는다 — 이미 계산이 시작된 인텐트와 어긋난다.
+  const duringEnemyTurn = {
+    ...s,
+    activeCombatState: { ...s.activeCombatState, phase: 'enemy_turn' },
+  };
+  assert.equal(gameReducer(duringEnemyTurn, { type: 'TOGGLE_OVERLOAD' }), duringEnemyTurn);
 });

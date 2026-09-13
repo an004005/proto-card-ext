@@ -3,10 +3,9 @@ import { pick } from '../engine/rng.js';
 
 /** @type {{value: string, weight: number}[]} */
 export const CONSUMABLE_DROP_WEIGHTS = [
-  { value: 'stabilizer', weight: 0.4 },
-  { value: 'bandage', weight: 0.3 },
-  { value: 'flashbang', weight: 0.2 },
-  { value: 'grenade', weight: 0.1 },
+  { value: 'bandage', weight: 0.5 },
+  { value: 'flashbang', weight: 0.3 },
+  { value: 'grenade', weight: 0.2 },
 ];
 
 // 위협 그룹(§9) → 몬스터 매핑. ThreatRoster/ThreatRuntimeState는 sectorId+size만 갖고 실제

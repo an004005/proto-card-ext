@@ -15,7 +15,7 @@ import { WAIT_BATCH_MAX_TICKS } from '../data/facilityLayout.js';
 import { actionTimeCost } from './actionCosts.js';
 import { cleanTraces, cutPower, broadcastFalseTarget, plantFakeNoise } from './recovery.js';
 import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
-import { computeFloorOverload, computeOverloadGainMultiplier, applyDurabilityDecay, MAX_DURABILITY } from './equipmentEngine.js';
+import { applyDurabilityDecay, MAX_DURABILITY } from './equipmentEngine.js';
 import { rollLootDurability } from './rewardEngine.js';
 import { rollSupplyLoot } from './fieldLoot.js';
 import { addItem, createItem, addAmmo, removeItem } from './inventoryEngine.js';
@@ -134,9 +134,8 @@ function settleCapabilityDues(run, playerState) {
 }
 
 /**
- * 시설맵 액션 공통: 호출 직전 playerState.overload를 facilityRunState에 동기화하고, 호출 후
- * facilityRunState.overload를 다시 playerState.overload로 되돌린다 — Overload는 전투와
- * 공유하는 런 전체 자원이므로 두 상태가 각자 카피를 갖지 않도록 매 액션마다 맞춘다.
+ * 시설맵 액션 공통: runEngine의 순수 함수를 감싸고, 그 함수가 쌓아둔 청구서(HP·내구도)를
+ * 액션이 끝날 때 playerState에 정산한다 — 대가를 치르는 자리가 행동마다 흩어지지 않게.
  * @param {GameSnapshot} snapshot
  * @param {(run: import('./types.js').FacilityRunState) => import('./types.js').FacilityRunState} fn
  * @returns {GameSnapshot}
@@ -145,10 +144,7 @@ function withFacilityRunState(snapshot, fn) {
   if (snapshot.currentScreen !== 'map' || !snapshot.facilityRunState) return snapshot;
   if (isBlockedByEncounter(snapshot)) return snapshot;
   const ps = snapshot.playerState;
-  const synced = {
-    ...snapshot.facilityRunState, overload: ps.overload,
-    overloadFloor: computeFloorOverload(ps.loadout), overloadGainMultiplier: computeOverloadGainMultiplier(ps.loadout),
-  };
+  const synced = snapshot.facilityRunState;
   // runEngine.js 함수들은 잘못된 호출(자격 미충족/이미 소진 등)에 RuleViolation을 던진다 —
   // UI가 유효한 액션만 노출하는 게 정상 경로지만, 리듀서는 항상 total function이어야 하므로
   // 그것만 흡수한다. TypeError 같은 진짜 버그까지 여기서 삼키면 "버튼을 눌러도 아무 일도
@@ -161,7 +157,7 @@ function withFacilityRunState(snapshot, fn) {
     console.error('[facilityReducer] 시설 액션 처리 중 예상치 못한 오류', error);
     throw error;
   }
-  let playerState = { ...ps, overload: next.overload };
+  let playerState = ps;
   ({ run: next, playerState } = settleCapabilityDues(next, playerState));
   // D21: 회수 계약은 확보만으로 완료가 아니다 — 물건을 들고 **탈출해야** 완료다. 인벤토리(여기서만
   // 보이는 정보)와 계약 진행 상태(facilityRunState)를 함께 봐야 하는 판정이라, 파밍 루트처럼

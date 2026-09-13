@@ -44,7 +44,7 @@ function combatSnapshot() {
   const combat = beginPlayerFirst(createCombatState({
     deckEntries: Array.from({ length: 10 }, (_, i) => ({ defId: 'katana_slash', instanceId: `dsp-card-${i}` })),
     monsterIds: ['nibbit', 'nibbit'], playerHp: 70, playerMaxHp: 70, usableAmmo: 8, maxLoad: 999,
-    overload: 0, overloadFloor: 0, overloadGainMultiplier: 1, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
+    overloadActive: false, extraDrawPerTurn: 0, turnStartAoeDamage: 0,
     inventoryItemIdsInOrder: [], inventoryCapacity: 30, rngState: { seed: 1 },
   }));
   return {
@@ -52,7 +52,7 @@ function combatSnapshot() {
     activeCombatState: combat,
     facilityRunState,
     playerState: {
-      hp: 70, maxHp: 70, overload: 0,
+      hp: 70, maxHp: 70, overloadActive: false,
       loadout: { consumableSlots: [], weapons: [], modules: [], implants: [] },
       inventory: { items: [], ammo: 8, capacity: 12 }, warehouse: { items: [], ammo: 0, capacity: 99 },
     },

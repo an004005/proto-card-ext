@@ -31,9 +31,9 @@ function runWithBlockedEdgeAtStart() {
   throw new Error('no seed puts a blocked special edge on the start node');
 }
 
-function makeRun(seed = 1, overloadConfig) {
+function makeRun(seed = 1, runConfig) {
   const { graph } = generateFacilityGraph(seed);
-  return createRunState(graph, seed, overloadConfig);
+  return createRunState(graph, seed, runConfig);
 }
 
 /**

@@ -8,7 +8,6 @@ import { MODULE_POWER_STAGE_TABLES } from '../data/modules.js';
 import { WEAPON_DEFINITIONS } from '../data/equipment.js';
 import { describeItem } from '../data/itemDisplay.js';
 import { Tooltip } from './Tooltip.js';
-import { OverloadGauge } from './OverloadGauge.js';
 import { COMBAT_NOISE_ENABLED } from '../engine/combatMapIntegration.js';
 
 export const TYPE_INFO = {
@@ -19,9 +18,8 @@ export const TYPE_INFO = {
   burden: { color: 'var(--color-neutral-600)', label: 'BURDEN · 과적 카드', cls: 'tag-neutral' },
 };
 
-// getStage()는 0~2만 반환한다(§과부화 3단계 개편 — 100 초과는 별도 단계가 아니라
-// combatEngine.js의 상태이상 카드 삽입으로 처리됨). 예전 4단계(멜트다운 포함) 표기는 제거했다.
-// 과부화 단계 이름은 statusEffects.js의 한 벌을 그대로 쓴다(용어집「과부화 단계」, 리뷰 B7).
+// 단계는 둘뿐이다(과부화 OFF/ON). 이름은 statusEffects.js의 한 벌을 그대로 쓴다
+// (용어집「과부화 단계」, 리뷰 B7).
 const STAGE_NAMES = OVERLOAD_STAGE_NAMES;
 const STAGE_LABELS = OVERLOAD_STAGE_LABELS;
 
@@ -75,13 +73,13 @@ function describeEffect(effect, def, stage) {
   }
 }
 
-function buildStageRows(def, powers, statuses) {
+function buildStageRows(def, statuses) {
   return STAGE_LABELS.map((label, stage) => {
     const resolved = resolveCard(def, stage);
     const parts = [];
-    // 코스트는 stageTable 카드만이 아니라 모든 카드의 단계 행에 적는다 — 2단계의 +1이 어디서
-    // 오는지 표에서 바로 보여야 한다(리뷰 B5).
-    if (!def.unplayable) parts.push(`코스트 ${explainEffectiveCost(def, stage, powers, statuses).total}`);
+    // 코스트는 stageTable 카드만이 아니라 모든 카드의 단계 행에 적는다 — 단계마다 코스트가
+    // 달라지는 카드가 있어서, 표에서 바로 보여야 한다(리뷰 B5).
+    if (!def.unplayable) parts.push(`코스트 ${explainEffectiveCost(def, stage, statuses).total}`);
     if (resolved.armorPerTurn !== undefined) parts.push(`매턴 갑옷 +${resolved.armorPerTurn}`);
     for (const effect of resolved.effects) parts.push(describeEffect(effect, def, stage));
     return { stage, label, effect: parts.filter(Boolean).join(' · ') || '효과 없음' };
@@ -117,12 +115,12 @@ function actualDamageFor(value, def, stage, player, target) {
   });
 }
 
-export function CardDetailTooltip({ def, cost, type, overload, item, powers = {}, statuses = {}, player = null, target = null }) {
-  const stage = getStage(overload ?? 0);
-  const rows = buildStageRows(def, powers, statuses);
+export function CardDetailTooltip({ def, cost, type, overloadActive = false, item, powers = {}, statuses = {}, player = null, target = null }) {
+  const stage = getStage(overloadActive);
+  const rows = buildStageRows(def, statuses);
   const itemInfo = item ? describeItem(item) : null;
   const badges = conditionBadges(def);
-  const costBreakdown = def.unplayable ? null : explainEffectiveCost(def, stage, powers, statuses);
+  const costBreakdown = def.unplayable ? null : explainEffectiveCost(def, stage, statuses);
   // 지금 이 카드를 내면 실제로 몇이 들어가는가 — 기본값과 다를 때만 둘을 나란히 보여준다.
   const damageRows = (resolveCard(def, stage).effects || [])
     .filter((effect) => effect.kind === 'damage')
@@ -149,7 +147,6 @@ export function CardDetailTooltip({ def, cost, type, overload, item, powers = {}
               코스트 ${costBreakdown.total} = 기본 ${costBreakdown.base}${costBreakdown.parts.map((part) => ` + ${part.label} ${part.amount}`).join('')}
             </div>
           ` : null}
-          ${def.overloadGain ? html`<div style=${{ fontSize: '10px', marginTop: '2px', color: 'var(--color-negative, #dc2626)', opacity: 0.9 }}>과부화 부여 +${def.overloadGain}</div>` : null}
           ${COMBAT_NOISE_ENABLED && def.mapTags?.noise ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.8 }}>소음 게이지 +${def.mapTags.noise}</div>` : null}
         </div>
       </div>
@@ -198,10 +195,9 @@ export function CardDetailTooltip({ def, cost, type, overload, item, powers = {}
       </div>
 
       <div style=${{ marginTop: '8px' }}>
-        <div style=${{ fontSize: '10px', opacity: 0.75, marginBottom: '4px' }}>
-          현재 과부화 — 이 카드는 <strong>${STAGE_NAMES[Math.min(stage, 2)]}</strong> 단계로 발동
+        <div style=${{ fontSize: '10px', opacity: 0.75 }}>
+          이 카드는 지금 <strong>${STAGE_NAMES[stage]}</strong> 단계로 발동
         </div>
-        <${OverloadGauge} overload=${overload ?? 0} floor=${0} compact=${true} />
       </div>
 
       <div style=${{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '2px', opacity: 0.75 }}>
@@ -214,7 +210,7 @@ export function CardDetailTooltip({ def, cost, type, overload, item, powers = {}
 
 export function Card({
   card, playable = true, armed = false, width = 140, onClick,
-  draggable = false, onDragStart, onDragEnd, stage = 0, overload = 0, powers = {}, inventory = null,
+  draggable = false, onDragStart, onDragEnd, stage = 0, powers = {}, inventory = null,
   statuses = {}, player = null,
 }) {
   const def = CARD_DEFINITIONS[card.defId];
@@ -224,12 +220,12 @@ export function Card({
   const isDraggable = draggable && playable;
   // 뒤얽힘이 붙어 있으면 카드에 적힌 숫자와 실제로 나가는 에너지가 다르다 — 화면이 엔진과
   // 같은 값을 보여주려면 statuses까지 넘겨야 한다(리뷰 B1).
-  const cost = getEffectiveCost(def, stage, powers, statuses);
+  const cost = getEffectiveCost(def, stage, statuses);
   const item = card.itemId && inventory ? inventory.items.find((i) => i.id === card.itemId) : null;
   const escapeProgress = def.mapTags?.disengageProgress || 0;
 
   return html`
-    <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${overload} item=${item} powers=${powers} statuses=${statuses} player=${player} />`}>
+    <${Tooltip} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overloadActive=${stage === 1} item=${item} powers=${powers} statuses=${statuses} player=${player} />`}>
       <div
         class=${classNames}
         style=${{

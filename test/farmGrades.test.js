@@ -29,7 +29,7 @@ function snapshotOf(run) {
     currentScreen: 'map',
     rngState: run.rngState,
     facilityRunState: run,
-    playerState: { hp: 50, maxHp: 50, overload: 0, loadout: {}, inventory: { items: [], ammo: 0, capacity: 12 } },
+    playerState: { hp: 50, maxHp: 50, overloadActive: false, loadout: {}, inventory: { items: [], ammo: 0, capacity: 12 } },
   };
 }
 

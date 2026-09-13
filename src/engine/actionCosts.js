@@ -18,13 +18,12 @@ import {
   CORPSE_DISPOSAL_TIME, EXIT_REQUEST_TIME,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
-  HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN, SAFE_OVERLOAD_DISCOUNT,
-  CAMERA_HACK_TIME, CAMERA_HACK_OVERLOAD, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
-  GENERATOR_HACK_TIME, GENERATOR_HACK_OVERLOAD, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
-  CONTROL_ROOM_HACK_TIME, CONTROL_ROOM_HACK_OVERLOAD,
-  CONTRACT_ACQUIRE_TIME, CONTRACT_ACQUIRE_OVERLOAD, CONTRACT_DESTROY_TIME, CONTRACT_DESTROY_OVERLOAD,
-  CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD, CONTRACT_DETONATE_TIME,
-  FAKE_NOISE_TIME, FAKE_NOISE_OVERLOAD, FAKE_NOISE_REQUIREMENT,
+  CAMERA_HACK_TIME, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
+  GENERATOR_HACK_TIME, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
+  CONTROL_ROOM_HACK_TIME,
+  CONTRACT_ACQUIRE_TIME, CONTRACT_DESTROY_TIME,
+  CONTRACT_TRANSMIT_TIME, CONTRACT_DETONATE_TIME,
+  FAKE_NOISE_TIME, FAKE_NOISE_REQUIREMENT,
   HIGH_GROUND_MOBILITY_REQUIREMENT, ENCOUNTER_DECEIVE_REQUIREMENT,
   TRACE_CLEANUP_TIME_BY_PERCEPTION, POWER_CUT_TIME, POWER_CUT_NOISE,
   FALSE_BROADCAST_TIME, FALSE_BROADCAST_DURATION_BY_STEP,
@@ -50,7 +49,7 @@ export const MAP_CONSUMABLE_TIME_COST = 2;
  * @property {boolean} [isPrize] 파밍 등급.
  * @property {'normal'|'elite'} [tier] 확보 대상 등급.
  * @property {number} [ticks] 묶음 대기가 요청하는 칸 수.
- * @property {{timeCost: number, overloadGain: number}} [contract] 현장 장비의 능동 효과 표.
+ * @property {{timeCost: number}} [contract] 현장 장비의 능동 효과 표.
  */
 
 /**
@@ -174,8 +173,8 @@ export const ACTION_SPECS = {
     label: '현장 장비',
     capability: null,
     base: (opts) => {
-      const contract = /** @type {{timeCost: number, overloadGain: number}} */ (opts.contract);
-      return { time: contract.timeCost, overload: contract.overloadGain };
+      const contract = /** @type {{timeCost: number}} */ (opts.contract);
+      return { time: contract.timeCost };
     },
   },
   openEdge: {
@@ -188,30 +187,27 @@ export const ACTION_SPECS = {
       const baseTime = isForce ? FORCE_TIER1_TIME : HACKING_TIER1_TIME;
       const baseNoise = isForce ? FORCE_BASE_NOISE : HACKING_BASE_NOISE;
       const { noise } = applyApproachMode(baseTime, baseNoise, mode);
-      const overload = opts.capabilityKind === 'hacking'
-        ? Math.max(0, HACKING_TIER1_OVERLOAD_GAIN + (mode === 'rush' ? RUSH_OVERLOAD_GAIN : 0) - (mode === 'safe' ? SAFE_OVERLOAD_DISCOUNT : 0))
-        : 0;
-      return { time: baseTime, timeDelta: APPROACH_TIME_DELTA[mode], noise, overload };
+      return { time: baseTime, timeDelta: APPROACH_TIME_DELTA[mode], noise };
     },
   },
-  hackInterface: { label: '접속 인터페이스 해킹', capability: 'hacking', base: () => ({ time: CAMERA_HACK_TIME, overload: CAMERA_HACK_OVERLOAD }) },
-  hackCamera: { label: '카메라 해킹', capability: 'hacking', base: () => ({ time: CAMERA_HACK_TIME, overload: CAMERA_HACK_OVERLOAD }) },
+  hackInterface: { label: '접속 인터페이스 해킹', capability: 'hacking', base: () => ({ time: CAMERA_HACK_TIME }) },
+  hackCamera: { label: '카메라 해킹', capability: 'hacking', base: () => ({ time: CAMERA_HACK_TIME }) },
   destroyCamera: { label: '카메라 파괴', capability: 'force', base: () => ({ time: CAMERA_FORCE_TIME, noise: CAMERA_FORCE_NOISE }) },
-  disableGeneratorHack: { label: '발전기 해킹 무력화', capability: 'hacking', base: () => ({ time: GENERATOR_HACK_TIME, overload: GENERATOR_HACK_OVERLOAD }) },
+  disableGeneratorHack: { label: '발전기 해킹 무력화', capability: 'hacking', base: () => ({ time: GENERATOR_HACK_TIME }) },
   disableGeneratorForce: { label: '발전기 파괴', capability: 'force', base: () => ({ time: GENERATOR_FORCE_TIME, noise: GENERATOR_FORCE_NOISE }) },
-  controlRoom: { label: '통제실 장악', capability: 'hacking', base: () => ({ time: CONTROL_ROOM_HACK_TIME, overload: CONTROL_ROOM_HACK_OVERLOAD }) },
+  controlRoom: { label: '통제실 장악', capability: 'hacking', base: () => ({ time: CONTROL_ROOM_HACK_TIME }) },
   contractRetrieve: {
     label: '물건 확보',
     // 회수 계약은 Stealth와 Mobility 중 높은 쪽으로 판정한다 — 그 선택은 호출부가 하고
     // opts.capabilityKind로 넘어온다.
     capability: null,
-    base: () => ({ time: CONTRACT_ACQUIRE_TIME, overload: CONTRACT_ACQUIRE_OVERLOAD }),
+    base: () => ({ time: CONTRACT_ACQUIRE_TIME }),
   },
-  contractDestroy: { label: '폭약 설치', capability: 'force', base: () => ({ time: CONTRACT_DESTROY_TIME, overload: CONTRACT_DESTROY_OVERLOAD }) },
+  contractDestroy: { label: '폭약 설치', capability: 'force', base: () => ({ time: CONTRACT_DESTROY_TIME }) },
   // 기폭은 스위치를 누르는 일이다 — Capability 요구 없이 시간만 든다(C5).
   contractDetonate: { label: '기폭', capability: null, base: () => ({ time: CONTRACT_DETONATE_TIME }) },
-  contractIntel: { label: '데이터 확보', capability: 'hacking', base: () => ({ time: CONTRACT_ACQUIRE_TIME, overload: CONTRACT_ACQUIRE_OVERLOAD }) },
-  contractTransmit: { label: '데이터 송출', capability: 'hacking', base: () => ({ time: CONTRACT_TRANSMIT_TIME, overload: CONTRACT_TRANSMIT_OVERLOAD }) },
+  contractIntel: { label: '데이터 확보', capability: 'hacking', base: () => ({ time: CONTRACT_ACQUIRE_TIME }) },
+  contractTransmit: { label: '데이터 송출', capability: 'hacking', base: () => ({ time: CONTRACT_TRANSMIT_TIME }) },
   cleanTraces: {
     label: '흔적 정리',
     capability: 'perception',
@@ -231,7 +227,7 @@ export const ACTION_SPECS = {
     label: '가짜 소음',
     capability: 'deception',
     required: () => FAKE_NOISE_REQUIREMENT,
-    base: () => ({ time: FAKE_NOISE_TIME, overload: FAKE_NOISE_OVERLOAD }),
+    base: () => ({ time: FAKE_NOISE_TIME }),
   },
 };
 
@@ -264,14 +260,12 @@ function kindOf(spec, opts) {
  * @property {number} timeCost 실제로 청구될 칸.
  * @property {import('./capabilityCosts.js').CapabilityStep|null} step
  * @property {boolean} blocked 층계 불가라 시도조차 못 하는가.
- * @property {CapabilityCost|null} cost 층계가 걸린 행동의 전체 대가(소음·과부화·HP·내구도·지속).
+ * @property {CapabilityCost|null} cost 층계가 걸린 행동의 전체 대가(소음·HP·내구도·지속·경계).
  * @property {number} baseTime 가감 전 기본 칸.
  * @property {number} floor 가감을 다 더해도 이 아래로는 내려가지 않는 하한 칸(행동마다 다르다).
  * @property {{label: string, delta: number}[]} parts 기본값에 더해진 가감의 내역.
  * @property {number} noise 완료 시각에 낼 소음 강도(0은 무음).
- * @property {number} overload 완료 시각에 오를 과부화.
  * @property {number} baseNoise 층계 가감 전의 표준 소음 — 뱃지가 `소음 2(기본 3 − 여유 1)`을 쓸 근거.
- * @property {number} baseOverload 층계 가감 전의 표준 과부화.
  */
 
 /**
@@ -299,8 +293,8 @@ export function forecastAction(actionId, opts = {}) {
     return {
       actionId, label: spec.label, capabilityKind: null, required, value: opts.value ?? 0,
       timeCost: base.time ?? 0, step: null, blocked: false, cost: null, baseTime, floor, parts,
-      noise: base.noise ?? 0, overload: base.overload ?? 0,
-      baseNoise: base.noise ?? 0, baseOverload: base.overload ?? 0,
+      noise: base.noise ?? 0,
+      baseNoise: base.noise ?? 0,
     };
   }
 
@@ -329,9 +323,7 @@ export function forecastAction(actionId, opts = {}) {
     floor,
     parts,
     noise: cost.noise,
-    overload: cost.overload,
     baseNoise: base.noise ?? 0,
-    baseOverload: base.overload ?? 0,
   };
 }
 

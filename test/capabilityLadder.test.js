@@ -8,7 +8,7 @@ import {
   createRunState, destroyCamera, hackAccessInterface, acquireContractGoods, openSpecialEdge,
 } from '../src/engine/runEngine.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
-import { CAMERA_FORCE_TIME, CAMERA_HACK_OVERLOAD } from '../src/data/facilityLayout.js';
+import { CAMERA_FORCE_TIME } from '../src/data/facilityLayout.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -27,14 +27,14 @@ function runWithContractSector(seed, contract) {
   throw new Error(`no seed near ${seed} draws ${contract.sectorId}`);
 }
 
-test('Force pays in noise and equipment durability, not in overload', () => {
+test('Force pays in noise and equipment durability, and never raises the alert', () => {
   const base = makeRun(21);
   const state = { ...base, graph: { ...base.graph, cameras: [{ id: 'cam', nodeId: base.playerNodeId }] } };
 
   const standard = destroyCamera(state, 'cam', 1);
   assert.equal(standard.time - state.time, CAMERA_FORCE_TIME);
   assert.equal(standard.pendingDurabilityLoss, 0, '요구치를 맞췄으면 연장은 멀쩡하다');
-  assert.equal(standard.overload, state.overload, 'Force는 과부화로 값을 치르지 않는다');
+  assert.deepEqual(standard.sectorAlerts, state.sectorAlerts, 'Force는 경계도로 값을 치르지 않는다');
 
   const severe = destroyCamera(state, 'cam', -1);
   assert.ok(severe.pendingDurabilityLoss > 0, '크게 모자라면 연장이 상한다');
@@ -44,24 +44,28 @@ test('Force pays in noise and equipment durability, not in overload', () => {
   assert.ok(loudest.intensity > normal.intensity, '그리고 더 시끄럽다');
 });
 
-test('Hacking pays in overload, and a surplus actually costs less than the standard', () => {
+test('Hacking pays in the sector alert, and a surplus actually costs less than the standard', () => {
   const base = makeRun(1);
   const state = {
     ...base,
     graph: { ...base.graph, accessInterfaces: [{ id: 'iface', nodeId: base.playerNodeId }] },
   };
+  const sectorId = state.playerNodeId.split('_')[0];
 
   const standard = hackAccessInterface(state, 'iface', 1);
-  assert.equal(standard.overload - state.overload, CAMERA_HACK_OVERLOAD);
+  assert.equal(standard.sectorAlerts[sectorId].level, 0, '요구치를 맞췄으면 들키지 않는다');
 
   const strained = hackAccessInterface(state, 'iface', 0);
-  assert.ok(strained.overload > standard.overload, 'Hacking이 모자라면 과부화가 더 붙는다');
+  assert.equal(strained.sectorAlerts[sectorId].level, 0, 'strained는 아직 경계까지 올리지 않는다');
   assert.ok(strained.time > standard.time);
   assert.equal(strained.pendingHpLoss, 0, 'Hacking은 HP로 받지 않는다');
 
+  const severe = hackAccessInterface(state, 'iface', -1);
+  assert.equal(severe.sectorAlerts[sectorId].level, 1, '크게 모자라면 그 자리에서 들킨다');
+
   const surplus = hackAccessInterface(state, 'iface', 3);
   assert.ok(surplus.time < standard.time, '여유가 있으면 더 빨리 끝난다');
-  assert.ok(surplus.overload < standard.overload, '그리고 부하도 덜 진다');
+  assert.equal(surplus.sectorAlerts[sectorId].level, 0);
 });
 
 test('Stealth pays in a strong trace, and a severe shortfall raises the sector alert on the spot', () => {
@@ -122,7 +126,7 @@ test('Mobility pays in HP, and the reducer settles that off playerState', async 
     currentScreen: 'map',
     rngState: base.rngState,
     facilityRunState: { ...base, pendingHpLoss: 7 },
-    playerState: { hp: 50, maxHp: 50, overload: 0, loadout: {}, inventory: { items: [], ammo: 0, capacity: 12 } },
+    playerState: { hp: 50, maxHp: 50, overloadActive: false, loadout: {}, inventory: { items: [], ammo: 0, capacity: 12 } },
   };
   const after = gameReducer(snapshot, { type: 'BASIC_RECON' });
   assert.equal(after.playerState.hp, 43, '쌓인 HP 청구서가 실제로 빠진다');
@@ -144,7 +148,6 @@ test('고지대 통과는 층계다 — Mobility의 통화(HP)로만 받고, 시
   assert.equal(strained.cost.hpCost, CAPABILITY_STEP_HP_COST.strained);
   assert.equal(strained.timeCost, moveTimeCost(edge, 2));
   assert.equal(strained.cost.noise, 0, 'Mobility는 소음으로 받지 않는다');
-  assert.equal(strained.cost.overload, 0, '과부화로도 받지 않는다');
 
   const severe = forecastAction('traverseHighGround', { edge, value: 1 });
   assert.equal(severe.step, 'severe');
@@ -188,7 +191,7 @@ test('고지대의 HP 대가도 커맨드 래퍼에서 playerState로 정산된�
     currentScreen: 'map',
     rngState: run.rngState,
     facilityRunState: run,
-    playerState: { hp: 50, maxHp: 50, overload: 0, loadout, inventory: { items: [], ammo: 0, capacity: 12 } },
+    playerState: { hp: 50, maxHp: 50, overloadActive: false, loadout, inventory: { items: [], ammo: 0, capacity: 12 } },
   };
   const after = gameReducer(snapshot, { type: 'MOVE_TO_NODE', nodeId: destination });
   assert.equal(after.facilityRunState.playerNodeId, destination, '모자란 채로도 넘어간다');

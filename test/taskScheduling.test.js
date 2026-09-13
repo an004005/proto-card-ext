@@ -64,7 +64,7 @@ function snapshotOf(run, playerState = {}) {
     rngState: run.rngState,
     facilityRunState: run,
     playerState: {
-      hp: 50, maxHp: 50, overload: 0, loadout: { consumableSlots: [] },
+      hp: 50, maxHp: 50, overloadActive: false, loadout: { consumableSlots: [] },
       inventory: { items: [], ammo: 0, capacity: 12 }, warehouse: { items: [], ammo: 0, capacity: 99 },
       ...playerState,
     },
@@ -135,7 +135,7 @@ test('작업 시작 때 같은 노드에 있던 위협도 떠났다 돌아오면
   assert.equal(after.graph.opportunities[0].usesRemaining, 1, '기회는 소모되지 않는다');
 });
 
-test('중단된 작업은 과부화·쿨다운·개방을 하나도 남기지 않는다', () => {
+test('중단된 작업은 경계도·쿨다운·개방을 하나도 남기지 않는다', () => {
   // 구역 추첨(ADR-0081)으로 어느 시드가 시작 노드에 전자식 차단 엣지를 두는지가 달라지므로,
   // 고정 시드 대신 그런 시드를 찾아 쓴다.
   let base = null;
@@ -152,7 +152,7 @@ test('중단된 작업은 과부화·쿨다운·개방을 하나도 남기지 �
   const after = openSpecialEdge(run, blocked.id, 'hacking', 0, 'normal');
   assert.equal(after.lastTaskOutcome.status, 'interrupted');
   assert.equal(after.openedEdgeIds.length, 0, '문은 열리지 않는다');
-  assert.equal(after.overload, run.overload, '과부화 대가도 청구되지 않는다');
+  assert.deepEqual(after.sectorAlerts, run.sectorAlerts, '경계도 대가도 청구되지 않는다');
   assert.equal(after.pendingHpLoss || 0, 0);
 });
 
@@ -254,7 +254,6 @@ test('대기 5칸은 아무 일도 없으면 5칸을 흘리고, 새 조우가 �
   const quiet = gameReducer(snapshotOf(quietRun(4)), { type: 'WAIT_BATCH', ticks: WAIT_BATCH_MAX_TICKS });
   assert.equal(quiet.facilityRunState.time, WAIT_BATCH_MAX_TICKS);
   assert.equal(quiet.playerState.hp, 50, '대기는 HP를 회복시키지 않는다');
-  assert.equal(quiet.facilityRunState.overload, 0, '과부화도 내려가지 않는다');
 
   const interrupted = gameReducer(snapshotOf(withIncomingThreat(quietRun(4), 2)), { type: 'WAIT_BATCH', ticks: WAIT_BATCH_MAX_TICKS });
   assert.equal(interrupted.facilityRunState.time, 2, '새 조우가 열린 칸에서 멈춘다');

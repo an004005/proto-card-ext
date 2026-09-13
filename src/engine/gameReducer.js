@@ -23,7 +23,7 @@ import {
 } from './facilityReducer.js';
 import {
   playCardCommand, endTurnCommand, useConsumable, beginDisengageCommand, cancelDisengageCommand,
-  resolveDisengageCommand, getDeckEntries, debugWinCombatCommand,
+  resolveDisengageCommand, toggleOverloadCommand, getDeckEntries, debugWinCombatCommand,
 } from './combatReducer.js';
 import { selectReward, confirmRewards } from './rewardReducer.js';
 import {
@@ -81,6 +81,8 @@ export function gameReducer(snapshot, command) {
     case 'OPEN_SPECIAL_EDGE': return openSpecialEdgeCommand(snapshot, command.edgeId, command.capabilityKind, command.mode);
     case 'USE_OPPORTUNITY': return useOpportunityCommand(snapshot, command.opportunityId, command.mode);
     case 'USE_FIELD_EQUIPMENT': return useFieldEquipmentCommand(snapshot, command.instanceId, command.targetId);
+    // 과부화 토글 — 지도에서도 전투 플레이어 턴에서도 받는다. 대가가 없어 시간을 흘리지 않는다.
+    case 'TOGGLE_OVERLOAD': return toggleOverloadCommand(snapshot);
     case 'PLAY_CARD': return playCardCommand(snapshot, command.instanceId, command.targetId);
     case 'END_TURN': return endTurnCommand(snapshot);
     // 디버그 전용(CombatScreen의 'DEBUG 즉시 승리'). 정상 승리와 같은 처리 경로를 탄다.
