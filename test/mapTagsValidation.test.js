@@ -42,12 +42,16 @@ test('every consumable defines valid mapTags', () => {
   }
 });
 
-test('every monster move (including random branches) defines mapNoise 0..3', () => {
+test('every monster move (including random branches and 2페이즈 시퀀스) defines mapNoise 0..3', () => {
   for (const [monsterId, def] of Object.entries(MONSTER_DEFINITIONS)) {
-    for (const entry of def.sequence) {
-      const moves = entry.random ? entry.random.map((branch) => branch.move) : [entry];
-      for (const move of moves) {
-        assert.ok([0, 1, 2, 3].includes(move.mapNoise), `${monsterId}.${move.id}: mapNoise ${move.mapNoise} out of 0..3`);
+    // 보스의 2페이즈 시퀀스도 실제로 실행되는 행동이다 — 여기를 돌지 않으면 phase2Sequence에
+    // mapNoise를 빼먹어도 아무도 알려주지 않는다(리뷰 A8).
+    for (const sequence of [def.sequence, def.phase2Sequence].filter(Boolean)) {
+      for (const entry of sequence) {
+        const moves = entry.random ? entry.random.map((branch) => branch.move) : [entry];
+        for (const move of moves) {
+          assert.ok([0, 1, 2, 3].includes(move.mapNoise), `${monsterId}.${move.id}: mapNoise ${move.mapNoise} out of 0..3`);
+        }
       }
     }
   }

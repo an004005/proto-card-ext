@@ -23,7 +23,7 @@ export function InventoryPopup({ onClose, mode = 'view' }) {
           <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }} onClick=${onClose}>닫기</button>
         </div>
         <div style=${{ padding: 'var(--space-4)', overflowY: 'auto' }}>
-          <${DeckInventoryView} loadout=${ps.loadout} inventory=${ps.inventory} manage=${manage} />
+          <${DeckInventoryView} loadout=${ps.loadout} inventory=${ps.inventory} manage=${manage} overload=${ps.overload} />
         </div>
       </div>
     </div>

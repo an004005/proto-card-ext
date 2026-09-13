@@ -64,3 +64,25 @@ test('spendAmmo drains core stacks in order and removes emptied stacks', () => {
   assert.deepEqual(inv.items.map((i) => i.amount), [4]);
   assert.equal(getUsableAmmo(inv), 4);
 });
+
+// ---- id 발급 규칙 (리뷰 A4) ----
+
+test('addAmmo가 만든 새 스택도 컬렉션의 idPrefix를 따른다', () => {
+  const warehouse = addAmmo(createInventory(10, 'wh-item'), 25);
+  assert.equal(warehouse.items.length, 3);
+  for (const item of warehouse.items) assert.match(item.id, /^wh-item-\d+$/, `id가 접두사를 안 따른다: ${item.id}`);
+  assert.equal(warehouse.nextItemId, 4);
+});
+
+test('addAmmo가 만든 id는 addItem이 만드는 id와 충돌하지 않는다', () => {
+  let inv = createInventory(10, 'wh-item');
+  inv = addAmmo(inv, 10);
+  inv = addItem(inv, createItem('junk', { value: 5 }));
+  const ids = inv.items.map((i) => i.id);
+  assert.equal(new Set(ids).size, ids.length, `id가 겹친다: ${ids.join(',')}`);
+});
+
+test('addItem은 넘겨받은 객체의 id를 항상 버리고 컬렉션 규칙대로 다시 발급한다', () => {
+  const inv = addItem(createInventory(10, 'inv'), { id: 'wh-item-99', kind: 'junk', value: 3 });
+  assert.equal(inv.items[0].id, 'inv-1');
+});

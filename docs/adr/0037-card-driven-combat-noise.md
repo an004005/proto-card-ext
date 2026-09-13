@@ -1,5 +1,5 @@
 ---
-status: amended by implementation spec §7.1 and §9.1
+status: amended by implementation spec — 전투 소음은 용량 6 누적 게이지로 처리한다
 ---
 
 # 전투 소음은 사용 카드와 공격 방식으로 결정한다

@@ -1,3 +1,7 @@
+---
+status: amended — MVP는 tier 1만 구현 (docs/planned.md)
+---
+
 # Hacking은 소음 대신 시간과 Overload를 지불한다
 
 Hacking 1은 현재 노드 전자 잠금·단말, 2는 카메라·터렛 일시 무력화, 3은 인접 노드 원격 조작과 통신 교란·적 유인, 4는 여러 장치 연쇄 조작과 보안망 상태 변경을 연다. 기본 해킹 행동의 소음은 0이며 시간과 Overload가 주 대가다.

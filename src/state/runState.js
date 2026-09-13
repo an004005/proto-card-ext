@@ -18,3 +18,6 @@ export const snapshotSignal = signal(initialSnapshot);
 export const combatAnimationSignal = signal(null);
 // UI preference only: each queued combat beat reads this value before scheduling.
 export const combatPlaybackDurationSignal = signal(600);
+// True while the combat timeline is still replaying. UI-only: buttons that would enqueue a
+// command read this to grey themselves out instead of silently queueing the click.
+export const combatPlaybackActiveSignal = signal(false);

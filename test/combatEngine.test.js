@@ -170,8 +170,8 @@ function statusCardCount(state) {
 }
 
 test('overload exceeding 100 clamps to 100 and inserts status cards into the draw pile instead of causing defeat (§과부화 3단계 개편)', () => {
-  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 95, ammo: 99, playerHp: 70 });
-  const card = findCard(state, 'rifle_suppress'); // overloadGain 10 -> raw 105, 5 excess -> ceil(5/10) = 1 status card, clamped to 100
+  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 98, ammo: 99, playerHp: 70 });
+  const card = findCard(state, 'rifle_suppress'); // overloadGain 5 -> raw 103, 3 excess -> ceil(3/10) = 1 status card, clamped to 100
   state = playCard(state, card.instanceId, null);
   assert.equal(state.overload, 100);
   assert.notEqual(state.phase, 'defeat');
@@ -180,14 +180,14 @@ test('overload exceeding 100 clamps to 100 and inserts status cards into the dra
 });
 
 test('overload clamped to 100 each time it is exceeded — playing more cards keeps adding status cards as the raw excess recurs', () => {
-  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 95, ammo: 99, playerHp: 70 });
+  let state = makeCombat({ deck: Array(20).fill('rifle_suppress'), monsterIds: ['nibbit'], overload: 98, ammo: 99, playerHp: 70 });
   const first = findCard(state, 'rifle_suppress');
-  state = playCard(state, first.instanceId, null); // 95 -> raw 105, clamped to 100, 1 status card
+  state = playCard(state, first.instanceId, null); // 98 -> raw 103, clamped to 100, 1 status card
   assert.equal(state.overload, 100);
   assert.equal(statusCardCount(state), 1);
   state = { ...state, player: { ...state.player, energy: 99 } }; // stage-2's +1 cost would otherwise starve the second play
   const second = findCard(state, 'rifle_suppress');
-  state = playCard(state, second.instanceId, null); // 100 -> raw 110, clamped to 100, +1 status card (excess 10 -> ceil(10/10) = 1)
+  state = playCard(state, second.instanceId, null); // 100 -> raw 105, clamped to 100, +1 status card (excess 5 -> ceil(5/10) = 1)
   assert.equal(state.overload, 100);
   assert.equal(statusCardCount(state), 2);
 });

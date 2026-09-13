@@ -5,7 +5,7 @@ import { computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus 
 import { BASE_INVENTORY_CAPACITY, BASE_MAX_HP } from '../engine/gameReducer.js';
 import { getUsableAmmo } from '../engine/inventoryEngine.js';
 import { computeCapabilities, effectiveForRequirement } from '../engine/capabilityEngine.js';
-import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE } from '../data/capabilityDisplay.js';
+import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE, CAPABILITY_KOREAN } from '../data/capabilityDisplay.js';
 import { OverloadGauge } from './OverloadGauge.js';
 import { DeckInventoryView } from './DeckInventoryView.js';
 import { Tooltip } from './Tooltip.js';
@@ -61,8 +61,10 @@ export function LoadoutScreen() {
                 const raw = capabilities[key];
                 const eff = effectiveForRequirement(raw);
                 return html`
-                  <${Tooltip} key=${key} width=${220} content=${`${CAPABILITY_LABELS[key]} — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(요구치 판정 시 유효치 ${eff}). 시설맵 화면에서 사용됩니다.`}>
-                    <span class="tag tag-outline">${CAPABILITY_SHORT[key]} ${raw >= 0 ? '+' : ''}${raw}</span>
+                  ${/* 창고(출격 준비)와 맵이 같은 문장을 써야 한다 — 여기서만 "유효치"를 말하면
+                      플레이어는 층계 판정이 그 값으로 이뤄진다고 읽는다(리뷰 B7). */ null}
+                  <${Tooltip} key=${key} width=${240} content=${`${CAPABILITY_LABELS[key]}(${CAPABILITY_KOREAN[key]}) — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다 — 0으로 자르지 않으며, 0 하한이 걸리는 것은 높은 지형 통과 판정뿐입니다. 그 하한을 적용한 값은 ${eff}). 시설맵 화면에서 사용됩니다.`}>
+                    <span class="tag tag-outline" tabIndex="0">${CAPABILITY_SHORT[key]}(${CAPABILITY_KOREAN[key]}) ${raw >= 0 ? '+' : ''}${raw}</span>
                   <//>
                 `;
               })}

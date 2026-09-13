@@ -13,6 +13,9 @@ import {
   LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL,
 } from '../data/facilityLayout.js';
 import { bfsHopDistances } from './graphUtils.js';
+import { describeThreatDecay, detailIncludes } from './runEngine.js';
+import { FREE_OBSERVATION_DETAIL_LEVEL } from '../data/facilityLayout.js';
+import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 
 /** @typedef {import('./types.js').FacilityRunState} FacilityRunState */
 
@@ -105,31 +108,79 @@ export function describeNodeLocation(run, nodeId, hops) {
  * @returns {import('./types.js').ThreatRuntimeState[]}
  */
 export function observableThreats(run) {
-  const visible = new Set(run.activeRecon?.targetNodeIds || []);
-  if (run.playerNodeId) {
-    visible.add(run.playerNodeId);
-    for (const edge of run.graph.edges) {
-      if (edge.from === run.playerNodeId) visible.add(edge.to);
-      else if (edge.to === run.playerNodeId) visible.add(edge.from);
-    }
-  }
+  const visible = reconNodeIds(run);
+  for (const nodeId of adjacentNodeIds(run)) visible.add(nodeId);
   return Object.values(run.threats).filter((threat) => visible.has(threat.nodeId));
+}
+
+/** 정찰(기본 정찰 2홉·해킹한 카메라)이 지금 비추고 있는 노드.
+ * @param {FacilityRunState} run @returns {Set<string>} */
+function reconNodeIds(run) {
+  return new Set(run.activeRecon?.targetNodeIds || []);
+}
+
+/** 공짜로 보이는 범위 — 서 있는 자리와 그 인접.
+ * @param {FacilityRunState} run @returns {Set<string>} */
+function adjacentNodeIds(run) {
+  const near = new Set();
+  if (!run.playerNodeId) return near;
+  near.add(run.playerNodeId);
+  for (const edge of run.graph.edges) {
+    if (edge.from === run.playerNodeId) near.add(edge.to);
+    else if (edge.to === run.playerNodeId) near.add(edge.from);
+  }
+  return near;
+}
+
+/**
+ * 관측한 위협이 "무엇인가". 얼마나 깊이 보이는지는 그 노드를 **어느 깊이로 관측했는가**가
+ * 정한다(`observation.detailLevel`, PERCEPTION_INFO_TABLE). 무료 인접 관측은 Perception과
+ * 무관하게 유무·규모까지 고정이고, 그 위는 값을 치른 정찰이 Perception만큼 사 온다.
+ *
+ * 읽히지 않는 항목은 `null`이다 — 화면이 관측 기록보다 깊은 것을 그리지 못하게 하려면,
+ * "모른다"가 빈 값이 아니라 명시적인 null이어야 한다.
+ * @param {FacilityRunState} run
+ * @param {import('./types.js').ThreatRuntimeState} threat
+ * @returns {{detailLevel: number, size: number|null, mode: string|null, alert: number|null, composition: string[]|null, patrolNext: string|null, scouted: boolean}}
+ */
+export function describeObservedThreat(run, threat) {
+  const detailLevel = run.observations?.[threat.nodeId]?.detailLevel ?? FREE_OBSERVATION_DETAIL_LEVEL;
+  const monsterIds = /** @type {string[]} */ (/** @type {any} */ (threat).monsterIds || []);
+  const route = threat.patrolRoute || [];
+  const patrolNext = route.length ? route[(threat.patrolIndex + 1) % route.length] : null;
+  return {
+    detailLevel,
+    size: detailIncludes(detailLevel, 'size') ? threat.size : null,
+    mode: detailIncludes(detailLevel, 'mode') ? threat.mode : null,
+    alert: detailIncludes(detailLevel, 'alert') ? threat.alert : null,
+    composition: detailIncludes(detailLevel, 'composition') ? monsterIds.map((id) => MONSTER_DEFINITIONS[id]?.name || id) : null,
+    patrolNext: detailIncludes(detailLevel, 'patrolNext') ? patrolNext : null,
+    scouted: detailIncludes(detailLevel, 'composition'),
+  };
 }
 
 /**
  * 관측 중인 위협 하나의 표시 정보. 다음 이동까지 남은 칸은 **현재 상태를 유지할 때**의 값이다 —
  * 추적으로 바뀌면 간격이 짧아지므로 그 사실을 문구에 함께 낸다. 미래 경로는 만들지 않는다.
  * @param {FacilityRunState} run
- * @returns {{id: string, nodeId: string, mode: string, ticksUntilMove: number, interval: number}[]}
+ * @returns {{id: string, nodeId: string, mode: string|null, ticksUntilMove: number|null, interval: number|null, detailLevel: number, size: number|null, alert: number|null, composition: string[]|null, patrolNext: string|null, scouted: boolean, decay: {nextMode: string, ticksLeft: number}|null}[]}
  */
 export function observableThreatMoves(run) {
-  return observableThreats(run).map((threat) => ({
-    id: threat.id,
-    nodeId: threat.nodeId,
-    mode: threat.mode,
-    ticksUntilMove: Math.max(0, threat.nextMoveAt - run.time),
-    interval: threatMoveInterval(run, threat),
-  }));
+  return observableThreats(run).map((threat) => {
+    const described = describeObservedThreat(run, threat);
+    // "다음 이동까지 몇 칸"은 Perception 2부터 읽히는 정보다(정보 깊이 표). 그보다 얕게 본
+    // 위협에 대해서는 화면이 이 숫자를 아예 갖지 못한다.
+    const knowsNextMove = detailIncludes(described.detailLevel, 'nextMove');
+    return {
+      id: threat.id,
+      nodeId: threat.nodeId,
+      ticksUntilMove: knowsNextMove ? Math.max(0, threat.nextMoveAt - run.time) : null,
+      interval: knowsNextMove ? threatMoveInterval(run, threat) : null,
+      // ADR-0079 경계 감쇠 예고 — `추적 · 3칸 뒤 조사로`. 모드를 읽을 깊이가 아니면 숨긴다.
+      decay: described.mode !== null ? describeThreatDecay(run, threat) : null,
+      ...described,
+    };
+  });
 }
 
 /**
@@ -165,6 +216,9 @@ export function threatMovesDuring(run, timeCost) {
     .map((threat) => {
       /** @type {number[]} */
       const offsets = [];
+      // 다음 이동 시각을 읽을 깊이로 보지 못한 위협은 예고에 넣지 않는다 — 화면이 모르는 것을
+      // 세어 보여주면 정보 깊이가 UI에서 새어 나간다.
+      if (threat.ticksUntilMove === null || threat.interval === null) return { id: threat.id, nodeId: threat.nodeId, mode: threat.mode, count: 0, offsets: [] };
       for (let at = threat.ticksUntilMove; at <= timeCost; at += Math.max(1, threat.interval)) offsets.push(at);
       return { id: threat.id, nodeId: threat.nodeId, mode: threat.mode, count: offsets.length, offsets };
     })

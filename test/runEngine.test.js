@@ -8,7 +8,7 @@ import {
   useConcealment, effectiveStealthWithConcealment, refreshActiveRecon, hackControlRoom,
   isOnFloorPlan, isNodeCharted,
   getSectorLandmarkArrowTarget,
-  acquireContractGoods, destroyContractTarget, acquireContractIntel, transmitContractIntel,
+  acquireContractGoods, destroyContractTarget, detonateContractCharge, acquireContractIntel, transmitContractIntel,
 } from '../src/engine/runEngine.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
@@ -20,6 +20,7 @@ import {
   ADJACENT_SECTOR_IDS, REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
   NOISE_DURATION, CAMERA_FORCE_TIME, GENERATOR_FORCE_TIME,
   MOVE_MIN_TIME, MOBILITY_MOVE_TIME_DELTA, CAPABILITY_STEP_TIME_DELTA,
+  CONTRACT_DETONATE_TIME, CONTRACT_DETONATE_MIN_HOPS,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency, bfsHopDistances } from '../src/engine/graphUtils.js';
 
@@ -472,8 +473,11 @@ test('an edge with requiredCapability rejects lower capability on both Force and
 
 test('standing in a hall costs stealth, and the penalty stacks with concealment', () => {
   const state = makeRun(1);
-  const hall = state.graph.nodes.find((n) => n.type === 'hall');
-  const corridor = state.graph.nodes.find((n) => n.type === 'corridor');
+  // 카메라가 있는 노드는 ADR-0079의 상황 보정(−1)이 따로 붙는다 — 지형 보정만 보려면 카메라가
+  // 없는 자리를 골라야 한다.
+  const cameraNodeIds = new Set(state.graph.cameras.map((c) => c.nodeId));
+  const hall = state.graph.nodes.find((n) => n.type === 'hall' && !cameraNodeIds.has(n.id));
+  const corridor = state.graph.nodes.find((n) => n.type === 'corridor' && !cameraNodeIds.has(n.id));
   assert.ok(hall && corridor, 'fixture seed should contain a hall and a corridor');
 
   assert.equal(effectiveStealthWithConcealment(3, { ...state, playerNodeId: corridor.id }), 3);
@@ -658,8 +662,12 @@ test('concealment is only exposed via observations once recon\'d, not just by be
   const { graph } = generateFacilityGraph(2);
   const concealedNodeId = Object.keys(graph.concealmentByNodeId)[0];
   const state = createRunState(graph, 2);
-  const recon = basicRecon({ ...state, playerNodeId: concealedNodeId });
+  // 은엄폐 값은 정보 깊이 표에서 Perception 2부터 읽힌다.
+  const recon = basicRecon({ ...state, playerNodeId: concealedNodeId }, 2);
   assert.equal(recon.observations[concealedNodeId].concealment, graph.concealmentByNodeId[concealedNodeId]);
+
+  const shallow = basicRecon({ ...state, playerNodeId: concealedNodeId }, 1);
+  assert.equal(shallow.observations[concealedNodeId].concealment, undefined, 'Perception 1은 은엄폐 값까지 읽지 못한다');
 });
 
 test('hackControlRoom requires standing at the sector landmark and Hacking 1+', () => {
@@ -686,6 +694,21 @@ test('hackControlRoom level 1 reveals the sector\'s patrol routes permanently, a
   assert.deepEqual(next.revealedPatrolRouteSectorIds, [landmark.sectorId]);
   // sector alert / threat modes untouched at level 1
   assert.equal(next.sectorAlerts[landmark.sectorId].level, state.sectorAlerts[landmark.sectorId].level);
+});
+
+test('통제실 장악은 구역당 한 번뿐이다 (C3, ADR-0067)', () => {
+  const { graph } = generateFacilityGraph(2);
+  const landmark = graph.landmarks[0];
+  const state = { ...createRunState(graph, 2), playerNodeId: landmark.nodeId };
+  const seized = hackControlRoom(state, 3);
+  assert.ok(seized.revealedPatrolRouteSectorIds.includes(landmark.sectorId));
+  // 두 번째 시도는 거절된다 — 시간만 들이면 경계도를 무한히 0으로 되돌릴 수 있으면 안 된다.
+  assert.throws(() => hackControlRoom({ ...seized, playerNodeId: landmark.nodeId }, 3), /already seized/);
+
+  // 다른 구역의 통제실은 여전히 장악할 수 있다.
+  const other = graph.landmarks.find((l) => l.sectorId !== landmark.sectorId);
+  const otherSeized = hackControlRoom({ ...seized, playerNodeId: other.nodeId }, 1);
+  assert.ok(otherSeized.revealedPatrolRouteSectorIds.includes(other.sectorId));
 });
 
 test('hackControlRoom level 2 lowers this sector alert by (hacking - 1), and level 3 also lowers both adjacent sectors by 1 (D12)', () => {
@@ -771,21 +794,57 @@ test('acquireContractGoods requires being at the objective and Stealth or Mobili
   assert.throws(() => acquireContractGoods(acquired, 1, 1), /no retrieval contract/, 'already-acquired contract cannot be acquired again');
 });
 
-test('destroyContractTarget requires Force 1+ and completes the contract in one step, activating lockdown', () => {
+test('파괴 계약은 설치와 기폭 두 장이다 — 설치에서 봉쇄가 켜지고, 기폭은 목표부에서 떨어져야 한다 (C5)', () => {
   const state = withContract(1, 'generator_shutdown');
   const landmark = state.graph.landmarks.find((l) => l.sectorId === 'power');
   const at = { ...state, playerNodeId: landmark.nodeId };
 
   assert.throws(() => destroyContractTarget(at, -2), /force/);
+  assert.throws(() => detonateContractCharge(at), /no planted charge/, '설치 전에는 기폭할 수 없다');
 
-  const done = destroyContractTarget(at, 1);
-  assert.equal(done.contract.status, 'completed');
-  assert.equal(done.contract.completedAt, done.time);
-  assert.ok(done.lockdown);
-  assert.equal(done.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, done.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+  // 1단계: 설치. 여기서 봉쇄가 켜지고 유예 125칸이 시작되지만 계약은 아직 완료가 아니다.
+  const planted = destroyContractTarget(at, 1);
+  assert.equal(planted.contract.status, 'acquired');
+  assert.equal(planted.contract.completedAt, null);
+  assert.ok(planted.lockdown);
+  assert.equal(planted.lockdown.startedAt, planted.time, '봉쇄 유예는 설치 완료 시각부터다');
+  assert.equal(planted.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, planted.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+
+  // 목표부에 서 있는 채로는 못 터뜨린다.
+  assert.throws(() => detonateContractCharge(planted), /too close/);
+
+  // 2단계: 2홉 이상 떨어진 자리에서 기폭 — 여기서 완료.
+  const hops = bfsHopDistances(planted.graph.edges, landmark.nodeId);
+  const farNodeId = planted.graph.nodes.map((n) => n.id).find((id) => (hops.get(id) ?? -1) >= CONTRACT_DETONATE_MIN_HOPS);
+  const detonated = detonateContractCharge({ ...planted, playerNodeId: farNodeId });
+  assert.equal(detonated.contract.status, 'completed');
+  assert.equal(detonated.contract.completedAt, detonated.time);
+  assert.equal(detonated.time - planted.time, CONTRACT_DETONATE_TIME);
+  assert.equal(detonated.lockdown.startedAt, planted.lockdown.startedAt, '기폭이 봉쇄 시계를 다시 돌리지 않는다');
 });
 
-test('intel contracts need a two-step acquire-then-transmit at any landmark, and only the acquire step activates lockdown', () => {
+test('정보 송출은 목표부 구역과 비인접 구역에서는 할 수 없다 (C5)', () => {
+  const state = withContract(1, 'record_review');
+  const landmark = state.graph.landmarks.find((l) => l.sectorId === 'entrance');
+  const acquired = acquireContractIntel({ ...state, playerNodeId: landmark.nodeId }, 1);
+  const adjacentIds = ADJACENT_SECTOR_IDS.entrance;
+
+  assert.throws(
+    () => transmitContractIntel({ ...acquired, playerNodeId: landmark.nodeId }, 1),
+    /adjacent/,
+    '확보한 그 자리에서 바로 송출하면 계약의 마지막 장이 사라진다',
+  );
+  const far = acquired.graph.landmarks.find((l) => l.sectorId !== 'entrance' && !adjacentIds.includes(l.sectorId));
+  assert.throws(
+    () => transmitContractIntel({ ...acquired, playerNodeId: far.nodeId }, 1),
+    /adjacent/,
+    '먼 구역까지 가야 하면 우회가 이웃 하나가 아니라 시설 횡단이 된다',
+  );
+  const neighbor = acquired.graph.landmarks.find((l) => adjacentIds.includes(l.sectorId));
+  assert.equal(transmitContractIntel({ ...acquired, playerNodeId: neighbor.nodeId }, 1).contract.status, 'completed');
+});
+
+test('intel contracts need a two-step acquire-then-transmit at an adjacent-sector landmark, and only the acquire step activates lockdown', () => {
   const state = withContract(1, 'record_review');
   const landmark = state.graph.landmarks.find((l) => l.sectorId === 'entrance');
   const at = { ...state, playerNodeId: landmark.nodeId };
@@ -798,7 +857,7 @@ test('intel contracts need a two-step acquire-then-transmit at any landmark, and
   assert.ok(acquired.lockdown);
   const lockedAt = acquired.lockdown.startedAt;
 
-  const otherLandmark = acquired.graph.landmarks.find((l) => l.sectorId !== 'entrance');
+  const otherLandmark = acquired.graph.landmarks.find((l) => ADJACENT_SECTOR_IDS.entrance.includes(l.sectorId));
   assert.throws(
     () => acquireContractIntel({ ...acquired, playerNodeId: otherLandmark.nodeId }, 1),
     /no intel contract to acquire/,
@@ -808,6 +867,51 @@ test('intel contracts need a two-step acquire-then-transmit at any landmark, and
   const transmitted = transmitContractIntel({ ...acquired, playerNodeId: otherLandmark.nodeId }, 1);
   assert.equal(transmitted.contract.status, 'completed');
   assert.equal(transmitted.lockdown.startedAt, lockedAt, 'transmit must not re-trigger or move the lockdown clock');
+});
+
+// 사용자 확정: 정보 계약은 봉쇄가 켜져도 출구 B를 앞당기지 않는다. 데이터는 이미 빠져나간
+// 뒤라 문을 닫아봐야 소용이 없고, 마지막 장(이웃 구역 송출)이 B 유예 125칸에 갇히면
+// 정보 계약만 출구 선택이 사라진다. 봉쇄의 나머지 효과는 그대로 켜진다.
+test('정보 계약의 봉쇄는 출구 B 폐쇄를 앞당기지 않는다 — 회수·파괴는 앞당긴다', () => {
+  const intelState = withContract(1, 'record_review');
+  const intelLandmark = intelState.graph.landmarks.find((l) => l.sectorId === 'entrance');
+  const acquired = acquireContractIntel({ ...intelState, playerNodeId: intelLandmark.nodeId }, 1);
+  assert.ok(acquired.time + LOCKDOWN_EXIT_CLOSE_WINDOW < EXIT_B_DISABLED_AT, '앞당김이 의미 있는 시각이어야 한다');
+  assert.ok(acquired.lockdown, '봉쇄 자체는 켜진다');
+  assert.equal(acquired.exits.B.disabledAt, EXIT_B_DISABLED_AT, '정보 계약에서는 B의 원래 폐쇄 시각이 유지된다');
+  assert.equal(acquired.exits.A.disabledAt, EXIT_A_DISABLED_AT, 'A는 어느 계약에서도 봉쇄가 건드리지 않는다');
+
+  // 송출(완료)도 B를 건드리지 않는다 — 봉쇄는 확보에서 한 번만 켜진다.
+  const neighbor = acquired.graph.landmarks.find((l) => ADJACENT_SECTOR_IDS.entrance.includes(l.sectorId));
+  const transmitted = transmitContractIntel({ ...acquired, playerNodeId: neighbor.nodeId }, 1);
+  assert.equal(transmitted.exits.B.disabledAt, EXIT_B_DISABLED_AT);
+
+  // 봉쇄의 나머지 효과는 정보 계약에서도 그대로 — 위협 이동이 봉쇄표로 빨라진다.
+  // 같은 상태에서 lockdown만 떼어낸 대조군과 비교해 봉쇄표가 실제로 쓰였는지 본다.
+  const baseThreats = makeRun(1).threats;
+  const threatId = Object.keys(baseThreats)[0];
+  const withThreats = { ...acquired, threats: baseThreats, time: 0 };
+  const lockedMoved = advanceTime(withThreats, THREAT_MOVE_INTERVAL.patrol);
+  const unlockedMoved = advanceTime({ ...withThreats, lockdown: null }, THREAT_MOVE_INTERVAL.patrol);
+  assert.equal(unlockedMoved.threats[threatId].nextMoveAt, THREAT_MOVE_INTERVAL.patrol * 2);
+  assert.equal(
+    lockedMoved.threats[threatId].nextMoveAt,
+    (1 + LOCKDOWN_THREAT_MOVE_INTERVAL.patrol) + LOCKDOWN_THREAT_MOVE_INTERVAL.patrol,
+    '정보 계약의 봉쇄에서도 위협 이동 간격은 봉쇄표를 쓴다',
+  );
+
+  // 회수·파괴는 그대로 앞당긴다.
+  const retrieval = withContract(1, 'sample_retrieval');
+  const labs = retrieval.graph.landmarks.find((l) => l.sectorId === 'labs');
+  const goods = acquireContractGoods({ ...retrieval, playerNodeId: labs.nodeId }, 1, 0);
+  assert.equal(goods.exits.B.disabledAt, goods.time + LOCKDOWN_EXIT_CLOSE_WINDOW);
+  assert.ok(goods.exits.B.disabledAt < EXIT_B_DISABLED_AT);
+
+  const destroy = withContract(1, 'generator_shutdown');
+  const power = destroy.graph.landmarks.find((l) => l.sectorId === 'power');
+  const planted = destroyContractTarget({ ...destroy, playerNodeId: power.nodeId }, 1);
+  assert.equal(planted.exits.B.disabledAt, planted.time + LOCKDOWN_EXIT_CLOSE_WINDOW);
+  assert.ok(planted.exits.B.disabledAt < EXIT_B_DISABLED_AT);
 });
 
 // D22: 신규 위협 스폰 시스템이 없어 "증원 가속"을 기존 위협 전원의 이동 간격 단축으로

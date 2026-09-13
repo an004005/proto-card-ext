@@ -232,6 +232,8 @@
  * @property {0|1|2|3} alert
  * @property {number} nextMoveAt
  * @property {string|null} lastKnownPlayerNodeId
+ * @property {number|null} lastObservedPlayerAt 이 마커가 마지막으로 플레이어를 관측한 시각(ADR-0079).
+ *   추적·조사 경계 감쇠 타이머의 기준점이며, 플레이어를 본 적이 없으면 null이다.
  * @property {0|1|2|3} pursuitStrength
  * @property {ThreatTarget|null} target
  * @property {{eventId: string, nodeId: string, expiresAt: number}|null} investigationMemory
@@ -260,6 +262,21 @@
 /** @typedef {KeyExitRuntimeState | StandardExitRuntimeState} ExitRuntimeState */
 
 /**
+ * 노드 하나에 대해 "마지막으로 확인한 것". 무료 인접 관측·정찰·정밀 스캔·카메라가 각자 아는
+ * 항목만 써 넣는 공용 노트이고, 쓰기는 runEngine.mergeObservation 하나로만 한다.
+ * @typedef {Object} NodeObservation
+ * @property {number} observedAt 이 기록을 마지막으로 갱신한 맵 시각(칸).
+ * @property {boolean} hasThreat 그 시각에 위협이 그 노드에 있었는가.
+ * @property {string} [exitStatus] 표준 출구 노드일 때의 개폐 상태.
+ * @property {number} [detailLevel] 이 기록을 **어느 깊이로** 봤는가(PERCEPTION_INFO_TABLE의 level, 0~5).
+ *   무료 인접 관측은 언제나 1이고, 정찰은 그때의 실효 Perception이 정한다. 더 깊은 기록이 얕은
+ *   갱신에 덮이지 않도록 병합은 최댓값을 남긴다. UI는 이 값보다 깊은 것을 그리지 않는다.
+ * @property {1|2|3} [concealment] 정찰로 읽어낸 은엄폐 등급(Perception 2 이상).
+ * @property {Record<string, {tier: 'normal'|'elite', axis: string|null}>} [opportunityGrades] 정찰로 읽어낸 확보 대상 등급(Perception 0 이상)과 역할축(1 이상, 그 전에는 null).
+ * @property {{threatId: string, size: number, mode: string, monsterIds?: string[]}} [threat] 그 시각에 본 위협의 규모·모드(구성은 정찰로만).
+ */
+
+/**
  * @typedef {Object} FacilityRunState
  * @property {FacilityGraph} graph
  * @property {number} time
@@ -271,7 +288,7 @@
  * @property {number} overload 0..100+ (100 초과는 전투 상태이상 카드로 처리한다).
  * @property {number} overloadFloor
  * @property {number} overloadGainMultiplier
- * @property {Record<string, {observedAt: number, hasThreat: boolean, exitStatus?: string, concealment?: 1|2|3, opportunityGrades?: Record<string, {tier: 'normal'|'elite', axis: string}>}>} observations 기본 정찰(§6.2) 및
+ * @property {Record<string, NodeObservation>} observations 기본 정찰(§6.2) 및
  *   현재/인접 노드 자동 갱신(§10.2 — gameReducer.js가 매 행동 끝에 기록) 결과. 시야 밖으로 벗어나도
  *   지워지지 않고 "마지막으로 확인한 정보"로 남는다.
  * @property {Record<string, number>} fieldCooldowns instanceId -> readyAt (능동 현장 효과, §11.1).
@@ -280,7 +297,8 @@
  * @property {string[]} disabledCameraIds Cameras permanently destroyed with Force.
  * @property {string[]} hackedInterfaceIds Access interfaces already taken over by the player.
  * @property {string[]} disabledGeneratorIds
- * @property {{source: 'basic'|'camera', sourceNodeId: string, targetNodeIds: string[], expiresAt: number|null}|null} activeRecon
+ * @property {{source: 'basic'|'camera', sourceNodeId: string, targetNodeIds: string[], expiresAt: number|null, detailLevel?: number}|null} activeRecon
+ *   detailLevel은 세션이 시작될 때의 정보 깊이다 — 나중에 Perception이 올라도 이미 본 것이 소급해 깊어지지 않는다.
  * @property {number|null} lastWaitEndedAt 마지막 대기가 끝난 시각. null이 아니면 인접 노드의 무료
  *   실시간 관측이 끊긴 상태이며(대기 중에는 주변을 살피지 않는다), 다음 유료 행동이 끝나면 null로
  *   돌아간다. 화면의 fresh/stale 판정과 refreshLocalObservations가 같이 읽는다.
@@ -296,6 +314,7 @@
  * @property {{nodeId: string, bonus: 1|2|3}|null} activeConcealment 은엄폐 사용 중인 노드와 그 임시 Stealth 보너스 — 다른 노드로 이동하면 초기화된다.
  * @property {string[]} revealedPatrolRouteSectorIds 통제실 해킹 레벨1+로 순찰경로가 영구 공개된 구역.
  * @property {EncounterState|null} encounter 콜리전으로 열린, 아직 해소되지 않은 조우 판정.
+ * @property {string[]} deceivedThreatIds 조우 속이기(D)를 이미 한 번 쓴 위협. 위협당 한 번뿐이다.
  * @property {boolean} keyDiscovered 열쇠 대상 현장 기회를 파밍해 열쇠 탈출구 위치를 알아냈는지(§5.1.1). 한번 참이 되면 되돌아가지 않는다.
  * @property {ContractRuntimeState|null} contract 수락된 계약의 진행 상태(§3단계, D3·D4·D21).
  * @property {{startedAt: number}|null} lockdown 계약 목표 확보 순간 켜지는 봉쇄(D22) — 위협 이동이 빨라지고 출구 B가 조기 폐쇄된다.
@@ -385,6 +404,10 @@
  * @property {string} nodeId
  * @property {'advantage'|'even'|'disadvantage'|'forced'} tier
  * @property {boolean} graceUsed disadvantage 진입 후 행동을 1회 소모했는지.
+ * @property {number} [stealthAtJudgement] 판정 당시의 실효 은신 — 화면이 그 시각의 근거를 고정해 보여주는 용도.
+ * @property {number} [stealthBaseAtJudgement] 그 은신의 장비 합(상황 보정 전) — ADR-0079 분해 표시용.
+ * @property {{label: string, delta: number}[]} [stealthPartsAtJudgement] 상황 보정 내역(은엄폐/대공간/카메라/전원 차단/봉쇄).
+ * @property {number} [perceptionAtJudgement] 판정 당시의 위협 지각.
  */
 
 // ---- cards ----

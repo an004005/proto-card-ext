@@ -43,8 +43,12 @@ export function buildDeckFromLoadout(loadout) {
     const def = WEAPON_DEFINITIONS[item.equipmentId];
     if (def) entries.push(...expandCardList(def.cardList, item.id));
   }
-  if (loadout.top) entries.push(...expandCardList(ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId].cardList, loadout.top.id));
-  if (loadout.bottom) entries.push(...expandCardList(ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId].cardList, loadout.bottom.id));
+  // 무기·모듈과 같은 가드다 — 카탈로그에 없는 equipmentId(옛 세이브, 손으로 만든 스냅샷)가
+  // 오면 덱 구성이 통째로 터지는 대신 그 칸만 비운다.
+  const topDef = loadout.top ? ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId] : null;
+  if (topDef) entries.push(...expandCardList(topDef.cardList, loadout.top.id));
+  const bottomDef = loadout.bottom ? ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId] : null;
+  if (bottomDef) entries.push(...expandCardList(bottomDef.cardList, loadout.bottom.id));
   for (const item of loadout.modules || []) {
     const def = MODULE_DEFINITIONS[item.equipmentId];
     if (!def) continue;

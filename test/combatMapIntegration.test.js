@@ -36,19 +36,19 @@ function withPhase(snapshot, phase) {
 }
 
 test('addCombatNoiseGauge accumulates and fires only once capacity is reached, then resets to 0', () => {
-  let r = addCombatNoiseGauge(0, 3);
-  assert.deepEqual(r, { gauge: 3, fired: false });
-  r = addCombatNoiseGauge(r.gauge, 3);
-  assert.deepEqual(r, { gauge: 6, fired: false });
-  r = addCombatNoiseGauge(r.gauge, 3);
-  assert.deepEqual(r, { gauge: 9, fired: false });
-  r = addCombatNoiseGauge(r.gauge, 3);
+  // 용량은 6이다(C2) — 소음 2짜리 카드 세 장이면 한 번 울린다.
+  assert.equal(NOISE_GAUGE_CAPACITY, 6);
+  let r = addCombatNoiseGauge(0, 2);
+  assert.deepEqual(r, { gauge: 2, fired: false });
+  r = addCombatNoiseGauge(r.gauge, 2);
+  assert.deepEqual(r, { gauge: 4, fired: false });
+  r = addCombatNoiseGauge(r.gauge, 2);
   assert.equal(r.fired, true);
   assert.equal(r.gauge, 0);
 });
 
-test('addCombatNoiseGauge fires exactly at capacity (10)', () => {
-  const r = addCombatNoiseGauge(7, 3);
+test('addCombatNoiseGauge fires exactly at capacity', () => {
+  const r = addCombatNoiseGauge(NOISE_GAUGE_CAPACITY - 3, 3);
   assert.deepEqual(r, { gauge: 0, fired: true });
 });
 
@@ -64,8 +64,8 @@ test('applyCombatCardNoise reports a noise event only when the gauge fires, at t
   const runState = createRunState(graph, 2);
   const nodeId = runState.playerNodeId;
 
-  let result = applyCombatCardNoise(runState, nodeId, 8, 0, 1);
-  assert.equal(result.gauge, 9);
+  let result = applyCombatCardNoise(runState, nodeId, NOISE_GAUGE_CAPACITY - 2, 0, 1);
+  assert.equal(result.gauge, NOISE_GAUGE_CAPACITY - 1);
   assert.equal(result.intensity, 0);
   assert.equal(result.runState.noiseEvents.length, 0);
 
@@ -206,4 +206,32 @@ test('정산 도중 붕괴 시각을 넘기면 승리했더라도 붕괴가 우�
   const won = finalizeIfCombatEnded(withPhase(nearEnd, 'victory'));
   assert.equal(won.facilityRunState.phase, 'collapsed');
   assert.equal(won.currentScreen, 'gameOver', '보상 화면으로 가지 않는다');
+});
+
+// ---- 전투 RNG가 보상 롤에 반영되는가 (리뷰 A3) ----
+
+test('전투 중 굴린 난수가 스냅샷으로 돌아와 보상 롤에 반영된다', () => {
+  const started = startedCombat();
+  // 전투 안에서 몇 번을 더 굴렸든 그 결과가 스냅샷의 rngState가 되어야 한다.
+  const advanced = {
+    ...started,
+    activeCombatState: { ...started.activeCombatState, phase: 'victory', rngState: 123456 },
+  };
+  const won = finalizeIfCombatEnded(advanced);
+  assert.notDeepEqual(won.rngState, started.rngState, '전투 시작 시점 시드가 그대로 남아 있다');
+});
+
+test('같은 전투를 다르게 풀면 보상 후보가 갈린다', () => {
+  function rewardOf(combatRngSeed) {
+    const started = startedCombat();
+    const won = finalizeIfCombatEnded({
+      ...started,
+      activeCombatState: { ...started.activeCombatState, phase: 'victory', rngState: combatRngSeed },
+    });
+    return won.pendingReward;
+  }
+  const a = rewardOf(1001);
+  const b = rewardOf(987654);
+  assert.ok(a && b, '승리하면 보상 창이 서야 한다');
+  assert.notDeepEqual(a.slots, b.slots, '전투 진행이 달라도 보상 후보가 똑같다');
 });

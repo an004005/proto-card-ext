@@ -56,13 +56,19 @@ function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleCl
         const canDblClick = !!onItemDoubleClick;
         const canUseMenu = !!onItemUseMenu && isHealingConsumable(item);
         return html`
-          <${Tooltip} key=${item.id} width=${240} content=${html`<${ItemTooltipContent} item=${item} />`}>
+          ${/* 조작법(더블클릭/우클릭)은 브라우저 기본 title이 아니라 같은 Tooltip 안에 넣는다 —
+              title은 뜨는 데 1초가 걸리고 키보드로는 아예 뜨지 않는다(리뷰 B7). */ null}
+          <${Tooltip} key=${item.id} width=${240} content=${html`<div>
+            <${ItemTooltipContent} item=${item} />
+            ${canDblClick && dblClickTitle ? html`<div style=${{ fontSize: '10px', marginTop: '6px', opacity: 0.75 }}>${dblClickTitle}</div>` : null}
+            ${canUseMenu ? html`<div style=${{ fontSize: '10px', marginTop: '2px', opacity: 0.75 }}>우클릭하여 즉시 사용</div>` : null}
+          </div>`}>
             <div
+              tabIndex="0"
               draggable=${canDrag}
               onDragStart=${canDrag ? () => onItemDragStart(item) : undefined}
               onDblClick=${canDblClick ? () => onItemDoubleClick(item) : undefined}
               onContextMenu=${canUseMenu ? (e) => { e.preventDefault(); onItemUseMenu(item); } : undefined}
-              title=${canDblClick ? dblClickTitle : undefined}
               style=${{
                 aspectRatio: '1/1', border: `2px solid ${isBurden ? 'var(--color-accent)' : info.color}`,
                 background: 'var(--color-surface)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1px', padding: '3px', position: 'relative',
@@ -74,7 +80,7 @@ function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleCl
               ${isBurden ? html`<span style=${{ position: 'absolute', bottom: '1px', fontSize: '6px', color: 'var(--color-accent-700)' }}>짐</span>` : null}
               ${onDiscard ? html`
                 <button
-                  class="btn btn-icon" title="버리기"
+                  class="btn btn-icon" aria-label="버리기"
                   style=${{ position: 'absolute', top: '1px', right: '1px', fontSize: '8px', padding: '0 3px', lineHeight: 1.2 }}
                   onClick=${(e) => { e.stopPropagation(); onDiscard(item.id); }}
                 >×</button>
@@ -87,12 +93,16 @@ function ItemGrid({ items, burdenIds, draggable, onItemDragStart, onItemDoubleCl
   `;
 }
 
-export function DeckInventoryView({ loadout, inventory = null, warehouse = null, manage = false }) {
+export function DeckInventoryView({ loadout, inventory = null, warehouse = null, manage = false, overload = null }) {
   const [dragPayload, setDragPayload] = useState(null);
   const [tab, setTab] = useState('inventory'); // 'inventory' | 'deck'
   const [useMenuItem, setUseMenuItem] = useState(null); // 더블클릭/우클릭으로 연 "사용" 팝업 대상
   const deckSize = buildDeckFromLoadout(loadout).length;
+  // 덱 탭의 카드 코스트·피해는 어느 과부화 단계로 보여줄 것인가. 창고(출격 준비)에서는 아직
+  // 런이 없으므로 장착 바닥이 최선의 근사지만, 런 중에는 **지금 과부화**가 실제 기준이다 —
+  // 바닥으로 보여주면 과열(2단계)에서 코스트 +1이 붙은 카드를 0단계 값으로 읽게 된다(리뷰 B7).
   const floor = computeFloorOverload(loadout);
+  const deckOverload = overload ?? floor;
   const capacity = BASE_INVENTORY_CAPACITY + computeInventoryCapacityBonus(loadout);
   const deckGroups = [...buildDeckGroups(loadout), ...buildBurdenGroups(inventory)];
   const allEquipSlots = buildAllEquipSlots(loadout);
@@ -166,9 +176,9 @@ export function DeckInventoryView({ loadout, inventory = null, warehouse = null,
               ${g.cards.map((c, i) => {
                 const def = CARD_DEFINITIONS[c.defId];
                 const type = TYPE_INFO[def.type] || TYPE_INFO.skill;
-                const cost = getEffectiveCost(def, getStage(floor), {});
+                const cost = getEffectiveCost(def, getStage(deckOverload), {});
                 return html`
-                  <${Tooltip} key=${i} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${floor} item=${c.item} />`}>
+                  <${Tooltip} key=${i} width=${280} content=${html`<${CardDetailTooltip} def=${def} cost=${cost} type=${type} overload=${deckOverload} item=${c.item} />`}>
                     <div style=${{ aspectRatio: '3/4', border: `2px solid ${g.color}`, background: 'var(--color-surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', cursor: 'default' }}>
                       <span style=${{ fontSize: '9px', fontWeight: 800, textAlign: 'center', lineHeight: 1.2 }}>${c.name}</span>
                     </div>
@@ -223,7 +233,7 @@ function MapConsumableUsePopup({ item, onClose }) {
         <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '15px', marginBottom: '2px' }}>${def.name}</div>
         <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', marginBottom: '14px' }}>${def.description}</div>
         <button class="btn btn-primary" style=${{ width: '100%' }} onClick=${() => { dispatch({ type: 'USE_MAP_CONSUMABLE', itemId: item.id }); onClose(); }}>사용</button>
-        <div style=${{ textAlign: 'center', fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '8px' }}>사용 시 시간 ${MAP_CONSUMABLE_TIME_COST} 소요</div>
+        <div style=${{ textAlign: 'center', fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '8px' }}>사용 시 시간 ${MAP_CONSUMABLE_TIME_COST}칸 소요</div>
       </div>
     </div>
   `;

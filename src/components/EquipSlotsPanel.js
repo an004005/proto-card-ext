@@ -2,6 +2,8 @@ import { html } from '../lib.js';
 import { Tooltip } from './Tooltip.js';
 import { EquipmentTooltipContent } from './EquipmentTooltipContent.js';
 import { describeCapabilityModifiers } from '../data/capabilityDisplay.js';
+import { describeImplantCost } from '../data/itemDisplay.js';
+import { MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 
 /** 퀵슬롯에 장착된 소모품이 맵에서 즉시 사용 가능한 "회복류"인지 — DeckInventoryView의
@@ -43,7 +45,7 @@ export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped 
                 ${sl.cardCount !== undefined ? html`<span class="tag tag-outline" style=${{ fontSize: '9px', alignSelf: 'flex-start' }}>+${sl.cardCount}장</span>` : null}
                 ${sl.durability !== undefined ? html`
                   <span class="tag tag-outline" style=${{ fontSize: '9px', alignSelf: 'flex-start', color: sl.durability <= 3 ? 'var(--color-accent-700)' : undefined }}>
-                    내구 ${sl.durability}${sl.durability <= 0 ? ' (파손)' : ''}
+                    내구도 ${sl.durability}/${MAX_DURABILITY}${sl.durability <= 0 ? ' (파손)' : ''}
                   </span>
                 ` : null}
               ` : html`<span style=${{ fontSize: '16px', opacity: 0.35 }}>+</span>`}
@@ -51,9 +53,13 @@ export function EquipSlotsPanel({ allEquipSlots, manage = false, onDragEquipped 
           `;
           const capLine = describeCapabilityModifiers(sl.equipmentId);
           const capNote = capLine ? html`<div style=${{ fontSize: '10px', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--color-neutral-700)', opacity: 0.9 }}>${capLine}</div>` : null;
-          if (sl.cardList) return html`<${Tooltip} key=${sl.key} width=${260} content=${html`<div><${EquipmentTooltipContent} name=${sl.name} cardList=${sl.cardList} />${capNote}</div>`}>${cell}<//>`;
-          if (sl.description) return html`<${Tooltip} key=${sl.key} width=${220} content=${html`<div>${sl.description}${capNote}</div>`}>${cell}<//>`;
-          if (capNote) return html`<${Tooltip} key=${sl.key} width=${220} content=${capNote}>${cell}<//>`;
+          // 임플란트의 대가(과부화 바닥·획득 배수)는 장점과 같은 칸에 반드시 함께 선다(리뷰 B4).
+          const costLine = describeImplantCost(sl.equipmentId);
+          const costNote = costLine ? html`<div style=${{ fontSize: '10px', marginTop: '6px', color: 'var(--color-negative, #dc2626)', fontWeight: 700 }}>${costLine}</div>` : null;
+          const notes = html`${costNote}${capNote}`;
+          if (sl.cardList) return html`<${Tooltip} key=${sl.key} width=${260} content=${html`<div><${EquipmentTooltipContent} name=${sl.name} cardList=${sl.cardList} />${notes}</div>`}>${cell}<//>`;
+          if (sl.description) return html`<${Tooltip} key=${sl.key} width=${220} content=${html`<div>${sl.description}${notes}</div>`}>${cell}<//>`;
+          if (costNote || capNote) return html`<${Tooltip} key=${sl.key} width=${220} content=${notes}>${cell}<//>`;
           return html`<div key=${sl.key}>${cell}</div>`;
         })}
       </div>

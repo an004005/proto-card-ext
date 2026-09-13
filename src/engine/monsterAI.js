@@ -39,14 +39,17 @@ function resolveEntry(sequence, index, rngState) {
 }
 
 /**
+ * 보스 2페이즈 전환도 이 함수로 AI 상태를 새로 만든다 — 그때는 1페이즈 시퀀스가 아니라
+ * phase2Sequence를 기준으로 잡아야 한다. phase를 받지 않던 시절에는 2페이즈 시퀀스가 더 짧을
+ * 때 index가 범위를 넘거나, `{random}` 항목의 위치가 어긋나 인텐트와 실제 행동이 갈렸다(리뷰 A8).
  * @param {string} defId
  * @param {number} staggerIndex
  * @param {RngState} rngState
+ * @param {1|2} [phase]
  * @returns {{aiState: AiState, rngState: RngState}}
  */
-export function createInitialAiState(defId, staggerIndex, rngState) {
-  const def = MONSTER_DEFINITIONS[defId];
-  const sequence = def.sequence;
+export function createInitialAiState(defId, staggerIndex, rngState, phase = 1) {
+  const sequence = activeSequence(defId, phase);
   const index = staggerIndex % sequence.length;
   const resolved = resolveEntry(sequence, index, rngState);
   return { aiState: { sequenceIndex: index, resolvedMove: resolved.resolvedMove }, rngState: resolved.rngState };

@@ -22,7 +22,10 @@ export function PlayerStatusBar({ player, overload, overloadFloor, animation = n
   const statusEntries = Object.entries(player.statuses).filter(([, v]) => v);
   const powerEntries = Object.keys(player.powers || {});
   const hasNextRangedBonus = !!player.temporaryEffects?.nextRangedBonus;
-  const energyPips = Array.from({ length: player.maxEnergy }, (_, i) => i < player.energy);
+  // 산데비스탄처럼 최대치를 넘겨 에너지를 주는 효과가 있으므로 칸 수는 max(최대, 현재)다 —
+  // maxEnergy로만 그리면 넘친 에너지가 화면에서 사라진다(리뷰 B7).
+  const energySlots = Math.max(player.maxEnergy, player.energy);
+  const energyPips = Array.from({ length: energySlots }, (_, i) => i < player.energy);
   const popups = useDamagePopups(player.hp);
 
   return html`
@@ -55,8 +58,12 @@ export function PlayerStatusBar({ player, overload, overloadFloor, animation = n
           <//>
         ` : null}
       </div>
-      <div>
-        <div style=${{ fontSize: '10px', letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.6, marginBottom: '4px' }}>에너지</div>
+      <${Tooltip} width=${220} content=${`카드 코스트로 쓰는 자원입니다. 매 턴 시작에 ${player.maxEnergy}로 채워집니다${player.energy > player.maxEnergy ? ` — 지금은 효과로 ${player.energy - player.maxEnergy} 더 받아 ${player.energy}입니다` : ''}. 남은 에너지는 다음 턴으로 넘어가지 않습니다.`}>
+      <div tabIndex="0">
+        <div style=${{ fontSize: '10px', letterSpacing: '0.08em', textTransform: 'uppercase', opacity: 0.6, marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+          <span style=${{ textDecoration: 'underline dotted', textUnderlineOffset: '2px' }}>에너지</span>
+          <span style=${{ fontWeight: 800 }}>${player.energy}/${player.maxEnergy}</span>
+        </div>
         <div style=${{ display: 'flex', gap: '4px', alignItems: 'center' }}>
           ${energyPips.map((filled, i) => html`
             <span key=${i} style=${{
@@ -67,6 +74,7 @@ export function PlayerStatusBar({ player, overload, overloadFloor, animation = n
           `)}
         </div>
       </div>
+      <//>
     </div>
   `;
 }

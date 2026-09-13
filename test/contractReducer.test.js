@@ -115,3 +115,72 @@ test('computeContractOutcome gives a positive delta on completion and a negative
   assert.equal(failed.completed, false);
   assert.equal(failed.scoreDelta, -destroyDef.penaltyValue);
 });
+
+// ---- C5: 파괴 계약의 마지막 장 ----
+
+test('파괴 계약은 설치 뒤 목표부에서 떨어진 자리에서 기폭해야 완료된다', async () => {
+  const { bfsHopDistances } = await import('../src/engine/graphUtils.js');
+  const { CONTRACT_DETONATE_MIN_HOPS } = await import('../src/data/facilityLayout.js');
+
+  let s = startLoadoutWithType(3, 'destroy');
+  const contract = s.activeContract;
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const run = s.facilityRunState;
+  const landmark = run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
+
+  // 설치 이후 상태를 직접 세운다 — Force 게이팅 자체는 runEngine.test.js가 본다.
+  const planted = {
+    ...s,
+    facilityRunState: {
+      ...run, playerNodeId: landmark.nodeId,
+      contract: { ...contract, status: 'acquired', acquiredAt: run.time },
+      lockdown: { startedAt: run.time },
+    },
+  };
+
+  // 목표부에 서 있는 채로 누르면 아무 일도 일어나지 않는다(리듀서는 항상 total function).
+  assert.equal(gameReducer(planted, { type: 'DETONATE_CONTRACT_CHARGE' }), planted);
+
+  const hops = bfsHopDistances(run.graph.edges, landmark.nodeId);
+  const farNodeId = run.graph.nodes.map((n) => n.id).find((id) => (hops.get(id) ?? -1) >= CONTRACT_DETONATE_MIN_HOPS);
+  const away = { ...planted, facilityRunState: { ...planted.facilityRunState, playerNodeId: farNodeId } };
+  const detonated = gameReducer(away, { type: 'DETONATE_CONTRACT_CHARGE' });
+  assert.equal(detonated.facilityRunState.contract.status, 'completed');
+  assert.equal(computeContractOutcome(detonated.facilityRunState).scoreDelta, contract.completionRewardValue);
+});
+
+// ---- C5: 정보 계약의 송출 지점은 목표부 구역의 이웃 둘뿐 ----
+
+test('정보 송출은 목표부 구역에 인접한 구역의 랜드마크에서만 된다', async () => {
+  const { ADJACENT_SECTOR_IDS } = await import('../src/data/facilityLayout.js');
+
+  let s = startLoadoutWithType(3, 'intel');
+  const contract = s.activeContract;
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const run = s.facilityRunState;
+  const adjacentIds = ADJACENT_SECTOR_IDS[contract.sectorId];
+  const objectiveLandmark = run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
+  const adjacentLandmark = run.graph.landmarks.find((l) => adjacentIds.includes(l.sectorId));
+  const farLandmark = run.graph.landmarks.find((l) => l.sectorId !== contract.sectorId && !adjacentIds.includes(l.sectorId));
+  assert.ok(objectiveLandmark && adjacentLandmark && farLandmark);
+
+  // 확보 이후 상태를 직접 세운다 — Hacking 게이팅 자체는 runEngine.test.js가 본다.
+  const atNode = (nodeId) => ({
+    ...s,
+    facilityRunState: {
+      ...run, playerNodeId: nodeId,
+      contract: { ...contract, status: 'acquired', acquiredAt: run.time },
+      lockdown: { startedAt: run.time },
+    },
+  });
+
+  // 리듀서는 total function이라 불가능한 자리에서는 상태가 그대로다.
+  const atObjective = atNode(objectiveLandmark.nodeId);
+  assert.equal(gameReducer(atObjective, { type: 'TRANSMIT_CONTRACT_INTEL' }), atObjective, '목표부 구역은 불가');
+  const atFar = atNode(farLandmark.nodeId);
+  assert.equal(gameReducer(atFar, { type: 'TRANSMIT_CONTRACT_INTEL' }), atFar, '인접하지 않은 구역은 불가');
+
+  const transmitted = gameReducer(atNode(adjacentLandmark.nodeId), { type: 'TRANSMIT_CONTRACT_INTEL' });
+  assert.equal(transmitted.facilityRunState.contract.status, 'completed');
+  assert.equal(computeContractOutcome(transmitted.facilityRunState).scoreDelta, contract.completionRewardValue);
+});

@@ -5,6 +5,7 @@ import { createRngState, pick } from './rng.js';
 import { generateFacilityGraph } from './facilityGraph.js';
 import { createRunState, refreshLocalObservations } from './runEngine.js';
 import { offerContracts } from './contractReducer.js';
+import { computeCapabilities } from './capabilityEngine.js';
 import {
   computeFloorOverload, computeMaxHpBonus, computeInventoryCapacityBonus, computeOverloadGainMultiplier, MAX_DURABILITY,
 } from './equipmentEngine.js';
@@ -137,7 +138,7 @@ export function confirmLoadout(snapshot) {
   const facilityRunState = refreshLocalObservations(createRunState(graph, seed, {
     overloadFloor: floor, overloadGainMultiplier: computeOverloadGainMultiplier(loadout),
     contract, revealLandmarkSectorIds: contract ? [contract.sectorId] : [],
-  }));
+  }), computeCapabilities(loadout).perception);
   return {
     ...snapshot, playerState, facilityRunState, rngState,
     currentScreen: 'map',
@@ -186,17 +187,18 @@ export function autoEquipLoadout(snapshot) {
 
     const selected = pick(s.rngState, candidates);
     s = { ...s, rngState: selected.state };
+    // 창고에서 온 물건은 인벤토리 id 규칙을 새로 받는다(addItem이 넘겨받은 id를 버린다) —
+    // 그러니 장착할 때는 창고 시절 id가 아니라 방금 발급된 id를 써야 한다.
+    let itemId = selected.value.id;
     if (source === 'warehouse') {
       const current = s.playerState;
+      const inventory = addItem(current.inventory, selected.value);
+      itemId = inventory.items[inventory.items.length - 1].id;
       s = {
         ...s,
-        playerState: {
-          ...current,
-          inventory: addItem(current.inventory, selected.value),
-          warehouse: removeItem(current.warehouse, selected.value.id),
-        },
+        playerState: { ...current, inventory, warehouse: removeItem(current.warehouse, selected.value.id) },
       };
     }
-    s = equipItemFrom(s, 'inventory', selected.value.id);
+    s = equipItemFrom(s, 'inventory', itemId);
   }
 }

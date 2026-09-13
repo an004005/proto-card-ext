@@ -13,7 +13,7 @@ import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import {
   createRunState, basicRecon, waitOneTick, evadeThreat, useConcealment, disposeCorpse,
   requestExtraction, openSpecialEdge, hackAccessInterface, hackCamera, destroyCamera,
-  disableGenerator, hackControlRoom, acquireContractGoods, destroyContractTarget,
+  disableGenerator, hackControlRoom, acquireContractGoods, destroyContractTarget, detonateContractCharge,
   acquireContractIntel, transmitContractIntel, useOpportunity, useFieldEquipment,
   moveToAdjacentNode, scheduleTask,
 } from '../src/engine/runEngine.js';
@@ -26,7 +26,14 @@ import {
 } from '../src/engine/mapTimeline.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
-import { ADJACENT_SECTOR_IDS, RUN_COLLAPSE_TIME } from '../src/data/facilityLayout.js';
+import { ADJACENT_SECTOR_IDS, RUN_COLLAPSE_TIME, CONTRACT_DETONATE_MIN_HOPS } from '../src/data/facilityLayout.js';
+import { bfsHopDistances } from '../src/engine/graphUtils.js';
+
+/** 목표부에서 그 노드까지의 홉수 — 기폭 지점 고르기용. */
+function detonationHops(run, contractDef, nodeId) {
+  const objective = run.graph.landmarks.find((l) => l.sectorId === contractDef.sectorId);
+  return bfsHopDistances(run.graph.edges, objective.nodeId).get(nodeId);
+}
 
 /** 위협이 없는 런 — 중단 없이 "청구된 칸"만 재려면 아무도 걸어 들어오지 않아야 한다. */
 function quietRun(seed = 1) {
@@ -183,13 +190,28 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
     cases.push({ name: `회수 확보 S/M=${value}`, actionId: 'contractRetrieve', opts: { value, capabilityKind: 'stealth' }, run: contractRun(retrieval), act: (run) => acquireContractGoods(run, value, value - 1) });
     cases.push({ name: `파괴 F=${value}`, actionId: 'contractDestroy', opts: { value }, run: contractRun(destroy), act: (run) => destroyContractTarget(run, value) });
     cases.push({ name: `정보 확보 H=${value}`, actionId: 'contractIntel', opts: { value }, run: contractRun(intel), act: (run) => acquireContractIntel(run, value) });
+    // C5: 송출은 목표부가 아닌 **다른 구역** 랜드마크에서만 된다.
     const acquired = contractRun(intel);
+    const otherLandmark = base.graph.landmarks.find((l) => l.sectorId !== intel.sectorId);
     cases.push({
       name: `정보 송출 H=${value}`,
       actionId: 'contractTransmit',
       opts: { value },
-      run: { ...acquired, contract: { ...acquired.contract, status: 'acquired' } },
+      run: { ...acquired, playerNodeId: otherLandmark.nodeId, contract: { ...acquired.contract, status: 'acquired' } },
       act: (run) => transmitContractIntel(run, value),
+    });
+    // C5: 파괴 계약의 기폭 — 설치한 뒤 목표부에서 2홉 이상 떨어진 자리에서.
+    const planted = contractRun(destroy);
+    const farNode = base.graph.nodes.find((n) => {
+      const hops = detonationHops(base, destroy, n.id);
+      return hops !== undefined && hops >= CONTRACT_DETONATE_MIN_HOPS;
+    });
+    cases.push({
+      name: '파괴 기폭',
+      actionId: 'contractDetonate',
+      opts: {},
+      run: { ...planted, playerNodeId: farNode.id, contract: { ...planted.contract, status: 'acquired' } },
+      act: (run) => detonateContractCharge(run),
     });
   }
 
@@ -331,9 +353,17 @@ test('타임라인은 15칸 밖의 사건을 담지 않고, 알 수 없는 위�
   // 같은 위협이 인접 노드에 있으면 관측 대상이 되어 다음 이동이 보인다.
   const adjacentId = base.graph.edges.find((e) => e.from === nodeId || e.to === nodeId);
   const seenNodeId = adjacentId.from === nodeId ? adjacentId.to : adjacentId.from;
-  const watched = { ...run, threats: { [template.id]: { ...template, nodeId: seenNodeId, nextMoveAt: base.time + 2 } } };
+  // "다음 이동까지 몇 칸"은 Perception 2 이상의 깊이로 본 노드에서만 읽힌다(정보 깊이 표).
+  const watched = {
+    ...run,
+    threats: { [template.id]: { ...template, nodeId: seenNodeId, nextMoveAt: base.time + 2 } },
+    observations: { ...run.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 3 } },
+  };
   assert.ok(upcomingEvents(watched).some((e) => e.kind === 'threat'));
   assert.deepEqual(observableThreatMoves(watched).map((t) => t.ticksUntilMove), [2]);
+
+  const shallow = { ...watched, observations: { ...run.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 1 } } };
+  assert.deepEqual(observableThreatMoves(shallow).map((t) => t.ticksUntilMove), [null], '얕게 본 위협의 다음 이동은 알 수 없다');
 });
 
 test('작업 중 위협이 몇 번 움직이는지를 예고가 셀 수 있다', () => {
@@ -344,6 +374,8 @@ test('작업 중 위협이 몇 번 움직이는지를 예고가 셀 수 있다',
   const run = {
     ...base,
     threats: { [template.id]: { ...template, nodeId: seenNodeId, mode: 'patrol', nextMoveAt: base.time + 3 } },
+    // 이동 횟수 예고는 Perception 2의 깊이로 본 위협에만 붙는다(정보 깊이 표).
+    observations: { ...base.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 3 } },
   };
   // 순찰 간격 5칸, 다음 이동까지 3칸 -> 12칸짜리 작업 중에는 +3·+8칸 두 번.
   const moves = threatMovesDuring(run, 12);

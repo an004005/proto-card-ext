@@ -5,40 +5,44 @@
 // 롤 로직 자체는 전투 보상(rewardEngine.js)과 같은 테이블을 써야 한다. 보상 테이블을 고쳤을 때
 // 한쪽만 고쳐지는 사고를 막으려고 여기서는 롤러를 복제하지 않고 rewardEngine의 것을 그대로 쓴다.
 // 다만 rollRewardSlots(장비 슬롯 + 게이트 슬롯 구조)는 역할축과 맞지 않으므로 쓰지 않는다.
-import { rollEquipmentOptions, rollConsumableOptions, rollCurrencyOrJunkOptions } from './rewardEngine.js';
+import { rollEquipmentOptions, rollConsumableOptions, rollCurrencyOrJunkOptions, rollRange, rollLootDurability } from './rewardEngine.js';
+import { weightedPick } from './rng.js';
+import { MAX_DURABILITY } from './equipmentEngine.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../data/facilityEquipmentCapabilities.js';
 import { getAllEquipmentIds } from './inventoryReducer.js';
 import { PRIZE_OPTION_COUNT } from '../data/facilityLayout.js';
-import { CURRENCY_SLOT_ITEM_WEIGHTS, REWARD_CURRENCY_VALUE_RANGE } from '../data/rewardTables.js';
+import {
+  CURRENCY_SLOT_ITEM_WEIGHTS, REWARD_CURRENCY_VALUE_RANGE, REWARD_JUNK_VALUE_RANGE,
+  SUPPLY_CATEGORY_WEIGHTS, SUPPLY_AMMO_RANGE,
+} from '../data/rewardTables.js';
 
 /** @typedef {import('./types.js').RngState} RngState */
 /** @typedef {import('./types.js').FarmChoiceOption} FarmChoiceOption */
 /** @typedef {'combat'|'infiltration'|'resource'} FieldLootAxis */
 
 /**
- * MAP_EQUIPMENT_CAPABILITIES에 항목이 없지만 침투 도구인 장비의 예외 목록.
- * implant7("⑦ 지도")은 랜드마크 위치를 알려주는 정찰 도구라 성격이 분명히 침투 강화인데,
- * 그 효과가 Capability 테이블 밖(맵 공개 로직)에서 구현돼 있어 합산에 잡히지 않는다.
- * 테이블에 없다고 combat으로 떨어뜨리면 축이 거짓말을 하게 되므로 여기서 명시적으로 바로잡는다.
- */
-const UNTABLED_INFILTRATION_EQUIPMENT = new Set(['implant7']);
-
-/**
  * 장비가 어느 역할축에 속하는지 판정한다.
  * 기준은 전부 MAP_EQUIPMENT_CAPABILITIES에서 파생한다 — 축을 위한 별도 데이터를 만들면
  * 장비 수치를 고칠 때 축이 따라오지 않아 금방 어긋나기 때문이다.
  *
- * 판정: fieldAction이 있거나(현장 도구 자체가 침투 수단), capabilityModifiers의 "순합"이 0보다 크면
+ * 판정: fieldAction이 있거나(현장 도구 자체가 침투 수단), mapInfoEffect가 참이거나(맵 정보를 주는
+ * 장비도 경로를 줄여주는 침투 수단이다 — ⑦ 지도), capabilityModifiers의 "순합"이 0보다 크면
  * infiltration. 순합을 쓰는 이유는 force +1 / stealth -1 처럼 한쪽을 주고 한쪽을 뺏는 장비는
  * 경로의 대가를 줄여주지 않는 순수 전투 장비이기 때문이다(양수 하나로 판정하면 이들이 오분류된다).
+ *
+ * mapInfoEffect는 예외 목록이 아니라 표의 한 칸이다 — 축을 위한 별도 데이터를 만들지 않는다는
+ * 원칙은 "진실이 MAP_EQUIPMENT_CAPABILITIES 하나"라는 뜻이고, 수치로도 현장 행동으로도 담기지
+ * 않는 효과는 그 표 안에서 밝혀야 한다(그러지 않으면 fieldLoot.js에 두 번째 진실이 생긴다).
  *
  * @param {string} equipmentId
  * @returns {'combat'|'infiltration'}
  */
 export function axisOfEquipment(equipmentId) {
   const contract = MAP_EQUIPMENT_CAPABILITIES[equipmentId];
-  if (!contract) return UNTABLED_INFILTRATION_EQUIPMENT.has(equipmentId) ? 'infiltration' : 'combat';
-  if (contract.fieldAction) return 'infiltration';
+  // 카탈로그의 모든 장비는 MAP_EQUIPMENT_CAPABILITIES에 있어야 한다(빈 항목이라도) —
+  // 예외 목록을 따로 두면 축 판정의 진실이 두 군데가 된다(리뷰 A8).
+  if (!contract) return 'combat';
+  if (contract.fieldAction || contract.mapInfoEffect) return 'infiltration';
   const net = Object.values(contract.capabilityModifiers).reduce((sum, v) => sum + v, 0);
   return net > 0 ? 'infiltration' : 'combat';
 }
@@ -150,4 +154,48 @@ export function rollFieldLootOptions(axis, tier, rngState) {
   if (secondary.options.length >= PRIZE_OPTION_COUNT) return secondary;
 
   return fillFromResourcePool(tier, secondary.options, seen, secondary.rngState);
+}
+
+/**
+ * 보급품(supply) 한 번의 결과 하나를 뽑는다.
+ *
+ * 확보 대상과 달리 보급품은 "고르는" 자리가 아니라 즉시 들어오는 자원이다. 예전에는 전투 보상
+ * 롤러(rollRewardSlots)의 0번 슬롯을 그대로 썼는데, 그 슬롯은 정의상 항상 장비라서 등급 롤이
+ * 결과에 전혀 반영되지 않았다(리뷰 A2). 이제는 카테고리부터 등급별 가중치로 굴리고, 값 범위도
+ * 등급을 탄다 — 장비는 낮은 확률의 덤이며, normal에서 나온 장비는 쓰던 것(3~9)이고 elite에서
+ * 나온 장비만 새것이다.
+ *
+ * @param {'normal'|'elite'} tier
+ * @param {RngState} rngState
+ * @returns {{option: FarmChoiceOption, durability: number, rngState: RngState}}
+ */
+export function rollSupplyLoot(tier, rngState) {
+  const table = SUPPLY_CATEGORY_WEIGHTS[tier] || SUPPLY_CATEGORY_WEIGHTS.normal;
+  const pick = weightedPick(rngState, table);
+  let rng = pick.state;
+
+  if (pick.value === 'ammo') {
+    const range = SUPPLY_AMMO_RANGE[tier] || SUPPLY_AMMO_RANGE.normal;
+    const amount = rollRange(rng, range.min, range.max);
+    return { option: { kind: 'ammo', amount: amount.value }, durability: MAX_DURABILITY, rngState: amount.state };
+  }
+  if (pick.value === 'consumable') {
+    const rolled = rollConsumableOptions(rng);
+    return { option: rolled.options[0], durability: MAX_DURABILITY, rngState: rolled.state };
+  }
+  if (pick.value === 'currency' || pick.value === 'junk') {
+    const range = (pick.value === 'currency' ? REWARD_CURRENCY_VALUE_RANGE : REWARD_JUNK_VALUE_RANGE)[tier];
+    const value = rollRange(rng, range.min, range.max);
+    return { option: { kind: pick.value, value: value.value }, durability: MAX_DURABILITY, rngState: value.state };
+  }
+
+  const equipment = rollEquipmentOptions(getAllEquipmentIds(), rng);
+  rng = equipment.state;
+  let durability = MAX_DURABILITY;
+  if (tier !== 'elite') {
+    const rolled = rollLootDurability(rng);
+    durability = rolled.value;
+    rng = rolled.state;
+  }
+  return { option: equipment.options[0], durability, rngState: rng };
 }

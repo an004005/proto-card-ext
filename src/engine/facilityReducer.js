@@ -2,23 +2,25 @@
 // 분리(§코드 리뷰) 중 시설맵 묶음. combatReducer.js에만 의존한다(위협이 걸어 들어와 강제
 // 전투가 열리는 순간 startCombat을 불러야 하므로) — 반대 방향 의존은 없다(순환 없음).
 import { weightedPick } from './rng.js';
+import { RuleViolation } from './errors.js';
 import {
   moveToAdjacentNode, requestExtraction, basicRecon, openSpecialEdge, useOpportunity,
   useFieldEquipment, isAtOpenExit, refreshLocalObservations, hackCamera, hackAccessInterface, destroyCamera,
   disableGenerator, useConcealment, hackControlRoom,
-  computeThreatPerception, computeEncounterTier, effectiveStealthWithConcealment,
-  acquireContractGoods, destroyContractTarget, acquireContractIntel, transmitContractIntel,
+  computeThreatPerception, computeEncounterTier, explainEffectiveStealth, deceiveThreat,
+  acquireContractGoods, destroyContractTarget, detonateContractCharge, acquireContractIntel, transmitContractIntel,
   disposeCorpse, scheduleTask, taskCompleted, waitOneTick, evadeThreat,
 } from './runEngine.js';
-import { WAIT_BATCH_MAX_TICKS } from '../data/facilityLayout.js';
+import { WAIT_BATCH_MAX_TICKS, ENCOUNTER_DECEIVE_REQUIREMENT } from '../data/facilityLayout.js';
 import { actionTimeCost } from './actionCosts.js';
-import { cleanTraces, cutPower, broadcastFalseTarget } from './recovery.js';
+import { cleanTraces, cutPower, broadcastFalseTarget, plantFakeNoise } from './recovery.js';
 import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
 import { computeFloorOverload, computeOverloadGainMultiplier, applyDurabilityDecay, MAX_DURABILITY } from './equipmentEngine.js';
-import { rollRewardSlots, rollLootDurability } from './rewardEngine.js';
+import { rollLootDurability } from './rewardEngine.js';
+import { rollSupplyLoot } from './fieldLoot.js';
 import { addItem, createItem, addAmmo, removeItem } from './inventoryEngine.js';
 import { startCombat } from './combatReducer.js';
-import { getAllEquipmentIds, equipItem, unequipItem, unequipImplant, unequipConsumable } from './inventoryReducer.js';
+import { equipItem, unequipItem, unequipImplant, unequipConsumable } from './inventoryReducer.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 
 // 장비 교체·소모품 사용의 칸도 다른 유료 행동과 같은 비용 사양표에 있다(actionCosts.js) —
@@ -54,13 +56,24 @@ function triggerCombatIfNeeded(snapshot) {
   if (!threat) return snapshot;
 
   const capabilities = computeCapabilities(snapshot.playerState.loadout);
-  const stealth = effectiveStealthWithConcealment(capabilities.stealth, run);
+  const explained = explainEffectiveStealth(capabilities.stealth, run);
+  const stealth = explained.total;
   const perception = computeThreatPerception(threat);
   const tier = computeEncounterTier(stealth, perception);
   const clearedRun = { ...run, combatTrigger: null };
+  // 판정에 쓴 두 수치를 조우에 박아 둔다 — 화면이 "무엇을 보고 이 등급이 나왔는가"를 그 시각의
+  // 값으로 고정해 보여줄 수 있게(리뷰 B7). 이후 은엄폐가 만료돼도 이 숫자는 움직이지 않는다.
+  // 합계만 박아두면 "왜 동률인가"를 화면이 설명할 수 없다 — 상황 보정의 분해도 같이 고정한다
+  // (ADR-0079). 은엄폐가 만료돼도 이 내역은 움직이지 않는다.
+  const judgement = {
+    stealthAtJudgement: stealth,
+    stealthBaseAtJudgement: explained.base,
+    stealthPartsAtJudgement: explained.parts,
+    perceptionAtJudgement: perception,
+  };
 
   if (tier !== 'disadvantage') {
-    return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier, graceUsed: false } } };
+    return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier, graceUsed: false, ...judgement } } };
   }
   // 아직 열세(disadvantage) — 직전 재판정도 열세였고 그때 이미 행동권 1회를 준 상태였다면
   // (graceUsed: true) 이번엔 그 행동으로도 못 벗어난 것 -> 전투만 가능한 forced로 전환.
@@ -69,9 +82,9 @@ function triggerCombatIfNeeded(snapshot) {
   const prior = run.encounter && run.encounter.threatId === trigger.threatId ? run.encounter : null;
   const graceAlreadyGranted = prior?.tier === 'disadvantage' && !prior.graceUsed;
   if (graceAlreadyGranted) {
-    return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier: 'forced', graceUsed: true } } };
+    return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier: 'forced', graceUsed: true, ...judgement } } };
   }
-  return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier: 'disadvantage', graceUsed: false } } };
+  return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier: 'disadvantage', graceUsed: false, ...judgement } } };
 }
 
 /**
@@ -136,10 +149,18 @@ function withFacilityRunState(snapshot, fn) {
     ...snapshot.facilityRunState, overload: ps.overload,
     overloadFloor: computeFloorOverload(ps.loadout), overloadGainMultiplier: computeOverloadGainMultiplier(ps.loadout),
   };
-  // runEngine.js 함수들은 잘못된 호출(자격 미충족/이미 소진 등)에 예외를 던진다 — UI가 유효한
-  // 액션만 노출하는 게 정상 경로지만, 리듀서는 항상 total function이어야 하므로 여기서 흡수한다.
+  // runEngine.js 함수들은 잘못된 호출(자격 미충족/이미 소진 등)에 RuleViolation을 던진다 —
+  // UI가 유효한 액션만 노출하는 게 정상 경로지만, 리듀서는 항상 total function이어야 하므로
+  // 그것만 흡수한다. TypeError 같은 진짜 버그까지 여기서 삼키면 "버튼을 눌러도 아무 일도
+  // 안 일어난다"만 남고 원인이 영영 드러나지 않으므로, 로그를 남기고 다시 던진다(리뷰 A8).
   let next;
-  try { next = refreshLocalObservations(fn(synced)); } catch { return snapshot; }
+  try {
+    next = refreshLocalObservations(fn(synced), computeCapabilities(ps.loadout).perception);
+  } catch (error) {
+    if (error instanceof RuleViolation) return snapshot;
+    console.error('[facilityReducer] 시설 액션 처리 중 예상치 못한 오류', error);
+    throw error;
+  }
   let playerState = { ...ps, overload: next.overload };
   ({ run: next, playerState } = settleCapabilityDues(next, playerState));
   // D21: 회수 계약은 확보만으로 완료가 아니다 — 물건을 들고 **탈출해야** 완료다. 인벤토리(여기서만
@@ -260,7 +281,11 @@ export function useMapConsumableCommand(snapshot, itemId) {
  * @returns {GameSnapshot}
  */
 export function waitCommand(snapshot, ticks = 1) {
-  const total = Math.max(1, Math.min(WAIT_BATCH_MAX_TICKS, Math.floor(ticks) || 1));
+  // 0칸(또는 음수) 대기는 아무 일도 아니다 — 스냅샷을 그대로 돌려줘야 플레이 로그에 "아무
+  // 일도 일어나지 않은 대기"가 쌓이지 않는다(리뷰 A8).
+  const requested = Math.floor(ticks);
+  if (!Number.isFinite(requested) || requested <= 0) return snapshot;
+  const total = Math.min(WAIT_BATCH_MAX_TICKS, requested);
   const startedAt = snapshot.facilityRunState?.time ?? 0;
   let s = snapshot;
   /** @type {'encounter'|'exitChange'|'runEnded'|'blocked'|null} */
@@ -279,6 +304,9 @@ export function waitCommand(snapshot, ticks = 1) {
   // 그 사이에 무슨 일이 생긴 것이고, 그것이 다음 결정의 근거다.
   const run = s.facilityRunState;
   if (!run) return s;
+  // 첫 칸부터 막혔으면(조우·종료된 런) 시간이 한 칸도 흐르지 않았다 — 결과 배너만 새로 다는
+  // 대신 스냅샷을 그대로 돌려준다.
+  if (s === snapshot) return snapshot;
   return {
     ...s,
     facilityRunState: {
@@ -322,7 +350,8 @@ export function requestExtractionCommand(snapshot, exitId) {
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function basicReconCommand(snapshot) {
-  return withFacilityRunState(snapshot, (run) => basicRecon(run));
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => basicRecon(run, capabilities.perception));
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
@@ -362,6 +391,12 @@ export function destroyContractTargetCommand(snapshot) {
   return withFacilityRunState(snapshot, (run) => destroyContractTarget(run, capabilities.force));
 }
 
+/** 설치해 둔 폭약을 터뜨린다(C5) — 목표부에서 2홉 이상 떨어진 자리에서만.
+ * @param {GameSnapshot} snapshot @returns {GameSnapshot} */
+export function detonateContractChargeCommand(snapshot) {
+  return withFacilityRunState(snapshot, (run) => detonateContractCharge(run));
+}
+
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function acquireContractIntelCommand(snapshot) {
   const capabilities = computeCapabilities(snapshot.playerState.loadout);
@@ -391,6 +426,12 @@ export function cleanTracesCommand(snapshot) {
 export function cutPowerCommand(snapshot) {
   const capabilities = computeCapabilities(snapshot.playerState.loadout);
   return withFacilityRunState(snapshot, (run) => cutPower(run, capabilities.force));
+}
+
+/** @param {GameSnapshot} snapshot @param {string} targetNodeId @returns {GameSnapshot} */
+export function plantFakeNoiseCommand(snapshot, targetNodeId) {
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  return withFacilityRunState(snapshot, (run) => plantFakeNoise(run, capabilities.deception, targetNodeId));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} targetSectorId @returns {GameSnapshot} */
@@ -465,10 +506,9 @@ export function useOpportunityCommand(snapshot, opportunityId, mode) {
   // 동일하게 느껴지지 않도록 하는 간이 밸런싱(정밀 수치는 실측 후 조정 대상).
   const tierRoll = weightedPick(s.rngState, [{ value: 'normal', weight: 0.65 }, { value: 'elite', weight: 0.35 }]);
   const tier = /** @type {'normal'|'elite'} */ (tierRoll.value);
-  const { slots, rngState } = rollRewardSlots(tier, getAllEquipmentIds(), tierRoll.state);
-  const opt = slots[0]?.options[0];
+  const { option: opt, durability, rngState } = rollSupplyLoot(tier, tierRoll.state);
   let inventory = s.playerState.inventory;
-  if (opt) inventory = grantLootOption(inventory, opt, MAX_DURABILITY);
+  if (opt) inventory = grantLootOption(inventory, opt, durability);
   const facilityRunState = s.facilityRunState && s.facilityRunState.lastActionResult
     ? { ...s.facilityRunState, lastActionResult: { ...s.facilityRunState.lastActionResult, loot: opt || null } }
     : s.facilityRunState;
@@ -578,6 +618,36 @@ export function encounterIgnoreCommand(snapshot) {
  * 회피 — tier 'advantage'/'even' 전용, 선택 즉시 확정 성공. 위협을 patrol로 되돌리고 추적을
  * 지운다. 노드 자체는 그대로라 다음 행동에서 재콜리전이 뜰 수 있지만(그 자리에 계속 머물면),
  * 보통은 곧바로 다른 노드로 이동해 완전히 따돌리는 흐름을 기대한다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function encounterDeceiveCommand(snapshot) {
+  const run = snapshot.facilityRunState;
+  const encounter = run?.encounter;
+  // 회피와 같은 자리에서만 고를 수 있다 — 동률(그리고 우위)의 선택지다.
+  if (!encounter || (encounter.tier !== 'advantage' && encounter.tier !== 'even')) return snapshot;
+  const threat = run.threats[encounter.threatId];
+  if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  if (capabilities.deception < ENCOUNTER_DECEIVE_REQUIREMENT) return snapshot;
+  if ((run.deceivedThreatIds || []).includes(threat.id)) return snapshot;
+
+  let result;
+  try {
+    result = deceiveThreat(run, threat.id, capabilities.deception);
+  } catch (error) {
+    if (error instanceof RuleViolation) return snapshot;
+    throw error;
+  }
+  // 0칸이다 — 시간이 흐르지 않으므로 공통 래퍼(withFacilityRunState)를 타지 않고 조우만 다시 쓴다.
+  // 성공하면 조우가 닫히고, 실패하면 같은 자리에서 열세로 내려간다.
+  const encounterAfter = result.success
+    ? null
+    : { ...encounter, tier: /** @type {const} */ ('disadvantage'), graceUsed: false };
+  return { ...snapshot, facilityRunState: { ...result.state, encounter: encounterAfter } };
+}
+
+/**
  * @param {GameSnapshot} snapshot
  * @returns {GameSnapshot}
  */

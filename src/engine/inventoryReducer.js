@@ -55,6 +55,10 @@ export function equipItem(snapshot, itemId) {
  * @returns {GameSnapshot}
  */
 export function equipItemFromWarehouse(snapshot, itemId) {
+  // 창고는 홈베이스다 — 맵에 나가 있는 동안에는 손이 닿지 않는다. 이 경로만 화면 제한이
+  // 빠져 있어서 맵에서 창고 장비를 시간 0칸에 꺼내 장착할 수 있었다(리뷰 A7).
+  // moveItemBetweenCollections와 같은 규칙으로 맞춘다.
+  if (snapshot.currentScreen !== 'loadout') return snapshot;
   return equipItemFrom(snapshot, 'warehouse', itemId);
 }
 
@@ -206,7 +210,8 @@ export function discardItem(snapshot, itemId) {
   if (ps.inventory.items.some((i) => i.id === itemId)) {
     return { ...snapshot, playerState: { ...ps, inventory: removeItem(ps.inventory, itemId) } };
   }
-  if (ps.warehouse.items.some((i) => i.id === itemId)) {
+  // 창고 물건 버리기도 홈베이스에서만 — 맵에서는 창고 자체에 접근할 수 없다(리뷰 A7).
+  if (snapshot.currentScreen === 'loadout' && ps.warehouse.items.some((i) => i.id === itemId)) {
     return { ...snapshot, playerState: { ...ps, warehouse: removeItem(ps.warehouse, itemId) } };
   }
   return snapshot;

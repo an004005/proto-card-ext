@@ -5,6 +5,8 @@ import { MAP_EQUIPMENT_CAPABILITIES } from './facilityEquipmentCapabilities.js';
 export const CAPABILITY_ORDER = ['perception', 'stealth', 'hacking', 'mobility', 'force', 'deception'];
 export const CAPABILITY_LABELS = { perception: 'Perception', stealth: 'Stealth', hacking: 'Hacking', mobility: 'Mobility', force: 'Force', deception: 'Deception' };
 export const CAPABILITY_SHORT = { perception: 'P', stealth: 'S', hacking: 'H', mobility: 'M', force: 'F', deception: 'D' };
+/** 용어집과 같은 한글 이름 — 화면에는 영문 축약과 나란히 적어 둔다(리뷰 B7). */
+export const CAPABILITY_KOREAN = { perception: '지각', stealth: '은신', hacking: '해킹', mobility: '기동', force: '파괴', deception: '기만' };
 export const CAPABILITY_ROLE = {
   perception: '주변 정보 파악(정찰 해상도).',
   stealth: '은신/소음 억제.',

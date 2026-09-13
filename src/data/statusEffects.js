@@ -5,6 +5,26 @@
 // stun causes the holder to skip their next action; their already-rolled move carries over
 // to the following turn instead of being re-rolled (enemies only in this prototype).
 // reflect is consumed the next time its holder takes damage (튕겨내기), not turn-based decay.
+import { MODULE_POWER_STAGE_TABLES } from './modules.js';
+
+/** `0단계 +1 / 1단계 +2 / 2단계 +2` — 설명문이 실제 표를 읽어 쓰도록.
+ * @param {string} power @returns {string} */
+function stageBonusText(power) {
+  return MODULE_POWER_STAGE_TABLES[power]
+    .slice(0, OVERLOAD_STAGE_NAMES.length)
+    .map((bonus, stage) => `${stage}단계 +${bonus}`)
+    .join(' / ');
+}
+
+/**
+ * 과부화 단계의 공식 이름. 카드 툴팁·과부화 게이지·용어집이 전부 이 한 벌을 쓴다 — 같은 단계를
+ * 화면마다 다르게 부르면 플레이어는 그것이 같은 것인 줄 모른다(리뷰 B7).
+ * @type {string[]}
+ */
+export const OVERLOAD_STAGE_NAMES = ['노멀', '강화', '과열'];
+/** 게이지·툴팁이 쓰는 긴 표기. 2단계의 대가(코스트 +1)를 이름에 달고 다닌다. */
+export const OVERLOAD_STAGE_LABELS = ['0단계 노멀', '1단계 강화', '2단계 과열(비용 +1)'];
+
 /** @type {string[]} */
 export const DECAYING_STATUSES = ['weak', 'vulnerable', 'fragile', 'entangled'];
 /** 디버프로 취급되어 인공물(artifact)이 스택당 1회 무시할 수 있는 상태이상. */
@@ -34,12 +54,19 @@ export const POWER_LABELS = {
   neuralBoost: '신경 강화',
   bodyBoost: '신체 강화',
   spatialAwareness: '공간 지각',
+  // 화면에 내부 키('sandevistan')가 그대로 뜨던 자리(리뷰 B2).
+  sandevistan: '산데비스탄',
 };
-/** @type {Object.<string, string>} */
+/**
+ * 설명문에는 문서 절 번호가 아니라 실제 수치를 적는다 — "§9 참고"는 플레이 중에 확인할 수
+ * 없는 안내다(리뷰 B2). 수치는 MODULE_POWER_STAGE_TABLES 한 자리에서만 나온다.
+ * @type {Object.<string, string>}
+ */
 export const POWER_DESCRIPTIONS = {
-  neuralBoost: '모든 방어 획득에 현재 과부화 단계 기준 보너스가 붙습니다 (단계별 수치는 §9 참고).',
-  bodyBoost: '근접 공격 피해에 현재 과부화 단계 기준 보너스가 붙습니다.',
-  spatialAwareness: '원거리 공격 피해에 현재 과부화 단계 기준 보너스가 붙습니다.',
+  neuralBoost: `모든 방어 획득에 과부화 단계별 보너스: ${stageBonusText('neuralBoost')}.`,
+  bodyBoost: `근접 공격 피해에 과부화 단계별 보너스: ${stageBonusText('bodyBoost')}.`,
+  spatialAwareness: `원거리 공격 피해에 과부화 단계별 보너스: ${stageBonusText('spatialAwareness')}.`,
+  sandevistan: '활성화 동안 매 턴 에너지 +1.',
 };
 
 /** @type {Object.<string, string>} */

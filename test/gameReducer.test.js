@@ -200,17 +200,17 @@ test('CONFIRM_LOADOUT computes maxHp/floor/capacity from equipped implants, seed
   assert.equal(s.playerState.overload, 15);
   assert.equal(s.playerState.inventory.capacity, 15);
   // 인벤토리는 계약 선불 재화 1개만 갖고 시작한다 — 장착 안 한 farming-only 장비 18종(임플란트⑦
-  // 지도가 창고 시작 풀에 추가됨), 시작 소모품 3개, 시작 탄약(8발, 1스택)까지 전부 창고(무제한,
-  // 과적 규칙 미적용)에 남아있다가 플레이어가 직접 인벤토리로 옮겨야 실제 런에 반영된다
-  // (옮기지 않으면 탄약 0으로 출격).
+  // 지도가 창고 시작 풀에 추가됨), 시작 소모품 3개, 시작 탄약(16발 = 10발 스택 + 6발 스택,
+  // C1)까지 전부 창고(무제한, 과적 규칙 미적용)에 남아있다가 플레이어가 직접 인벤토리로 옮겨야
+  // 실제 런에 반영된다(옮기지 않으면 탄약 0으로 출격).
   const items = s.playerState.inventory.items;
   assert.equal(items.length, 1);
   assert.equal(items[0].kind, 'currency');
   const warehouseItems = s.playerState.warehouse.items;
   assert.equal(warehouseItems.filter((i) => i.kind === 'equipment').length, 18);
   assert.equal(warehouseItems.filter((i) => i.kind === 'consumable').length, 3);
-  assert.deepEqual(warehouseItems.filter((i) => i.kind === 'ammo').map((i) => i.amount), [8]);
-  assert.equal(warehouseItems.length, 22);
+  assert.deepEqual(warehouseItems.filter((i) => i.kind === 'ammo').map((i) => i.amount), [10, 6]);
+  assert.equal(warehouseItems.length, 23);
   assert.equal(s.facilityRunState.graph.nodes.length, TOTAL_NODES);
   assert.equal(s.facilityRunState.playerNodeId, s.facilityRunState.graph.startNodeId);
 });
@@ -494,7 +494,7 @@ function riggedEncounterState(seed, { alert, size, monsterIds, equip = false }) 
 }
 
 test('encounter tier advantage: ambush stuns every enemy and keeps player-first turn order; ignore is available; other map actions are not blocked', () => {
-  const { s, threatId } = riggedEncounterState(10, { alert: 0, size: 2, monsterIds: ['nibbit'], equip: true }); // stealth 2 > perception -1 (alert 0 + normal -1)
+  const { s, threatId } = riggedEncounterState(10, { alert: 0, size: 2, monsterIds: ['nibbit'], equip: true }); // stealth 1 > perception -1 (alert 0 + normal -1)
   assert.equal(s.facilityRunState.encounter?.tier, 'advantage');
   assert.equal(s.currentScreen, 'map');
 
@@ -514,7 +514,8 @@ test('encounter tier advantage: ambush stuns every enemy and keeps player-first 
 });
 
 test('encounter tier even: ignore is refused (무시 불가), evade works and resets the threat to patrol, other map actions are blocked until resolved', () => {
-  const { s, threatId } = riggedEncounterState(10, { alert: 1, size: 4, monsterIds: ['ceremonial_beast'], equip: true }); // stealth 2 === perception 2 (alert 1 + boss 1)
+  // C4로 기본 로드아웃의 실효 Stealth가 2에서 1로 내려갔다 — 동률을 만들려면 경계도도 한 칸 낮춘다.
+  const { s, threatId } = riggedEncounterState(10, { alert: 0, size: 4, monsterIds: ['ceremonial_beast'], equip: true }); // stealth 1 === perception 1 (alert 0 + boss 1)
   assert.equal(s.facilityRunState.encounter?.tier, 'even');
 
   const ignoreAttempt = gameReducer(s, { type: 'ENCOUNTER_IGNORE' });
@@ -618,7 +619,15 @@ test('정찰이 기록한 concealment는 이후 시설 커맨드의 관측 갱�
   // 위치만 옮겨 둔다(다른 상태는 실제 런 그대로).
   const run = s.facilityRunState;
   const concealedNodeId = Object.keys(run.graph.concealmentByNodeId)[0];
-  s = { ...s, facilityRunState: { ...run, playerNodeId: concealedNodeId } };
+  // 은엄폐 값은 Perception 2부터 읽힌다(정보 깊이 표) — 공간 지각 모듈을 얹어 그 깊이를 만든다.
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      loadout: { ...s.playerState.loadout, modules: [...(s.playerState.loadout.modules || []), { id: 'spatial_test', equipmentId: 'module_spatial', durability: 10 }] },
+    },
+    facilityRunState: { ...run, playerNodeId: concealedNodeId },
+  };
 
   s = gameReducer(s, { type: 'BASIC_RECON' });
   const scouted = s.facilityRunState.observations[concealedNodeId];
@@ -630,4 +639,38 @@ test('정찰이 기록한 concealment는 이후 시설 커맨드의 관측 갱�
   const after = s.facilityRunState.observations[concealedNodeId];
   assert.equal(after.concealment, run.graph.concealmentByNodeId[concealedNodeId]);
   assert.ok(after.observedAt >= observedAt);
+});
+
+// ---- 창고는 홈베이스에서만 (리뷰 A7) ----
+
+test('맵에서는 창고 장비를 바로 장착할 수 없다 — 출격 준비 화면에서만 된다', () => {
+  let s = startLoadout(3);
+  const rifle = s.playerState.warehouse.items.find((i) => i.equipmentId === 'rifle');
+  const equipped = gameReducer(s, { type: 'EQUIP_ITEM_FROM_WAREHOUSE', itemId: rifle.id });
+  assert.deepEqual(equipped.playerState.loadout.weapons.map((w) => w.equipmentId), ['rifle'], '출격 준비에서는 장착된다');
+
+  s = equipDefaultLoadout(s);
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  assert.equal(s.currentScreen, 'map');
+  const stillInWarehouse = s.playerState.warehouse.items.find((i) => i.equipmentId === 'rifle');
+  const blocked = gameReducer(s, { type: 'EQUIP_ITEM_FROM_WAREHOUSE', itemId: stillInWarehouse.id });
+  assert.equal(blocked, s, '맵에서는 창고에 손이 닿지 않으므로 스냅샷이 그대로여야 한다');
+  assert.equal(blocked.facilityRunState.time, s.facilityRunState.time, '시간도 흐르지 않는다');
+});
+
+test('맵에서는 창고 아이템을 버릴 수 없지만 인벤토리 아이템은 버릴 수 있다', () => {
+  let s = equipDefaultLoadout(startLoadout(3));
+  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  const warehouseItem = s.playerState.warehouse.items[0];
+  assert.equal(gameReducer(s, { type: 'DISCARD_ITEM', itemId: warehouseItem.id }), s, '맵에서 창고 아이템 폐기는 무시된다');
+
+  s = {
+    ...s,
+    playerState: {
+      ...s.playerState,
+      inventory: { ...s.playerState.inventory, items: [...s.playerState.inventory.items, { id: 'item-junk-x', kind: 'junk', value: 5 }] },
+    },
+  };
+  const discarded = gameReducer(s, { type: 'DISCARD_ITEM', itemId: 'item-junk-x' });
+  assert.ok(!discarded.playerState.inventory.items.some((i) => i.id === 'item-junk-x'));
 });

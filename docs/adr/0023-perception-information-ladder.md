@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0052
+status: amended by ADR-0052 and the 정보 깊이 표(PERCEPTION_INFO_TABLE, 구현 명세 §정보의 깊이)
 ---
 
 # Perception은 다섯 단계의 정보 사다리를 사용한다

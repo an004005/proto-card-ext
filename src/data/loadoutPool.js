@@ -30,4 +30,11 @@ export const FARMING_ONLY_POOL = {
   consumables: ['grenade', 'flashbang'],
 };
 
-export const STARTING_AMMO = 8;
+/**
+ * 런 시작 시 창고에 들어 있는 탄약(C1: 8 → 16).
+ *
+ * 8발은 10발 스택 하나도 못 채우는 양이라, 총기 무기를 고른 플레이어는 첫 전투 두어 번 만에
+ * 탄이 말라 근접 카드만 내게 됐다 — 무기 선택이 선택이 아니게 된다. 16발이면 스택 두 칸을
+ * 차지하는 대신(과적 압박은 그대로) 초반 몇 전투를 총으로 풀 수 있다.
+ */
+export const STARTING_AMMO = 16;

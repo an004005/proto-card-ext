@@ -3,8 +3,9 @@ import { snapshotSignal } from '../state/runState.js';
 import { RUN_COLLAPSE_TIME, TOTAL_NODES } from '../data/facilityLayout.js';
 import { computeInventoryScore, computeContractOutcome, startNewRun } from './runEndHelpers.js';
 
+// 'meltdown' phase는 과부화 3단계 개편에서 사라졌다(overloadEngine.js) — 죽은 분기를 남겨두면
+// 화면이 존재하지 않는 사인을 말할 수 있는 것처럼 읽힌다(리뷰 B7).
 function causeOfDeath(facilityRunState) {
-  if (facilityRunState?.phase === 'meltdown') return '과부화 멜트다운';
   if (facilityRunState?.phase === 'collapsed') return '시설 붕괴';
   return '전투 불능';
 }
@@ -25,11 +26,11 @@ export function GameOverScreen() {
         <span>붕괴까지 <strong>${Math.max(0, RUN_COLLAPSE_TIME - (run ? run.time : 0))}</strong>칸 남은 시점 (시각 ${run ? run.time : 0} / ${RUN_COLLAPSE_TIME})</span>
         <span>탐사 노드 <strong>${visitedCount}</strong>/${TOTAL_NODES}</span>
       </div>
-      <p style=${{ fontSize: '12px', opacity: 0.6 }}>미회수 점수: ${score}크레드</p>
+      <p style=${{ fontSize: '12px', opacity: 0.6 }}>미회수 점수: ${score}cr</p>
       ${outcome ? html`
         <p style=${{ fontSize: '12px', opacity: 0.6 }}>
           계약 「${outcome.contract.name}」 ${outcome.completed ? '완료' : '미완수'} —
-          ${outcome.completed ? `보상 +${outcome.scoreDelta}` : `위약 ${outcome.scoreDelta}`}크레드
+          ${outcome.completed ? `보상 +${outcome.scoreDelta}` : `위약 ${outcome.scoreDelta}`}cr
         </p>
       ` : null}
       <button class="btn btn-primary" style=${{ padding: '12px 40px' }} onClick=${startNewRun}>새 런 시작</button>

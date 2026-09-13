@@ -3,14 +3,29 @@ import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
 import { combatSummarySignal } from '../state/combatStateAdapter.js';
 import { describeItem, EQUIPMENT_DEFS } from '../data/itemDisplay.js';
+import { Tooltip } from './Tooltip.js';
+import { ItemTooltipContent } from './ItemTooltipContent.js';
+import { getBurdenItems } from '../engine/inventoryEngine.js';
+import { MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
 
 const CATEGORY_INFO = {
   equipment: { label: '장비', iconColor: 'var(--color-accent)' },
   consumable: { label: '소모품', iconColor: 'var(--color-neutral-700)' },
-  currency: { label: '환급템', iconColor: 'var(--color-accent-2-700)' },
-  junk: { label: '재료', iconColor: 'var(--color-neutral-500)' },
+  currency: { label: '환금템', iconColor: 'var(--color-accent-2-700)' },
+  junk: { label: '잡템', iconColor: 'var(--color-neutral-500)' },
 };
+
+/**
+ * 보상 후보를 인벤토리 아이템 모양으로 — ItemTooltipContent가 그대로 읽을 수 있게. 아직 받지
+ * 않은 물건이라 id가 없고, 장비는 아직 내구도가 굴려지지 않았으므로 새것 기준으로 보여준다.
+ */
+function optionAsItem(opt) {
+  if (opt.kind === 'ammo') return { id: 'preview', kind: 'ammo', amount: opt.amount };
+  if (opt.kind === 'consumable') return { id: 'preview', kind: 'consumable', defId: opt.defId };
+  if (opt.kind === 'equipment') return { id: 'preview', kind: 'equipment', equipmentId: opt.equipmentId, durability: MAX_DURABILITY };
+  return { id: 'preview', kind: opt.kind, value: opt.value };
+}
 
 function describeOption(opt) {
   if (opt.kind === 'consumable') {
@@ -32,7 +47,10 @@ export function RewardScreen() {
   const { slots, selections } = pending;
   const activeSlot = activeSlotKey ? slots.find((s) => s.key === activeSlotKey) : null;
   const claimedCount = Object.keys(selections).length;
+  const unclaimedCount = slots.length - claimedCount;
   const summary = combatSummarySignal.value;
+  const inventory = snapshotSignal.value.playerState.inventory;
+  const burdenCount = getBurdenItems(inventory).length;
 
   return html`
     <div style=${{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 'var(--space-8)', gap: 'var(--space-6)' }}>
@@ -62,21 +80,24 @@ export function RewardScreen() {
             ${activeSlot.options.map((opt, idx) => {
               const info = describeOption(opt);
               const selected = selections[activeSlot.key] === idx;
+              // 이름만 보고 고르라고 하면 "산데비스탄"이 무엇을 주고 무엇을 뺏는지 모른 채
+              // 고르게 된다 — 인벤토리와 같은 툴팁을 여기서도 붙인다(리뷰 B3).
               return html`
+                <${Tooltip} key=${idx} width=${240} content=${html`<${ItemTooltipContent} item=${optionAsItem(opt)} />`}>
                 <div
-                  key=${idx}
                   onClick=${() => { dispatch({ type: 'SELECT_REWARD', slotKey: activeSlot.key, optionIndex: idx }); setActiveSlotKey(null); }}
                   style=${{
-                    flex: 1, border: `2px solid ${selected ? 'var(--color-accent)' : 'var(--color-divider)'}`,
+                    border: `2px solid ${selected ? 'var(--color-accent)' : 'var(--color-divider)'}`,
                     background: selected ? 'var(--color-neutral-100)' : 'var(--color-surface)',
                     padding: 'var(--space-4)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px',
-                    cursor: 'pointer', position: 'relative',
+                    cursor: 'pointer', position: 'relative', minWidth: '150px',
                   }}
                 >
                   ${selected ? html`<span style=${{ position: 'absolute', top: '6px', right: '6px', fontSize: '10px', fontWeight: 800, color: 'var(--color-accent-700)' }}>✓ 선택됨</span>` : null}
                   <span style=${{ width: '36px', height: '36px', background: info.color }}></span>
                   <div style=${{ fontSize: '13px', fontWeight: 700, textAlign: 'center' }}>${info.name}</div>
                 </div>
+                <//>
               `;
             })}
           </div>
@@ -108,7 +129,14 @@ export function RewardScreen() {
 
       <div style=${{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', marginTop: 'var(--space-2)' }}>
         <span style=${{ fontSize: '12px', opacity: 0.7 }}>${claimedCount}/${slots.length} 선택됨</span>
-        <button class="btn btn-primary" style=${{ padding: '12px 40px' }} onClick=${() => dispatch({ type: 'CONFIRM_REWARDS' })}>보상 수령하고 이동</button>
+        ${/* 보상을 받기 전에 "지금 소지품이 몇 칸 남았는지"를 말해야 한다 — 넘치면 그 물건은
+            선물이 아니라 덱에 섞이는 짐 카드가 된다(리뷰 B3). */ null}
+        <span style=${{ fontSize: '12px', fontWeight: burdenCount > 0 ? 800 : 400, color: burdenCount > 0 ? 'var(--color-negative, #dc2626)' : undefined }}>
+          소지품 ${inventory.items.length}/${inventory.capacity}${burdenCount > 0 ? ` — 넘친 ${burdenCount}개는 짐 카드` : ' — 넘치면 짐 카드'}
+        </span>
+        <button class="btn btn-primary" style=${{ padding: '12px 40px' }} onClick=${() => dispatch({ type: 'CONFIRM_REWARDS' })}>
+          ${unclaimedCount > 0 ? `선택 안 한 ${unclaimedCount}개는 버리고 이동` : '보상 수령하고 이동'}
+        </button>
       </div>
     </div>
   `;

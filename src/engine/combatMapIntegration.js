@@ -9,13 +9,17 @@ import { COMBAT_ROUND_TIME_COST } from '../data/facilityLayout.js';
 export { COMBAT_ROUND_TIME_COST };
 
 /**
- * §9.1 전투 소음 게이지: a cumulative gauge (capacity 10) filled by each played card's
- * `mapTags.noise` (0-3), checked immediately on every card play — never batched to round end,
- * and never fed by enemy intents. Reaching/exceeding capacity fires one noise event at the
- * combat's node and resets the gauge to 0; the fired event's intensity climbs 1 -> 2 -> 3 across
- * successive fires this combat and then holds at 3 (never resets down with the gauge).
+ * §9.1 전투 소음 게이지: a cumulative gauge filled by each played card's `mapTags.noise` (0-3),
+ * checked immediately on every card play — never batched to round end, and never fed by enemy
+ * intents. Reaching/exceeding capacity fires one noise event at the combat's node and resets the
+ * gauge to 0; the fired event's intensity climbs 1 -> 2 -> 3 across successive fires this combat
+ * and then holds at 3 (never resets down with the gauge).
+ *
+ * 용량 6(C 확정): 10이면 소음 2짜리 카드를 다섯 장 내야 한 번 울려서, 대부분의 전투가 소음을
+ * 한 번도 내지 않고 끝났다 — 전투가 맵을 건드리지 않으면 "조용히 이기기"라는 선택 자체가 없다.
+ * 6이면 보통 전투가 두세 번 울리고, 시끄러운 카드를 고를지 말지가 매 턴의 결정이 된다.
  */
-export const NOISE_GAUGE_CAPACITY = 10;
+export const NOISE_GAUGE_CAPACITY = 6;
 
 /**
  * @param {number} gauge current accumulated noise (0..CAPACITY-1 going in)

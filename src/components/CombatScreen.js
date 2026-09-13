@@ -1,6 +1,6 @@
 import { html, useState } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
-import { snapshotSignal, combatAnimationSignal, combatPlaybackDurationSignal } from '../state/runState.js';
+import { snapshotSignal, combatAnimationSignal, combatPlaybackDurationSignal, combatPlaybackActiveSignal } from '../state/runState.js';
 import { combatStateSignal, handSignal, enemiesSignal, playerCombatSignal, pileCountsSignal, overloadStageSignal } from '../state/combatStateAdapter.js';
 import { CARD_DEFINITIONS } from '../data/cards.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
@@ -31,6 +31,7 @@ export function CombatScreen() {
   const combat = combatStateSignal.value;
   const animation = combatAnimationSignal.value;
   const playbackDuration = combatPlaybackDurationSignal.value;
+  const playbackActive = combatPlaybackActiveSignal.value;
   if (!combat) return null;
 
   const hand = handSignal.value;
@@ -138,11 +139,20 @@ export function CombatScreen() {
       <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
         ${consumableSlots.filter(Boolean).map((item) => {
           const def = CONSUMABLE_DEFINITIONS[item.defId];
+          // 버튼에 이름만 있으면 무엇이 일어나는지, 소음이 얼마나 나는지, 다시 쓸 수 있는지가
+          // 전부 감춰진다 — 소모품은 한 번 쓰면 영구히 사라지므로 특히 그렇다(리뷰 B7).
+          const tip = `${def.description}.`
+            + ` 소음 ${def.mapTags.noise}${def.mapTags.noise === 0 ? ' (조용함)' : ' — 전투 소음 게이지에 더해집니다'}.`
+            + `${def.mapTags.disengageProgress ? ` 이탈 진행도 +${def.mapTags.disengageProgress}.` : ''}`
+            + ' 쓰면 이 런에서 영구히 사라집니다.';
           return html`
-            <button
-              key=${item.id} class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }}
-              onClick=${() => dispatch({ type: 'USE_CONSUMABLE', itemId: item.id })}
-            >${def.name}</button>
+            <${Tooltip} key=${item.id} width=${220} content=${tip}>
+              <button
+                class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }}
+                disabled=${playbackActive}
+                onClick=${() => dispatch({ type: 'USE_CONSUMABLE', itemId: item.id })}
+              >${def.name}</button>
+            <//>
           `;
         })}
         ${disengage ? html`
@@ -153,14 +163,14 @@ export function CombatScreen() {
                   <span>이탈 진행도 ${disengage.disengageProgress}/${DISENGAGE_REQUIRED_PROGRESS}</span>
                 <//>
                 ${escapeCards.length > 0 ? html`<span style=${{ color: '#0e7490', fontWeight: 800 }}>손패 이탈 카드 ${escapeCards.length}장 강조됨</span>` : html`<span style=${{ color: 'var(--color-negative, #dc2626)' }}>손패에 이탈 카드 없음 — 다음 드로우까지 버티세요</span>`}
-                <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} onClick=${() => dispatch({ type: 'CANCEL_DISENGAGE' })}>이탈 취소</button>
+                <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} disabled=${playbackActive} onClick=${() => dispatch({ type: 'CANCEL_DISENGAGE' })}>이탈 취소</button>
                 <${Tooltip} width=${200} content="진행도를 채우면 전투를 즉시 종료하고 맵으로 돌아갑니다 — 승리 보상은 없지만 HP/과부화는 지금 상태 그대로 유지됩니다.">
-                  <button class="btn btn-primary" style=${{ padding: '4px 10px' }} disabled=${!canDisengage(disengage)} onClick=${() => dispatch({ type: 'RESOLVE_DISENGAGE' })}>이탈 확정</button>
+                  <button class="btn btn-primary" style=${{ padding: '4px 10px' }} disabled=${playbackActive || !canDisengage(disengage)} onClick=${() => dispatch({ type: 'RESOLVE_DISENGAGE' })}>이탈 확정</button>
                 <//>
               `
               : html`
-                <${Tooltip} width=${200} content="이탈 시도를 켭니다. Mobility 2 이상이면 시도 즉시 진행도 +1을 받습니다. 이후 이탈 태그 카드를 플레이해 진행도를 채우세요.">
-                  <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} onClick=${() => dispatch({ type: 'BEGIN_DISENGAGE' })}>이탈 시도</button>
+                <${Tooltip} width=${200} content=${playbackActive ? '적 행동 연출이 끝난 뒤에 이탈을 시도할 수 있습니다.' : '이탈 시도를 켭니다. Mobility 2 이상이면 시도 즉시 진행도 +1을 받습니다. 이후 이탈 태그 카드를 플레이해 진행도를 채우세요.'}>
+                  <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} disabled=${playbackActive} onClick=${() => dispatch({ type: 'BEGIN_DISENGAGE' })}>이탈 시도</button>
                 <//>
               `}
           </div>
@@ -180,6 +190,7 @@ export function CombatScreen() {
             onCardDragEnd=${() => setDraggingCard(null)}
             stage=${stage} overload=${combat.overload} powers=${player.powers}
             inventory=${snapshotSignal.value.playerState.inventory}
+            player=${player}
           />
           <${DiscardPileBox} count=${pileCounts.discard} exhaustCount=${pileCounts.exhaust} onClick=${() => setOpenPile('discard')} />
         </div>

@@ -63,16 +63,27 @@ test('계약 왕복은 확보 시각과 봉쇄 유예를 함께 계산한다', (
     for (const mobility of MOBILITY_VALUES) {
       for (const def of CONTRACT_DEFS) {
         const entry = seedResult.byMobility[mobility].contracts[def.id];
+        // 봉쇄는 목표부 행동이 끝나는 순간 켜진다 — 파괴 계약도 설치 완료 시각이 기준이고
+        // 기폭 시각이 아니다(C5).
         assert.equal(entry.acquiredAt, entry.toObjective + entry.actionCost);
         assert.ok(entry.actionCost > 0);
         assert.equal(entry.legs.A.deadline, EXIT_A_DISABLED_AT);
-        assert.equal(entry.legs.B.deadline, Math.min(EXIT_B_DISABLED_AT, entry.acquiredAt + LOCKDOWN_EXIT_CLOSE_WINDOW));
+        // 정보 계약은 봉쇄가 켜져도 B를 앞당기지 않는다 — 마감이 670 그대로다.
+        assert.equal(
+          entry.legs.B.deadline,
+          def.type === 'intel' ? EXIT_B_DISABLED_AT : Math.min(EXIT_B_DISABLED_AT, entry.acquiredAt + LOCKDOWN_EXIT_CLOSE_WINDOW),
+        );
+        // 목표부를 떠난 뒤에도 완료 행동이 남는 계약이 있다(파괴=기폭 2칸, 정보=송출 5칸).
+        assert.equal(entry.completionCost > 0, def.type !== 'retrieval');
         for (const exitId of ['A', 'B']) {
           const leg = entry.legs[exitId];
-          assert.equal(leg.total, entry.acquiredAt + leg.leg);
+          assert.equal(leg.total, entry.acquiredAt + leg.leg + entry.completionCost);
           assert.equal(leg.slack, leg.deadline - leg.total);
         }
-        assert.equal(entry.bLockdownReachable, entry.legs.B.leg <= LOCKDOWN_EXIT_CLOSE_WINDOW);
+        assert.equal(
+          entry.bLockdownReachable,
+          def.type === 'intel' ? entry.legs.B.total < EXIT_B_DISABLED_AT : entry.legs.B.leg <= LOCKDOWN_EXIT_CLOSE_WINDOW,
+        );
       }
     }
   }

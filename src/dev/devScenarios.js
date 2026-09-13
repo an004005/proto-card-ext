@@ -9,6 +9,7 @@
 
 import { startCombat } from '../engine/combatReducer.js';
 import { POWER_CUT_DURATION, LOCKDOWN_EXIT_CLOSE_WINDOW } from '../data/facilityLayout.js';
+import { lockdownClosesExitB } from '../engine/runEngine.js';
 
 /**
  * 데브맵 목록. 단계별로 묶어 두어 "이 단계에서 무엇을 봐야 하는가"가 목록 자체에 남게 한다.
@@ -158,7 +159,7 @@ function withContractObjective(snapshot, run) {
   return { ...snapshot, facilityRunState: moveTo(run, landmark.nodeId) };
 }
 
-/** 계약 목표를 확보한 직후 — 봉쇄가 켜지고 출구 B가 앞당겨진 상태. */
+/** 계약 목표를 확보한 직후 — 봉쇄가 켜진 상태. 출구 B 앞당김은 회수·파괴 계약에서만 걸린다. */
 function withLockdown(snapshot, run) {
   const contract = run.contract;
   const withObjective = withContractObjective(snapshot, run).facilityRunState;
@@ -168,7 +169,9 @@ function withLockdown(snapshot, run) {
       ...withObjective,
       contract: contract ? { ...contract, status: 'acquired', acquiredAt: withObjective.time } : contract,
       lockdown: { startedAt: withObjective.time },
-      exits: { ...withObjective.exits, B: { ...withObjective.exits.B, disabledAt: withObjective.time + LOCKDOWN_EXIT_CLOSE_WINDOW } },
+      exits: lockdownClosesExitB(contract?.type)
+        ? { ...withObjective.exits, B: { ...withObjective.exits.B, disabledAt: withObjective.time + LOCKDOWN_EXIT_CLOSE_WINDOW } }
+        : withObjective.exits,
     },
   };
 }

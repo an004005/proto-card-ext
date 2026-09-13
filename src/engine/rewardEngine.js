@@ -35,32 +35,27 @@ export function rollLootDurability(rngState) {
 }
 
 /**
- * @template T
- * @param {RngState} rngState
- * @param {T[]} array
- * @returns {{value: T[], state: RngState}}
- */
-function shuffle(rngState, array) {
-  const result = array.slice();
-  let s = rngState;
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = nextInt(s, i + 1);
-    s = j.state;
-    [result[i], result[j.value]] = [result[j.value], result[i]];
-  }
-  return { value: result, state: s };
-}
-
-/**
  * 이미 소유한 장비도 다시 드랍될 수 있다(§신규 장비 인스턴스화 — 같은 종류 중복 소유 허용).
+ *
+ * 후보는 3개뿐인데 예전에는 카탈로그 전체(27종)를 셔플해 앞의 셋만 썼다 — 후보 하나당 난수를
+ * 아홉 번씩 태우는 셈이고, 장비가 늘 때마다 같은 시드의 결과가 통째로 달라졌다. 지금은
+ * 필요한 만큼만 뽑는다: 남은 풀에서 하나씩 꺼내 되돌리지 않는다(부분 셔플).
  * @param {string[]} allEquipmentIds
  * @param {RngState} rngState
  * @returns {{options: RewardOption[], state: RngState}}
  */
 export function rollEquipmentOptions(allEquipmentIds, rngState) {
-  const shuffled = shuffle(rngState, allEquipmentIds);
-  const options = shuffled.value.slice(0, REWARD_OPTIONS_PER_SLOT).map((id) => ({ kind: 'equipment', equipmentId: id }));
-  return { options, state: shuffled.state };
+  const pool = allEquipmentIds.slice();
+  let rng = rngState;
+  const options = [];
+  const count = Math.min(REWARD_OPTIONS_PER_SLOT, pool.length);
+  for (let i = 0; i < count; i++) {
+    const picked = nextInt(rng, pool.length);
+    rng = picked.state;
+    const [id] = pool.splice(picked.value, 1);
+    options.push({ kind: 'equipment', equipmentId: id });
+  }
+  return { options, state: rng };
 }
 
 /**

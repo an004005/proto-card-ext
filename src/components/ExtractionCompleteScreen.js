@@ -18,12 +18,12 @@ export function ExtractionCompleteScreen() {
         <span>붕괴까지 <strong>${Math.max(0, RUN_COLLAPSE_TIME - (run ? run.time : 0))}</strong>칸 남기고 탈출 (시각 ${run ? run.time : 0} / ${RUN_COLLAPSE_TIME})</span>
         <span>최종 체력 HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
         <span>최종 과부화 <strong>${ps.overload}</strong>/100</span>
-        <span>회수 점수 <strong>${score}</strong>크레드</span>
+        <span>회수 점수 <strong>${score}</strong>cr</span>
       </div>
       ${outcome ? html`
         <p style=${{ fontSize: '12px', opacity: 0.85, margin: 0 }}>
           계약 「${outcome.contract.name}」 ${outcome.completed ? '완료' : '미완수'} —
-          ${outcome.completed ? `보상 +${outcome.scoreDelta}` : `위약 ${outcome.scoreDelta}`}크레드
+          ${outcome.completed ? `보상 +${outcome.scoreDelta}` : `위약 ${outcome.scoreDelta}`}cr
         </p>
       ` : null}
       <button class="btn btn-secondary" style=${{ padding: '12px 40px', background: 'var(--color-bg)', borderColor: 'var(--color-bg)' }} onClick=${startNewRun}>새 런 시작</button>

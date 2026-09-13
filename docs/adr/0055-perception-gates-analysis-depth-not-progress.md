@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0075 and implementation spec (정찰 4칸·파밍 5/10/13칸)
+status: amended by ADR-0075, the 정보 깊이 표(PERCEPTION_INFO_TABLE), and implementation spec (정찰 4칸·파밍 5/10/13칸)
 ---
 
 # Perception은 분석 깊이를 열고 맵 진행을 막지 않는다

@@ -202,7 +202,9 @@ test('equipment broken by a ladder cost falls back into the inventory instead of
   const after = gameReducer(snapshot, { type: 'BASIC_RECON' });
 
   assert.equal(after.playerState.loadout.weapons.length, 0, '파손된 장비는 슬롯에서 빠진다');
-  const returned = after.playerState.inventory.items.find((i) => i.id === 'w1');
+  // id는 인벤토리가 새로 발급한다(addItem은 넘겨받은 id를 항상 버린다, 리뷰 A4) — 물건이
+  // 남아 있는지는 equipmentId로 본다.
+  const returned = after.playerState.inventory.items.find((i) => i.equipmentId === 'katana');
   assert.ok(returned, '하지만 게임에서 사라지지는 않는다');
   assert.equal(returned.durability, 0);
   assert.equal(after.facilityRunState.pendingDurabilityLoss, 0);
@@ -475,8 +477,14 @@ test('확보 대상의 등급과 역할축은 그 노드를 정찰한 뒤에만 
   assert.ok(chargedTicks >= range.minTime && chargedTicks <= range.maxTime, `범위 예고 ${range.timeText} 밖에서 청구됐다 (${chargedTicks}칸)`);
   assert.equal(chargedTicks, forecastAction('farm', { isPrize: true, tier: prize.tier, mode: 'normal' }).timeCost, '실제 청구는 실제 등급의 정확한 값이다');
 
+  // Perception 0의 정찰은 등급까지만 읽는다 — 역할축은 1부터다(정보 깊이 표).
+  const shallow = basicRecon(run, 0);
+  assert.equal(prizeGradeKnown(shallow, prize.id, prize.nodeId), true);
+  assert.equal(shallow.observations[prize.nodeId].opportunityGrades[prize.id].tier, prize.tier);
+  assert.equal(shallow.observations[prize.nodeId].opportunityGrades[prize.id].axis, null);
+
   // 정찰하면 등급과 축이 관측에 남고, 그 뒤의 무료 관측 갱신이 그것을 지우지 않는다.
-  const scouted = basicRecon(run);
+  const scouted = basicRecon(run, 1);
   assert.equal(prizeGradeKnown(scouted, prize.id, prize.nodeId), true);
   const grade = scouted.observations[prize.nodeId].opportunityGrades[prize.id];
   assert.equal(grade.tier, prize.tier);

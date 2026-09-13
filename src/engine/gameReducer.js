@@ -14,10 +14,11 @@ import {
   useOpportunityCommand, useFieldEquipmentCommand, hackCameraCommand, hackAccessInterfaceCommand, destroyCameraCommand, disableGeneratorCommand,
   equipItemOnMapCommand, unequipItemOnMapCommand, unequipImplantOnMapCommand, unequipConsumableOnMapCommand,
   useConcealmentCommand, hackControlRoomCommand,
-  encounterAmbushCommand, encounterIgnoreCommand, encounterEvadeCommand, encounterFightCommand,
+  encounterAmbushCommand, encounterIgnoreCommand, encounterEvadeCommand, encounterDeceiveCommand, encounterFightCommand,
   useMapConsumableCommand,
-  acquireContractGoodsCommand, destroyContractTargetCommand, acquireContractIntelCommand, transmitContractIntelCommand,
-  disposeCorpseCommand, cleanTracesCommand, cutPowerCommand, broadcastFalseTargetCommand,
+  acquireContractGoodsCommand, destroyContractTargetCommand, detonateContractChargeCommand,
+  acquireContractIntelCommand, transmitContractIntelCommand,
+  disposeCorpseCommand, cleanTracesCommand, cutPowerCommand, broadcastFalseTargetCommand, plantFakeNoiseCommand,
   selectFarmRewardCommand, waitCommand,
 } from './facilityReducer.js';
 import {
@@ -58,6 +59,7 @@ export function gameReducer(snapshot, command) {
     case 'HACK_CONTROL_ROOM': return hackControlRoomCommand(snapshot);
     case 'ACQUIRE_CONTRACT_GOODS': return acquireContractGoodsCommand(snapshot);
     case 'DESTROY_CONTRACT_TARGET': return destroyContractTargetCommand(snapshot);
+    case 'DETONATE_CONTRACT_CHARGE': return detonateContractChargeCommand(snapshot);
     case 'ACQUIRE_CONTRACT_INTEL': return acquireContractIntelCommand(snapshot);
     case 'TRANSMIT_CONTRACT_INTEL': return transmitContractIntelCommand(snapshot);
     case 'SELECT_FARM_REWARD': return selectFarmRewardCommand(snapshot, command.optionIndex);
@@ -65,9 +67,11 @@ export function gameReducer(snapshot, command) {
     case 'CLEAN_TRACES': return cleanTracesCommand(snapshot);
     case 'CUT_POWER': return cutPowerCommand(snapshot);
     case 'BROADCAST_FALSE_TARGET': return broadcastFalseTargetCommand(snapshot, command.targetSectorId);
+    case 'PLANT_FAKE_NOISE': return plantFakeNoiseCommand(snapshot, command.targetNodeId);
     case 'ENCOUNTER_AMBUSH': return encounterAmbushCommand(snapshot);
     case 'ENCOUNTER_IGNORE': return encounterIgnoreCommand(snapshot);
     case 'ENCOUNTER_EVADE': return encounterEvadeCommand(snapshot);
+    case 'ENCOUNTER_DECEIVE': return encounterDeceiveCommand(snapshot);
     case 'ENCOUNTER_FIGHT': return encounterFightCommand(snapshot);
     case 'USE_MAP_CONSUMABLE': return useMapConsumableCommand(snapshot, command.itemId);
     case 'HACK_CAMERA': return hackCameraCommand(snapshot, command.cameraId);

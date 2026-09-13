@@ -10,13 +10,15 @@ export function useDamagePopups(hp) {
   const [popups, setPopups] = useState([]);
 
   useEffect(() => {
-    if (hp < prevHp.current) {
-      const amount = prevHp.current - hp;
-      const id = ++nextPopupId;
-      setPopups((list) => [...list, { id, amount }]);
-      setTimeout(() => setPopups((list) => list.filter((p) => p.id !== id)), POPUP_LIFETIME_MS);
-    }
+    if (hp >= prevHp.current) { prevHp.current = hp; return undefined; }
+    const amount = prevHp.current - hp;
+    const id = ++nextPopupId;
     prevHp.current = hp;
+    setPopups((list) => [...list, { id, amount }]);
+    // 적이 죽어 이 행이 사라지는 순간에도 타이머는 살아 있다 — 언마운트 뒤에 setState를
+    // 부르지 않도록 반드시 걷어낸다(리뷰 A8).
+    const timer = setTimeout(() => setPopups((list) => list.filter((p) => p.id !== id)), POPUP_LIFETIME_MS);
+    return () => clearTimeout(timer);
   }, [hp]);
 
   return popups;

@@ -239,21 +239,44 @@ export const CONCEALMENT_ACTION_TIME_COST = 1;
 // 은엄폐와 같은 자리에서 계산되며, 대공간에는 은엄폐가 아예 배치되지 않으므로 상쇄되지 않는다.
 export const HALL_STEALTH_PENALTY = 1;
 
+// ---- 조우의 상황 보정 (ADR-0079) ----
+//
+// 실효 Stealth는 장비 합(capabilityEngine)만으로 정해지지 않는다. 서 있는 자리와 시설의 현재
+// 상태가 같은 자리에서 더해진다 — 장비를 바꿀 수 없는 런 중반에도 "어디서 마주치는가"를 골라
+// 판정을 바꿀 수 있어야 하기 때문이다. 전부 정수 ±1 단위이며 곱하지 않는다(ADR-0063 결정론).
+//
+// 살아 있는(해킹·파괴되지 않은) 카메라가 있는 노드. 사람 눈만이 아니라 렌즈도 나를 본다.
+export const STEALTH_CONTEXT_CAMERA = -1;
+// 전원이 끊긴 구역(D12 전원 차단 또는 발전 정지 계약). 어두우면 숨기 쉽다.
+export const STEALTH_CONTEXT_POWER_CUT = 1;
+// 봉쇄 중(D22). 전 구역이 눈을 뜨고 있어 어디에 서 있든 한 단계 불리하다.
+export const STEALTH_CONTEXT_LOCKDOWN = -1;
+
 // 구역 통제실 해킹(§신규) — 각 구역의 랜드마크 노드(graph.landmarks)에서만 시도할 수 있다.
 // 해킹 수치별로 누적 언락(상위 레벨은 하위 효과를 전부 포함): 1=이 구역 순찰경로 영구 표시,
 // 2=이 구역 경계레벨 감소(감소량 = 해킹 수치 - 1), 3=맵 전체 위협 전원 patrol 전환.
 export const CONTROL_ROOM_HACK_TIME = 8;
-export const CONTROL_ROOM_HACK_OVERLOAD = 10;
+export const CONTROL_ROOM_HACK_OVERLOAD = 5;
 
 // 계약(§3단계, D3·D4·D21). 완료 액션 세 종류의 시간·과부화 비용. 확보(회수 물건 집기·정보
 // 데이터 추출)는 정찰보다 무겁고 해킹보다는 가볍게, 파괴는 가장 무겁게, 송출은 확보보다
 // 가볍게 잡았다 — 다른 §신규 필드 액션들과 같은 대역(4~9칸)에 맞춘 1차값이다.
 export const CONTRACT_ACQUIRE_TIME = 6;
-export const CONTRACT_ACQUIRE_OVERLOAD = 8;
+export const CONTRACT_ACQUIRE_OVERLOAD = 4;
 export const CONTRACT_DESTROY_TIME = 9;
-export const CONTRACT_DESTROY_OVERLOAD = 15;
+export const CONTRACT_DESTROY_OVERLOAD = 8;
 export const CONTRACT_TRANSMIT_TIME = 5;
-export const CONTRACT_TRANSMIT_OVERLOAD = 10;
+export const CONTRACT_TRANSMIT_OVERLOAD = 5;
+
+/**
+ * 파괴 계약의 마지막 장(C5). 목표부에서 폭약을 **설치**(CONTRACT_DESTROY_TIME, 여기서 봉쇄
+ * 시작)하고, 목표부에서 충분히 떨어진 자리에서 **기폭**해야 완료다. 설치와 동시에 완료였던
+ * 시절에는 목표부가 곧 종점이라 "터뜨리고 내려오는" 장면이 아예 없었다 — 봉쇄가 켜진 시설을
+ * 가로질러 빠져나오는 그 구간이 이 계약의 값이다.
+ */
+export const CONTRACT_DETONATE_TIME = 2;
+/** 기폭 지점이 목표부에서 떨어져 있어야 하는 최소 홉수. */
+export const CONTRACT_DETONATE_MIN_HOPS = 2;
 
 // 봉쇄(D22) — 계약 목표를 확보한 순간부터 켜진다. 위협 이동 간격을 전역으로 줄이고(작을수록
 // 빠르다), 두 표준 출구 중 더 먼 B의 비활성 시각을 앞당긴다 — 어느 쪽이 닫힐지 예측 가능해야
@@ -267,7 +290,7 @@ export const ACCESS_INTERFACE_NODE_CHANCE = 0.16;
 export const CAMERA_STEALTH_THRESHOLD = 3;
 export const CAMERA_ALERT_RANGE = 3;
 export const CAMERA_HACK_TIME = 5;
-export const CAMERA_HACK_OVERLOAD = 6;
+export const CAMERA_HACK_OVERLOAD = 3;
 export const CAMERA_HACK_DURATION = 15;
 // Effective Hacking -2/-1/0/1/2/3/4 -> direct graph-hop range (§10.2 문서: "Hacking 1·2·3·4에서
 // 각각 1·2·3·4홉 이내"). Hacking 0 이하는 자격 미달로 아예 시도할 수 없으므로 0. A hacked access
@@ -278,7 +301,7 @@ export const CAMERA_FORCE_TIME = 5;
 export const CAMERA_FORCE_NOISE = 2;
 export const GENERATOR_SECTOR_IDS = ['power', 'labs'];
 export const GENERATOR_HACK_TIME = 5;
-export const GENERATOR_HACK_OVERLOAD = 6;
+export const GENERATOR_HACK_OVERLOAD = 3;
 export const GENERATOR_FORCE_TIME = 5;
 export const GENERATOR_FORCE_NOISE = 2;
 export const GENERATOR_COMBAT_START_ARMOR = 5;
@@ -346,6 +369,20 @@ export const LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 2, 3: 2 };
 /** @type {Record<0|1|2|3, 0|1|2>} */
 export const SECTOR_ALERT_MIN_ENEMY_ALERT = { 0: 0, 1: 1, 2: 2, 3: 2 }; // §7.4
 
+// ---- 위협 경계 감쇠 (ADR-0079) ----
+//
+// 개별 위협 마커의 경계다. 구역 경계도(sectorAlerts)는 여기서 건드리지 않는다 — 그것은
+// 시간으로 내려가지 않고 수습 수단으로만 내려간다(ADR-0073 총량 보존).
+//
+// 플레이어를 시야에서 잃은 마커는 영원히 쫓지 않는다. 추적 중 플레이어를 관측하지 못한 채
+// 이만큼 지나면 조사로 내려간다. 관측하면(같은 노드 또는 인접 노드) 타이머가 리셋된다.
+export const PURSUIT_DECAY_TICKS = 6;
+// 조사로 내려온 뒤에도 관측하지 못한 채 이만큼 더 지나면 순찰로 돌아간다(추적 시작 기준 14칸).
+export const INVESTIGATE_DECAY_TICKS = 8;
+// 감쇠 단계별로 마커의 alert이 내려앉는 값. 구역 경계도가 만든 하한(SECTOR_ALERT_MIN_ENEMY_ALERT)
+// 아래로는 내려가지 않는다.
+export const PURSUIT_DECAY_ALERT = 2;
+
 // 구역 경계도는 시간으로 감소하지 않는다(ADR-0069, ADR-0073). 저절로 회복되는 페널티는 결정을
 // 만들지 않는다 — 낮추려면 통제실을 장악해야 한다.
 
@@ -386,9 +423,29 @@ export const POWER_CUT_DURATION = 30;
 export const POWER_CUT_TIME = 6;
 export const POWER_CUT_NOISE = 3;
 
+// ---- 기만: 유인과 오도 ----
+//
+// 가짜 소음 — Deception만 있으면 어디서든 쓸 수 있는 유인 수단이다. 접속 인터페이스를 요구하는
+// 가짜 목표 송출과 달리 자리를 가리지 않지만, 경계도를 옮기지는 못한다. 시선만 끈다.
+export const FAKE_NOISE_TIME = 3;
+export const FAKE_NOISE_OVERLOAD = 3;
+export const FAKE_NOISE_REQUIREMENT = 1;
+/** 실효 Deception -2/-1/0/1/2/3/4 -> 소음을 심을 수 있는 홉 범위. 1 미만은 자격 미달이라 0이다. */
+export const FAKE_NOISE_RANGE_BY_DECEPTION = [0, 0, 0, 1, 2, 3, 3];
+/** 이 수치 이상이면 심는 소음의 강도가 1이 아니라 2다 — 더 멀리까지 들린다. */
+export const FAKE_NOISE_STRONG_DECEPTION = 3;
+export const FAKE_NOISE_INTENSITY = 1;
+export const FAKE_NOISE_STRONG_INTENSITY = 2;
+
+// 조우 속이기 — 동률 조우에서 회피 대신 고를 수 있다. 위협당 한 번뿐이고 칸을 쓰지 않는다.
+export const ENCOUNTER_DECEIVE_REQUIREMENT = 2;
+
+// 가짜 목표 송출을 인접 구역이 아니라 아무 구역으로나 쏠 수 있게 되는 수치.
+export const FALSE_BROADCAST_ANY_SECTOR_DECEPTION = 3;
+
 // 가짜 목표 송출(D12) — 경계를 인접 구역으로 옮긴다. 총량은 보존된다.
 export const FALSE_BROADCAST_TIME = 7;
-export const FALSE_BROADCAST_OVERLOAD = 6;
+export const FALSE_BROADCAST_OVERLOAD = 3;
 export const FALSE_BROADCAST_INTENSITY = 2;
 /**
  * Deception — 어설픈 속임수는 오래 못 간다. 심어둔 가짜 목표가 유지되는 시간이며, 소음(5칸)
@@ -427,7 +484,7 @@ export const CAPABILITY_MIN_TIME = 1;
 export const CAPABILITY_STEP_NOISE_DELTA = { surplus: -1, standard: 0, strained: 1, severe: 2 };
 export const CAPABILITY_STEP_DURABILITY_LOSS = { surplus: 0, standard: 0, strained: 0, severe: 1 };
 /** Hacking — 서툴수록 시스템에 부하가 남는다(D9 역탐지 게이지는 5단계 범위 밖). */
-export const CAPABILITY_STEP_OVERLOAD_DELTA = { surplus: -3, standard: 0, strained: 6, severe: 14 };
+export const CAPABILITY_STEP_OVERLOAD_DELTA = { surplus: -3, standard: 0, strained: 3, severe: 7 };
 /** Mobility — 무리하면 몸이 상한다. playerState.hp라 커맨드 래퍼에서 반영한다. */
 export const CAPABILITY_STEP_HP_COST = { surplus: 0, standard: 0, strained: 3, severe: 8 };
 /** Stealth — 서툰 침투는 흔적을 남긴다. severe는 그 자리에서 경계까지 올린다(4단계 파이프라인 재사용). */
@@ -483,9 +540,53 @@ export const APPROACH_MIN_TIME = 1;
 // ---- 기본 맵 행동 (§6.2) ----
 
 export const BASIC_RECON_TIME = 4;
-// 기본 정찰이 관측하는 홉 범위 — 현재 노드 + 1홉 + 2홉. 무료 인접 실시간 관측(1홉)보다 한 홉
-// 더 보는 것이 정찰이 시간을 쓰는 이유다. 확보 대상의 등급·역할축도 이 범위 안에서만 읽힌다.
+// 기본 정찰의 표준 홉 범위 — 현재 노드 + 1홉 + 2홉. 무료 인접 실시간 관측(1홉)보다 한 홉 더
+// 보는 것이 정찰이 시간을 쓰는 이유다. 실제 사거리는 Perception이 정한다(PERCEPTION_INFO_TABLE);
+// 이 상수는 Perception 0~2의 값이자 호출부가 수치를 모를 때의 기본값이다.
 export const BASIC_RECON_HOP_RANGE = 2;
+
+// ---- 정보의 깊이 (ADR-0079 계열, Perception) ----
+//
+// 정찰 비용(4칸)과 표준 사거리(2홉)는 Perception과 무관하게 고정이다. Perception이 정하는 것은
+// 정찰과 무료 인접 관측이 **무엇을** 보여주는가다. 그래서 Perception은 진행을 막지 않고
+// (ADR-0055) 같은 4칸으로 더 깊은 정보를 산다.
+//
+// index = clamp(실효 Perception, -2, 4) + 2. `level`은 관측 기록에 그대로 박혀(`detailLevel`)
+// UI가 그보다 깊은 것을 렌더하지 못하게 한다 — 나중에 Perception을 올려도 과거 관측이 소급해
+// 깊어지지는 않는다.
+//
+// threat/extra의 각 항목은 누적이다(상위 레벨이 하위를 전부 포함한다).
+/**
+ * @typedef {Object} PerceptionInfoLevel
+ * @property {number} level 0~5. 관측 기록의 detailLevel.
+ * @property {number} reconHops 정찰 사거리(홉).
+ * @property {('presence'|'size'|'mode'|'alert'|'nextMove'|'composition'|'patrolNext')[]} threat 위협에 대해 읽히는 항목.
+ * @property {('prizeGrade'|'prizeAxis'|'concealment'|'cameras'|'evidence')[]} extra 사거리 안에서 함께 드러나는 것.
+ */
+/** @type {PerceptionInfoLevel[]} */
+export const PERCEPTION_INFO_TABLE = [
+  // -2
+  { level: 0, reconHops: 1, threat: ['presence'], extra: [] },
+  // -1
+  { level: 0, reconHops: 1, threat: ['presence'], extra: [] },
+  // 0
+  { level: 1, reconHops: 2, threat: ['presence', 'size'], extra: ['prizeGrade'] },
+  // 1
+  { level: 2, reconHops: 2, threat: ['presence', 'size', 'mode'], extra: ['prizeGrade', 'prizeAxis'] },
+  // 2
+  { level: 3, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
+  // 3
+  { level: 4, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'cameras'] },
+  // 4
+  { level: 5, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'cameras', 'evidence'] },
+];
+
+// 무료 인접 관측은 Perception과 무관하게 이 깊이로 고정이다 — 유무와 규모까지. 값을 치르지 않고
+// 얻는 정보가 빌드에 따라 달라지면 "정찰을 할 것인가"라는 결정 자체가 흐려진다.
+export const FREE_OBSERVATION_DETAIL_LEVEL = 1;
+
+// 이 수치 이상이면 대기 중에도 인접 1홉의 실시간 관측이 끊기지 않는다(대기 관측 차단의 예외).
+export const PERCEPTION_WAIT_OBSERVATION_MIN = 2;
 
 // 대기와 조우 회피. 대기는 HP·과부화·경계도를 회복시키지 않는다 — 개방·쿨다운·적 위치를
 // 기다리는 용도다. 묶음 대기는 1칸 대기를 반복하며 새 조우·출구 개방/폐쇄·붕괴에서 즉시 멈춘다.
@@ -507,6 +608,9 @@ export const FORCE_TIER1_TIME = 5;
 export const FORCE_BASE_NOISE = 2; // §6.3 "Force 기본 소음은 2와 흔적이다."
 export const HACKING_TIER1_TIME = 4;
 export const HACKING_BASE_NOISE = 0;
-// §8.2 "Hacking 1/2/3/4 신속 접근 +3/+6/+9/+12" — MVP는 tier 1의 +3만 사용한다.
-export const HACKING_TIER1_OVERLOAD_GAIN = 3;
-export const RUSH_OVERLOAD_GAIN = 6; // §8.2 "강행 접근의 Overload 대가 +6"
+// §8.2 "Hacking 1/2/3/4 신속 접근 +3/+6/+9/+12" — MVP는 tier 1만 사용하며, 과부화 상승량
+// 절반 적용(올림)으로 +3 대신 +2다. 안전 접근은 같은 폭만큼 깎여 0이 된다.
+export const HACKING_TIER1_OVERLOAD_GAIN = 2;
+/** 안전 접근이 Hacking 과부화에서 깎는 값 — tier1 상승분과 같아 안전 접근은 부하가 0이다. */
+export const SAFE_OVERLOAD_DISCOUNT = 2;
+export const RUSH_OVERLOAD_GAIN = 3; // §8.2 "강행 접근의 Overload 대가" — 상승량 절반 적용 후 +3

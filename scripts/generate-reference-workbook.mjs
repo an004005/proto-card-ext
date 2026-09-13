@@ -9,6 +9,7 @@ import { MODULE_DEFINITIONS } from '../src/data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../src/data/implants.js';
 import { CONSUMABLE_DEFINITIONS } from '../src/data/consumables.js';
 import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
+import { axisOfEquipment } from '../src/engine/fieldLoot.js';
 import { STATUS_LABELS, POWER_LABELS } from '../src/data/statusEffects.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import * as FACILITY from '../src/data/facilityLayout.js';
@@ -37,12 +38,13 @@ const KOREAN_TERMS = {
   attack: '공격', skill: '스킬', power: '파워', status_card: '상태이상 카드', burden: '과적 카드',
   melee: '근접', ranged: '원거리',
   self: '자신', enemy: '적', player: '플레이어', all_enemies: '모든 적',
-  damage: '피해', block: '방어도', draw: '카드 뽑기', heal: '회복', reload: '장전',
-  applyStatus: '상태이상 부여', applyStun: '스턴 부여', insertStatusCard: '상태이상 카드 삽입',
+  block: '방어도', draw: '카드 뽑기', heal: '회복', reload: '장전',
+  applyStatus: '상태이상 부여', applyStun: '스턴 부여',
   exhaust: '소멸', discard: '버리기', gainOverload: '과부화 획득',
   temporary_barrier: '임시 차단막', snapshot_scan: '스냅샷 스캔', remote_intrusion: '원격 침투',
   edge: '통로', node_contents: '노드 내부', electronic_device: '전자 장치',
-  perception: '지각', stealth: '은신', hacking: '해킹', mobility: '기동', force: '강행', deception: '기만',
+  // Capability 6종 — 용어집(docs/terminology.md)과 같은 이름을 쓴다.
+  perception: '지각', stealth: '은신', hacking: '해킹', mobility: '기동', force: '파괴', deception: '기만',
   common: '일반', elite: '정예', boss: '보스',
   normal: '일반', true: '예', false: '아니오',
   weapon: '무기', top: '상의', bottom: '하의', module: '모듈', implant: '임플란트',
@@ -54,7 +56,8 @@ const KOREAN_TERMS = {
   insertStatusCard: '삽입 상태이상 카드', insertStatusCardCount: '상태이상 카드 수', summon: '소환', selfDestruct: '자폭',
   flee: '도주', stealCurrency: '재화 강탈', mapNoise: '소음',
   firearm: '총기', assassination: '암살', explosive: '폭발물', escape: '탈출', electronic: '전자 장치',
-  hack: '해킹', safe: '신중', rush: '돌진',
+  // 접근 방식 3종(안전/표준/강행) — 맵 화면 버튼과 같은 이름이어야 한다.
+  hack: '해킹', safe: '안전', rush: '강행',
 };
 
 const TERM_MAPPING_ROWS = Object.entries({ ...KOREAN_TERMS, ...STATUS_LABELS, ...POWER_LABELS })
@@ -97,7 +100,10 @@ function capability(id) {
   const modifiers = Object.entries(contract.capabilityModifiers)
     .map(([key, value]) => `${koreanTerm(key)} ${value > 0 ? '+' : ''}${value}`)
     .join(', ');
-  return { modifiers, fieldAction: koreanJson(contract.fieldAction) };
+  // 역할축은 이 계약에서 파생된다(engine/fieldLoot.js) — 엑셀에도 같이 실어 현장 보상 풀이
+  // 어떤 근거로 갈리는지 표 한 장에서 읽히게 한다.
+  const axis = axisOfEquipment(id) === 'infiltration' ? '침투' : '전투';
+  return { modifiers, fieldAction: koreanJson(contract.fieldAction), mapInfo: contract.mapInfoEffect ? '예' : '', axis };
 }
 
 function categoryForConstant(name) {
@@ -200,7 +206,7 @@ function buildWorkbook() {
     ['맵', '위협 이동 간격', `순찰 ${FACILITY.THREAT_MOVE_INTERVAL.patrol} / 조사·경계 ${FACILITY.THREAT_MOVE_INTERVAL.investigate} / 추적 ${FACILITY.THREAT_MOVE_INTERVAL.pursuit}`, `봉쇄 중에는 고정표로 각각 ${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.patrol}/${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.investigate}/${FACILITY.LOCKDOWN_THREAT_MOVE_INTERVAL.pursuit}`, 'src/data/facilityLayout.js'],
     ['맵', '구역 증원 주기', `${FACILITY.REINFORCEMENT_INTERVAL} / 봉쇄 ${FACILITY.REINFORCEMENT_LOCKDOWN_INTERVAL}`, '구역별 독립 시계. 로스터의 빈자리만 채운다', 'src/data/facilityLayout.js'],
     ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '요청·개방 여부와 무관하게 영구 폐쇄', 'src/data/facilityLayout.js'],
-    ['탈출', 'B 비활성', FACILITY.EXIT_B_DISABLED_AT, `요청·개방 여부와 무관하게 영구 폐쇄. 봉쇄 시 min(기존, 봉쇄+${FACILITY.LOCKDOWN_EXIT_CLOSE_WINDOW})로 당겨진다`, 'src/data/facilityLayout.js'],
+    ['탈출', 'B 비활성', FACILITY.EXIT_B_DISABLED_AT, `요청·개방 여부와 무관하게 영구 폐쇄. 회수·파괴 계약의 봉쇄 시 min(기존, 봉쇄+${FACILITY.LOCKDOWN_EXIT_CLOSE_WINDOW})로 당겨진다. 정보 계약의 봉쇄는 앞당기지 않는다`, 'src/data/facilityLayout.js'],
     ['탈출', '개방 요청 행동', FACILITY.EXIT_REQUEST_TIME, '요청 상호작용 시간', 'src/data/facilityLayout.js'],
     ['탈출', '개방 대기', FACILITY.EXIT_OPEN_WAIT_BY_HACKING.join('/'), '유효 Hacking -2~4별 요청 완료 후 개방까지', 'src/data/facilityLayout.js'],
     ['탈출', '개방 유지', FACILITY.EXIT_OPEN_WINDOW, '열린 뒤 추출 가능한 시간', 'src/data/facilityLayout.js'],
@@ -254,13 +260,14 @@ function buildWorkbook() {
 
   const equipmentRows = (definitions, subtype = '') => Object.values(definitions).map((def) => {
     const map = capability(def.id);
-    return { id: def.id, name: def.name, subtype, slot: koreanTerm(def.slot), maxLoad: def.maxLoadBonus ?? '', cards: cardList(def.cardList), capability: map.modifiers, fieldAction: map.fieldAction };
+    return { id: def.id, name: def.name, subtype, slot: koreanTerm(def.slot), maxLoad: def.maxLoadBonus ?? '', cards: cardList(def.cardList), capability: map.modifiers, fieldAction: map.fieldAction, mapInfo: map.mapInfo, axis: map.axis };
   });
   const equipmentColumns = [
     { key: 'id', header: '장비 ID', width: 28 }, { key: 'name', header: '이름', width: 22 },
     { key: 'subtype', header: '종류', width: 12 }, { key: 'slot', header: '슬롯', width: 11 },
     { key: 'maxLoad', header: '장전 상한', width: 11, numeric: true }, { key: 'cards', header: '제공 카드', width: 60 },
     { key: 'capability', header: 'Capability', width: 42 }, { key: 'fieldAction', header: '능동 현장 효과', width: 64 },
+    { key: 'mapInfo', header: '맵 정보 효과', width: 12 }, { key: 'axis', header: '역할축', width: 10 },
   ];
   sheet(workbook, '무기', '무기 스펙', 'src/data/equipment.js, src/data/facilityEquipmentCapabilities.js', equipmentColumns, equipmentRows(WEAPON_DEFINITIONS, '무기'));
   sheet(workbook, '방어구', '방어구 스펙', 'src/data/equipment.js, src/data/facilityEquipmentCapabilities.js', equipmentColumns,
@@ -269,13 +276,14 @@ function buildWorkbook() {
 
   const implants = Object.values(IMPLANT_DEFINITIONS).map((def) => {
     const map = capability(def.id);
-    return { id: def.id, name: def.name, floor: def.floorOverload, effect: koreanJson(def.effect), description: def.description, capability: map.modifiers, fieldAction: map.fieldAction };
+    return { id: def.id, name: def.name, floor: def.floorOverload, effect: koreanJson(def.effect), description: def.description, capability: map.modifiers, fieldAction: map.fieldAction, mapInfo: map.mapInfo, axis: map.axis };
   });
   sheet(workbook, '임플란트', '임플란트 스펙', 'src/data/implants.js, src/data/facilityEquipmentCapabilities.js', [
     { key: 'id', header: '임플란트 ID', width: 18 }, { key: 'name', header: '이름', width: 22 },
     { key: 'floor', header: '과부화 하한', width: 13, numeric: true }, { key: 'effect', header: '패시브 효과 데이터', width: 52 },
     { key: 'description', header: '설명', width: 36 }, { key: 'capability', header: 'Capability', width: 36 },
     { key: 'fieldAction', header: '능동 현장 효과', width: 50 },
+    { key: 'mapInfo', header: '맵 정보 효과', width: 12 }, { key: 'axis', header: '역할축', width: 10 },
   ], implants);
 
   const monsters = Object.values(MONSTER_DEFINITIONS).map((def) => ({

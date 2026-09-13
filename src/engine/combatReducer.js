@@ -32,7 +32,10 @@ import { GENERATOR_COMBAT_START_ARMOR, COMBAT_ENEMY_AMBUSH_TIME_COST } from '../
 function settleCombatRound(snapshot) {
   const ctx = snapshot.combatContext;
   if (!ctx || ctx.roundSettled || !snapshot.facilityRunState) return snapshot;
-  const facilityRunState = refreshLocalObservations(applyCombatRoundTimeToRunState(snapshot.facilityRunState));
+  const facilityRunState = refreshLocalObservations(
+    applyCombatRoundTimeToRunState(snapshot.facilityRunState),
+    computeCapabilities(snapshot.playerState.loadout).perception,
+  );
   return { ...snapshot, facilityRunState, combatContext: { ...ctx, roundSettled: true } };
 }
 
@@ -158,7 +161,10 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
   // 적 기습으로 생기는 추가 선공 구간은 라운드와 별도로 3칸이다. 플레이어 기습의 스턴은 적
   // 행동을 막을 뿐 라운드 시간을 줄이지 않으므로 여기에 대응하는 할인이 없다.
   if (context.ambush === 'enemy' && facilityRunState) {
-    facilityRunState = refreshLocalObservations(applyCombatRoundTimeToRunState(facilityRunState, COMBAT_ENEMY_AMBUSH_TIME_COST));
+    facilityRunState = refreshLocalObservations(
+      applyCombatRoundTimeToRunState(facilityRunState, COMBAT_ENEMY_AMBUSH_TIME_COST),
+      computeCapabilities(snapshot.playerState.loadout).perception,
+    );
   }
   /** @type {GameSnapshot} */
   const started = {
@@ -194,7 +200,7 @@ export function playCardCommand(snapshot, instanceId, targetId) {
     // §9.1 전투 소음 게이지: checked immediately on every card play, never batched to round end —
     // enemy intents do not feed it (only played cards do).
     const noise = applyCombatCardNoise(facilityRunState, combatContext.nodeId, combatContext.noiseGauge, combatContext.noiseIntensity, mapTags.noise);
-    facilityRunState = refreshLocalObservations(noise.runState);
+    facilityRunState = refreshLocalObservations(noise.runState, computeCapabilities(snapshot.playerState.loadout).perception);
     combatContext = { ...combatContext, noiseGauge: noise.gauge, noiseIntensity: noise.intensity };
     if (mapTags.disengageProgress) combatContext = { ...combatContext, disengage: addDisengageProgress(combatContext.disengage, mapTags.disengageProgress) };
   }
@@ -324,7 +330,13 @@ export function finalizeIfCombatEnded(snapshot) {
   facilityRunState = releaseEngagement(facilityRunState);
 
   const playerState = { ...ps, hp: combat.player.hp, overload: combat.overload, inventory, loadout: decayResult.loadout };
-  const s = { ...snapshot, playerState, activeCombatState: null, combatSummary, combatContext: null, facilityRunState };
+  // 전투는 startCombat이 넘겨준 rngState를 자기 안에서 계속 굴린다(드로우·명중·적 행동). 그것을
+  // 스냅샷으로 되돌려주지 않으면 전투에서 무엇을 했든 보상 롤은 전투 시작 시점의 시드로 굴러간다
+  // — 같은 전투를 어떻게 풀었든 보상이 똑같아진다(리뷰 A3).
+  const s = {
+    ...snapshot, playerState, activeCombatState: null, combatSummary, combatContext: null,
+    facilityRunState, rngState: combat.rngState,
+  };
   return startReward(s, tier);
 }
 

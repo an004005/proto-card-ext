@@ -30,13 +30,25 @@ export function createItem(kind, extra = {}) {
 }
 
 /**
+ * 이 컬렉션의 id 발급 규칙. addItem과 addAmmo가 같은 규칙을 쓰게 하는 유일한 자리다.
+ * @param {Inventory} inventory
+ * @param {number} counter
+ * @returns {string}
+ */
+function nextItemIdFor(inventory, counter) {
+  return `${inventory.idPrefix || 'item'}-${counter}`;
+}
+
+/**
  * @param {Inventory} inventory
  * @param {Omit<Item, 'id'>} item
  * @returns {Inventory}
  */
 export function addItem(inventory, item) {
-  const id = `${inventory.idPrefix || 'item'}-${inventory.nextItemId}`;
-  return { ...inventory, nextItemId: inventory.nextItemId + 1, items: [...inventory.items, { id, ...item }] };
+  const id = nextItemIdFor(inventory, inventory.nextItemId);
+  // `{ id, ...item }`이 아니라 `{ ...item, id }`여야 한다 — 호출부가 실수로 id를 달고 온
+  // 객체(다른 컬렉션에서 옮겨온 아이템 등)를 넘겨도 이 컬렉션의 id 규칙이 반드시 이긴다.
+  return { ...inventory, nextItemId: inventory.nextItemId + 1, items: [...inventory.items, { ...item, id }] };
 }
 
 /**
@@ -108,7 +120,7 @@ export function addAmmo(inventory, amount) {
   let nextItemId = inventory.nextItemId;
   while (remaining > 0) {
     const stackAmount = Math.min(AMMO_STACK_SIZE, remaining);
-    items.push({ id: `item-${nextItemId}`, kind: 'ammo', amount: stackAmount });
+    items.push({ id: nextItemIdFor(inventory, nextItemId), kind: 'ammo', amount: stackAmount });
     nextItemId += 1;
     remaining -= stackAmount;
   }

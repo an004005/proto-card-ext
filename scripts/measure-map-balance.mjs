@@ -15,13 +15,14 @@ import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { moveTimeCost, forecastAction, actionTimeCost } from '../src/engine/actionCosts.js';
 import { effectiveForRequirement } from '../src/engine/capabilityEngine.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
+import { lockdownClosesExitB } from '../src/engine/runEngine.js';
 import {
   RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, LOCKDOWN_EXIT_CLOSE_WINDOW,
   EXIT_REQUEST_TIME, EXIT_OPEN_WAIT_BY_HACKING, EXIT_OPEN_WINDOW,
   EDGE_TIME_MIN, EDGE_TIME_MAX, EXIT_AB_MIN_DISTANCE, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
   CORPSE_DISPOSAL_TIME,
   COMBAT_ROUND_TIME_COST, THREAT_MOVE_INTERVAL, REINFORCEMENT_INTERVAL,
-  FORCE_TIER1_TIME, HACKING_TIER1_TIME,
+  FORCE_TIER1_TIME, HACKING_TIER1_TIME, ADJACENT_SECTOR_IDS,
 } from '../src/data/facilityLayout.js';
 
 /** 측정에 쓰는 Mobility 값. 이동 비용만 바뀌고 통과 가능 여부도 바뀐다(highGround는 3 이상). */
@@ -187,12 +188,27 @@ function distOf(distances, nodeId) {
 /** 탈출구를 실제로 쓰려면 도착 뒤 요청 3칸과 개방 대기(Hacking 0 -> 15칸)가 더 든다. */
 const EXIT_OVERHEAD = EXIT_REQUEST_TIME + EXIT_OPEN_WAIT_BY_HACKING[BASE_CAPABILITY + 2];
 
-/** 계약 유형별 목표부 행동 비용(Capability 0). 정보 계약은 확보 + 그 자리 송출까지 친다. */
-function contractActionCost(type) {
+/**
+ * 목표부에서 치르는 비용(Capability 0). C5 이후로는 이것이 **완료**가 아니다 — 회수는 물건을
+ * 들고 나가야 하고, 파괴는 떨어진 자리에서 기폭해야 하며, 정보는 다른 구역 랜드마크에서
+ * 송출해야 한다. 봉쇄는 전부 이 시점에 켜지므로 유예 125칸의 기준 시각도 여기다.
+ */
+function contractObjectiveCost(type) {
   if (type === 'retrieval') return actionTimeCost('contractRetrieve', { value: BASE_CAPABILITY, capabilityKind: 'stealth' });
   if (type === 'destroy') return actionTimeCost('contractDestroy', { value: BASE_CAPABILITY });
-  return actionTimeCost('contractIntel', { value: BASE_CAPABILITY })
-    + actionTimeCost('contractTransmit', { value: BASE_CAPABILITY });
+  return actionTimeCost('contractIntel', { value: BASE_CAPABILITY });
+}
+
+/**
+ * 목표부를 떠난 뒤 완료까지 더 드는 비용(C5).
+ * - 파괴: 나가는 길에 2홉만 벌어지면 그 자리에서 기폭하면 되므로 기폭 시간만 더한다.
+ * - 정보: 목표부 구역에 인접한 구역의 랜드마크까지 들렀다 가야 하므로 그 우회가 실제 거리로 잡힌다(아래에서 계산).
+ * - 회수: 추가 행동 없음 — 출구를 밟는 순간 완료.
+ */
+function contractCompletionActionCost(type) {
+  if (type === 'destroy') return actionTimeCost('contractDetonate');
+  if (type === 'intel') return actionTimeCost('contractTransmit', { value: BASE_CAPABILITY });
+  return 0;
 }
 
 /**
@@ -254,17 +270,36 @@ export function measureSeed(seed) {
     for (const def of CONTRACT_DEFS) {
       const objectiveNodeId = landmarkBySector[def.sectorId];
       const toObjective = distOf(walk, objectiveNodeId);
-      const actionCost = contractActionCost(def.type);
+      const actionCost = contractObjectiveCost(def.type);
+      // 봉쇄는 목표부 행동이 끝나는 순간 켜진다 — 유예 125칸의 기준은 여기다(C5: 파괴 계약도
+      // 설치 완료 시각부터이며 기폭 시각이 아니다).
       const acquiredAt = toObjective + actionCost;
       const fromObjective = Number.isFinite(toObjective) ? dijkstra(walkArcs, objectiveNodeId) : new Map();
+      // 정보 계약은 목표부를 떠난 뒤 **목표부 구역에 인접한 구역**의 랜드마크를 반드시
+      // 들른다(C5) — 출구별로 그 우회가 가장 싼 랜드마크를 골라 더한다. 그 외 유형은 우회가 없다.
+      const intelSectorIds = ADJACENT_SECTOR_IDS[def.sectorId] || [];
+      const detourLandmarks = def.type === 'intel'
+        ? graph.landmarks.filter((l) => intelSectorIds.includes(l.sectorId)).map((l) => l.nodeId)
+        : [];
+      const fromLandmark = new Map(detourLandmarks.map((nodeId) => [nodeId, dijkstra(walkArcs, nodeId)]));
+      const completionCost = contractCompletionActionCost(def.type);
       const legs = {};
       for (const exitId of ['A', 'key', 'B']) {
-        const leg = distOf(fromObjective, exitNodeIds[exitId]);
-        const total = acquiredAt + leg;
+        const direct = distOf(fromObjective, exitNodeIds[exitId]);
+        const leg = detourLandmarks.length === 0
+          ? direct
+          : Math.min(...detourLandmarks.map((nodeId) => distOf(fromObjective, nodeId) + distOf(fromLandmark.get(nodeId), exitNodeIds[exitId])));
+        const total = acquiredAt + leg + completionCost;
         let deadline = Infinity;
         if (exitId === 'A') deadline = EXIT_A_DISABLED_AT;
         // 목표 확보 순간 봉쇄가 켜지고 B는 그 시각 + 125와 670 중 이른 쪽에 닫힌다.
-        if (exitId === 'B') deadline = Math.min(EXIT_B_DISABLED_AT, acquiredAt + LOCKDOWN_EXIT_CLOSE_WINDOW);
+        // 정보 계약만 예외로 B의 원래 폐쇄 시각(670)을 그대로 쓴다 — 엔진과 같은 판정
+        // (runEngine.js lockdownClosesExitB)을 쓴다.
+        if (exitId === 'B') {
+          deadline = lockdownClosesExitB(def.type)
+            ? Math.min(EXIT_B_DISABLED_AT, acquiredAt + LOCKDOWN_EXIT_CLOSE_WINDOW)
+            : EXIT_B_DISABLED_AT;
+        }
         legs[exitId] = {
           leg,
           total,
@@ -277,12 +312,15 @@ export function measureSeed(seed) {
       const best = usable.length === 0 ? null : usable.reduce((a, b) => (legs[a].total <= legs[b].total ? a : b));
       contracts[def.id] = {
         type: def.type, sectorId: def.sectorId, objectiveNodeId,
-        toObjective, actionCost, acquiredAt, legs,
+        toObjective, actionCost, completionCost, acquiredAt, legs,
         bestExit: best,
         bestTotal: best ? legs[best].total : Infinity,
         bestSlack: best ? legs[best].slack : -Infinity,
-        // 봉쇄 유예 125 안에 B까지 갈 수 있는가(670 마감과 별개로).
-        bLockdownReachable: legs.B.leg <= LOCKDOWN_EXIT_CLOSE_WINDOW,
+        // B 마감 안에 B까지 갈 수 있는가. 회수·파괴는 봉쇄 유예 125가 무는 값이고,
+        // 정보 계약은 봉쇄가 B를 앞당기지 않으므로 670 마감이 그대로 기준이다.
+        bLockdownReachable: lockdownClosesExitB(def.type)
+          ? legs.B.leg <= LOCKDOWN_EXIT_CLOSE_WINDOW
+          : legs.B.total < EXIT_B_DISABLED_AT,
       };
     }
 
@@ -492,7 +530,7 @@ export function formatReport(result) {
   const cWidths = [20, 8, 10, 8, 12, 10, 16, 12, 12];
   for (const m of MOBILITY_VALUES) {
     out.push(`Mobility ${m}`);
-    out.push(row(['계약', '유형', '->목표부', '행동', '확보시각', 'B다리', '최선 합계(중앙)', '최선 출구', 'B 봉쇄내'], cWidths));
+    out.push(row(['계약', '유형', '->목표부', '행동', '확보시각', 'B다리', '최선 합계(중앙)', '최선 출구', 'B 마감내'], cWidths));
     for (const def of CONTRACT_DEFS) {
       const toObj = stats(pick((r) => r.byMobility[m].contracts[def.id].toObjective));
       const acq = stats(pick((r) => r.byMobility[m].contracts[def.id].acquiredAt));

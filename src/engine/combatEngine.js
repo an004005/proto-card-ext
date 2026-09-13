@@ -103,8 +103,29 @@ function getCostModifierFromStatuses(def, statuses) {
  * @returns {number}
  */
 export function getEffectiveCost(def, stage, powers, statuses = {}) {
-  const resolved = resolveCard(def, stage);
-  return Math.max(0, resolved.cost + getCostModifierFromPowers(def, stage, powers) + getCostModifierFromStatuses(def, statuses) + getStagePenaltyCostModifier(stage));
+  return explainEffectiveCost(def, stage, powers, statuses).total;
+}
+
+/**
+ * 같은 계산을 "왜 이 값인가"까지 돌려준다 — 툴팁이 `코스트 4 = 기본 1 + 과열 1 + 뒤얽힘 2`로
+ * 풀어 쓸 수 있도록. 화면이 코스트를 따로 계산하면 엔진과 어긋나므로 여기 한 자리에만 둔다.
+ * @param {CardDef} def
+ * @param {number} stage
+ * @param {Object.<string, {active: boolean}>} powers
+ * @param {Statuses} [statuses]
+ * @returns {{total: number, base: number, parts: {label: string, amount: number}[]}}
+ */
+export function explainEffectiveCost(def, stage, powers, statuses = {}) {
+  const base = resolveCard(def, stage).cost;
+  const parts = [];
+  const powerMod = getCostModifierFromPowers(def, stage, powers);
+  if (powerMod) parts.push({ label: '모듈 과부하', amount: powerMod });
+  const stagePenalty = getStagePenaltyCostModifier(stage);
+  if (stagePenalty) parts.push({ label: '과열', amount: stagePenalty });
+  const entangled = getCostModifierFromStatuses(def, statuses);
+  if (entangled) parts.push({ label: '뒤얽힘', amount: entangled });
+  const total = Math.max(0, base + parts.reduce((sum, part) => sum + part.amount, 0));
+  return { total, base, parts };
 }
 
 /**
@@ -366,7 +387,7 @@ function checkBossPhaseTransition(state, enemyId) {
   const def = MONSTER_DEFINITIONS[enemy.defId];
   if (!def || !def.phaseTransitionHpFraction || enemy.phaseTransitioned) return state;
   if (enemy.hp > enemy.maxHp * def.phaseTransitionHpFraction) return state;
-  const created = createInitialAiState(enemy.defId, 0, state.rngState);
+  const created = createInitialAiState(enemy.defId, 0, state.rngState, 2);
   let s = setCombatant(state, 'enemy', enemyId, {
     ...enemy, phase: 2, phaseTransitioned: true, aiState: created.aiState,
     intent: currentMove(enemy.defId, created.aiState, 2),
@@ -774,77 +795,58 @@ function executeEnemyAction(state, enemyId) {
   return s;
 }
 
-/** @param {CombatState} state @returns {CombatState} */
-export function resolveEnemyTurn(state) {
-  if (state.phase !== 'enemy_turn') return state;
-  let s = state;
-  const actingOrder = state.enemies.map((e) => e.id);
-
-  for (const enemyId of actingOrder) {
-    if (s.player.hp <= 0) break;
-    let enemy = s.enemies.find((e) => e.id === enemyId);
-    if (!enemy || enemy.hp <= 0) continue;
-
-    enemy = { ...enemy, block: 0 };
-    if (MONSTER_DEFINITIONS[enemy.defId].standingArmor && (enemy.statuses.armor || 0) < MONSTER_DEFINITIONS[enemy.defId].standingArmor) {
-      enemy = { ...enemy, statuses: { ...enemy.statuses, armor: MONSTER_DEFINITIONS[enemy.defId].standingArmor } };
-    }
-    enemy = applyArmorAtTurnStart(enemy);
-    enemy = applyPoisonAtTurnStart(enemy);
-    s = setCombatant(s, 'enemy', enemyId, enemy);
-    s = checkWinLoss(s);
-    if (s.phase !== 'enemy_turn') return s;
-
-    const actionsThisTurn = enemy.doubleActionActive ? 2 : 1;
-    for (let action = 0; action < actionsThisTurn; action++) {
-      enemy = s.enemies.find((e) => e.id === enemyId);
-      if (enemy.hp <= 0) break;
-      if ((enemy.statuses.stun || 0) > 0) {
-        s = setCombatant(s, 'enemy', enemyId, { ...enemy, statuses: applyStatus(enemy.statuses, 'stun', -1) });
-        continue; // skips acting this action-slot; intent carries over unchanged
-      }
-      s = executeEnemyAction(s, enemyId);
-      s = checkWinLoss(s);
-      if (s.phase !== 'enemy_turn') return s;
-    }
-
-    enemy = s.enemies.find((e) => e.id === enemyId);
-    if (!enemy || enemy.hp <= 0) continue;
-
-    enemy = { ...enemy, statuses: decayStatusesAtTurnEnd(enemy.statuses) };
-    const advanced = advanceAiState(enemy.defId, enemy.aiState, enemy.phase, s.rngState);
-    const nextIntent = currentMove(enemy.defId, advanced.aiState, enemy.phase);
-    s = setCombatant(s, 'enemy', enemyId, { ...enemy, aiState: advanced.aiState, intent: nextIntent });
-    s = { ...s, rngState: advanced.rngState };
-  }
-  return s;
-}
-
-/** @param {CombatState} state @returns {CombatState} */
+/**
+ * 턴 해결의 단일 구현은 advanceTurnWithSteps다 — 여기서는 연출용 스냅샷만 버린다.
+ * 예전에는 같은 규칙을 resolveEnemyTurn과 advanceTurnWithSteps 두 벌로 들고 있었고, 한쪽만
+ * 고치면 "헤드리스 시뮬레이션과 화면에 보이는 전투가 다르게 끝나는" 사고가 났다(리뷰 A5).
+ * @param {CombatState} state
+ * @returns {CombatState}
+ */
 export function advanceTurn(state) {
-  let s = endPlayerTurn(state);
-  if (s.phase !== 'enemy_turn') return s;
-  s = resolveEnemyTurn(s);
-  if (s.phase !== 'enemy_turn') return s;
-  s = { ...s, turn: s.turn + 1 };
-  return startPlayerTurn(s);
+  return advanceTurnWithSteps(state).state;
 }
 
 /**
- * Resolve a turn using the exact same rules as advanceTurn, while retaining a snapshot after
- * each visible combat action.  The UI consumes these snapshots; the normal reducer continues
- * to use advanceTurn, so headless simulation remains synchronous and deterministic.
+ * @typedef {Object} CombatStep 눈에 보이는 전투 행동 하나가 끝난 직후의 스냅샷.
+ * @property {CombatState} state
+ * @property {'player'|'enemy'} actor
+ * @property {string} [actorId]
+ * @property {string} label
+ * @property {'attack'|'action'} kind
+ */
+
+/**
+ * 한 턴을 해결하면서 눈에 보이는 행동마다 스냅샷을 남긴다. 규칙은 advanceTurn과 "같은" 것이
+ * 아니라 말 그대로 하나다 — advanceTurn이 이 함수를 호출하고 steps만 버린다.
  *
  * @param {CombatState} state
- * @returns {{state: CombatState, steps: {state: CombatState, actor: 'player'|'enemy', actorId?: string, label: string, kind: 'attack'|'action'}[]}}
+ * @returns {{state: CombatState, steps: CombatStep[]}}
  */
 export function advanceTurnWithSteps(state) {
-  /** @type {{state: CombatState, actor: 'player'|'enemy', actorId?: string, label: string, kind: 'attack'|'action'}[]} */
+  /** @type {CombatStep[]} */
   const steps = [];
   let s = endPlayerTurn(state);
   steps.push({ state: s, actor: 'player', label: '턴 종료', kind: 'action' });
   if (s.phase !== 'enemy_turn') return { state: s, steps };
+  s = resolveEnemyTurn(s, steps);
+  if (s.phase !== 'enemy_turn') return { state: s, steps };
+  s = { ...s, turn: s.turn + 1 };
+  s = startPlayerTurn(s);
+  steps.push({ state: s, actor: 'player', label: '새 턴', kind: 'action' });
+  return { state: s, steps };
+}
 
+/**
+ * 적 턴 전체를 해결한다. `steps`를 주면 눈에 보이는 행동 하나마다 스냅샷을 쌓는다 — 연출
+ * 재생과 헤드리스 시뮬레이션이 같은 코드를 지나도록 하는 유일한 구현이다.
+ * @param {CombatState} state
+ * @param {CombatStep[]} [steps] 있으면 제자리에서 채운다
+ * @returns {CombatState}
+ */
+export function resolveEnemyTurn(state, steps) {
+  if (state.phase !== 'enemy_turn') return state;
+  let s = state;
+  const record = (step) => { if (steps) steps.push(step); };
   const actingOrder = s.enemies.map((e) => e.id);
   for (const enemyId of actingOrder) {
     if (s.player.hp <= 0) break;
@@ -860,8 +862,8 @@ export function advanceTurnWithSteps(state) {
     enemy = applyPoisonAtTurnStart(enemy);
     s = setCombatant(s, 'enemy', enemyId, enemy);
     s = checkWinLoss(s);
-    if (poisonedBefore) steps.push({ state: s, actor: 'enemy', actorId: enemyId, label: '중독', kind: 'action' });
-    if (s.phase !== 'enemy_turn') return { state: s, steps };
+    if (poisonedBefore) record({ state: s, actor: 'enemy', actorId: enemyId, label: '중독', kind: 'action' });
+    if (s.phase !== 'enemy_turn') return s;
 
     const actionsThisTurn = enemy.doubleActionActive ? 2 : 1;
     for (let action = 0; action < actionsThisTurn; action++) {
@@ -869,14 +871,14 @@ export function advanceTurnWithSteps(state) {
       if (!enemy || enemy.hp <= 0) break;
       if ((enemy.statuses.stun || 0) > 0) {
         s = setCombatant(s, 'enemy', enemyId, { ...enemy, statuses: applyStatus(enemy.statuses, 'stun', -1) });
-        steps.push({ state: s, actor: 'enemy', actorId: enemyId, label: '기절', kind: 'action' });
+        record({ state: s, actor: 'enemy', actorId: enemyId, label: '기절', kind: 'action' });
         continue;
       }
       const move = currentMove(enemy.defId, enemy.aiState, enemy.phase);
       s = executeEnemyAction(s, enemyId);
       s = checkWinLoss(s);
-      steps.push({ state: s, actor: 'enemy', actorId: enemyId, label: move.id, kind: move.damage ? 'attack' : 'action' });
-      if (s.phase !== 'enemy_turn') return { state: s, steps };
+      record({ state: s, actor: 'enemy', actorId: enemyId, label: move.id, kind: move.damage ? 'attack' : 'action' });
+      if (s.phase !== 'enemy_turn') return s;
     }
 
     enemy = s.enemies.find((e) => e.id === enemyId);
@@ -886,8 +888,5 @@ export function advanceTurnWithSteps(state) {
     s = setCombatant(s, 'enemy', enemyId, { ...enemy, aiState: advanced.aiState, intent: currentMove(enemy.defId, advanced.aiState, enemy.phase) });
     s = { ...s, rngState: advanced.rngState };
   }
-  s = { ...s, turn: s.turn + 1 };
-  s = startPlayerTurn(s);
-  steps.push({ state: s, actor: 'player', label: '새 턴', kind: 'action' });
-  return { state: s, steps };
+  return s;
 }

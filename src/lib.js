@@ -7,9 +7,9 @@
 // exact same module instance this file uses. Pin the version in vendor/, not here, if it ever
 // needs to change.
 import { h, render } from 'preact';
-import { useState, useEffect, useRef, useLayoutEffect } from 'preact/hooks';
+import { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'preact/hooks';
 import { signal, computed, effect } from '../vendor/preact-signals.js';
 import htm from '../vendor/htm.js';
 
 export const html = htm.bind(h);
-export { h, render, useState, useEffect, useRef, useLayoutEffect, signal, computed, effect };
+export { h, render, useState, useEffect, useRef, useLayoutEffect, useMemo, signal, computed, effect };

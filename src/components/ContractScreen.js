@@ -2,12 +2,13 @@ import { html } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
 import { SECTOR_NAMES, LANDMARKS_BY_SECTOR, RUN_COLLAPSE_TIME, LOCKDOWN_EXIT_CLOSE_WINDOW } from '../data/facilityLayout.js';
+import { lockdownClosesExitB } from '../engine/runEngine.js';
 
 const TYPE_LABEL = { retrieval: '회수', destroy: '파괴', intel: '정보' };
 const TYPE_COMPLETION = {
   retrieval: '완료: 목표부에서 물건을 확보한 뒤 그걸 들고 탈출해야 한다',
   destroy: '완료: 목표부를 파괴하는 즉시 완료된다',
-  intel: '완료: 목표부에서 데이터를 딴 뒤 아무 랜드마크에서나 송출해야 한다',
+  intel: '완료: 목표부에서 데이터를 딴 뒤 이웃 구역 랜드마크에서 송출해야 한다',
 };
 
 function ContractCard({ contract }) {
@@ -31,8 +32,11 @@ function ContractCard({ contract }) {
         <span>위약(미완수 시): -${contract.penaltyValue}cr</span>
         <span style=${{ opacity: 0.7 }}>${TYPE_COMPLETION[contract.type]}</span>
         ${/* 계약 화면에서 미리 알아야 할 시간은 둘뿐이다 — 시설이 언제 무너지는가, 그리고
-            목표를 집는 순간 출구 B가 얼마나 앞당겨지는가. */ null}
-        <span style=${{ opacity: 0.7 }}>확보 즉시 봉쇄 — 출구 B가 +${LOCKDOWN_EXIT_CLOSE_WINDOW}칸으로 앞당겨집니다</span>
+            목표를 집는 순간 출구 B가 얼마나 앞당겨지는가. 정보 계약은 봉쇄가 B를 앞당기지
+            않으므로(runEngine.js lockdownClosesExitB) 여기서도 그렇게 적는다. */ null}
+        <span style=${{ opacity: 0.7 }}>${lockdownClosesExitB(contract.type)
+          ? `확보 즉시 봉쇄 — 출구 B가 +${LOCKDOWN_EXIT_CLOSE_WINDOW}칸으로 앞당겨집니다`
+          : '확보 즉시 봉쇄 — 위협 가속·증원 단축. 출구 B 앞당김 없음'}</span>
         <span style=${{ opacity: 0.7 }}>시설 붕괴 ${RUN_COLLAPSE_TIME}칸</span>
       </div>
       <button

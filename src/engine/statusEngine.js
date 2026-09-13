@@ -25,16 +25,12 @@ export function applyStatus(statuses, key, amount) {
   if (amount > 0 && DEBUFF_STATUSES.includes(key) && (statuses.artifact || 0) > 0) {
     return applyStatus(statuses, 'artifact', -1);
   }
+  // 감쇠 상태든 아니든 규칙은 하나다: 0 이하가 되면 키 자체를 지운다(빈 칸과 0이 두 가지로
+  // 갈리면 "없다"를 두 번 검사해야 한다). 예전에는 같은 동작이 두 분기로 나뉘어 있었다.
   const next = { ...statuses };
   const value = (next[key] || 0) + amount;
-  if (DECAYING_STATUSES.includes(key)) {
-    if (value <= 0) delete next[key];
-    else next[key] = value;
-  } else if (value <= 0) {
-    delete next[key];
-  } else {
-    next[key] = value;
-  }
+  if (value <= 0) delete next[key];
+  else next[key] = value;
   return next;
 }
 
@@ -98,6 +94,11 @@ export function computeDamage(baseValue, { stage, scalesWithStage, flatBonus = 0
   return Math.max(0, amount);
 }
 
+/**
+ * @param {number} amount
+ * @param {boolean} [vulnerable]
+ * @returns {number}
+ */
 export function applyVulnerableDamage(amount, vulnerable) {
   return vulnerable ? Math.ceil(amount * 1.5) : amount;
 }

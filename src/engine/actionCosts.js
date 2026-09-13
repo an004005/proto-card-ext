@@ -10,6 +10,7 @@
 // 시간은 전부 정수 칸이다(ADR-0075). 처리 순서는 기본 비용 -> 층계 가감 -> 접근 가감 ->
 // 최소 1칸이며, 그 순서는 capabilityCosts.resolveCapabilityCost 하나가 지킨다.
 
+import { RuleViolation } from './errors.js';
 import { resolveCapabilityCost } from './capabilityCosts.js';
 import {
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME,
@@ -17,12 +18,13 @@ import {
   CORPSE_DISPOSAL_TIME, EXIT_REQUEST_TIME,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
-  HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN,
+  HACKING_TIER1_OVERLOAD_GAIN, RUSH_OVERLOAD_GAIN, SAFE_OVERLOAD_DISCOUNT,
   CAMERA_HACK_TIME, CAMERA_HACK_OVERLOAD, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
   GENERATOR_HACK_TIME, GENERATOR_HACK_OVERLOAD, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
   CONTROL_ROOM_HACK_TIME, CONTROL_ROOM_HACK_OVERLOAD,
   CONTRACT_ACQUIRE_TIME, CONTRACT_ACQUIRE_OVERLOAD, CONTRACT_DESTROY_TIME, CONTRACT_DESTROY_OVERLOAD,
-  CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD,
+  CONTRACT_TRANSMIT_TIME, CONTRACT_TRANSMIT_OVERLOAD, CONTRACT_DETONATE_TIME,
+  FAKE_NOISE_TIME, FAKE_NOISE_OVERLOAD, FAKE_NOISE_REQUIREMENT,
   TRACE_CLEANUP_TIME_BY_PERCEPTION, POWER_CUT_TIME, POWER_CUT_NOISE,
   FALSE_BROADCAST_TIME, FALSE_BROADCAST_DURATION_BY_STEP,
   MOBILITY_MOVE_TIME_DELTA, MOVE_MIN_TIME, CAPABILITY_STEP_TIME_DELTA, CAPABILITY_MIN_TIME,
@@ -160,7 +162,7 @@ export const ACTION_SPECS = {
       const baseNoise = isForce ? FORCE_BASE_NOISE : HACKING_BASE_NOISE;
       const { noise } = applyApproachMode(baseTime, baseNoise, mode);
       const overload = opts.capabilityKind === 'hacking'
-        ? Math.max(0, HACKING_TIER1_OVERLOAD_GAIN + (mode === 'rush' ? RUSH_OVERLOAD_GAIN : 0) - (mode === 'safe' ? 3 : 0))
+        ? Math.max(0, HACKING_TIER1_OVERLOAD_GAIN + (mode === 'rush' ? RUSH_OVERLOAD_GAIN : 0) - (mode === 'safe' ? SAFE_OVERLOAD_DISCOUNT : 0))
         : 0;
       return { time: baseTime, timeDelta: APPROACH_TIME_DELTA[mode], noise, overload };
     },
@@ -178,7 +180,9 @@ export const ACTION_SPECS = {
     capability: null,
     base: () => ({ time: CONTRACT_ACQUIRE_TIME, overload: CONTRACT_ACQUIRE_OVERLOAD }),
   },
-  contractDestroy: { label: '목표 파괴', capability: 'force', base: () => ({ time: CONTRACT_DESTROY_TIME, overload: CONTRACT_DESTROY_OVERLOAD }) },
+  contractDestroy: { label: '폭약 설치', capability: 'force', base: () => ({ time: CONTRACT_DESTROY_TIME, overload: CONTRACT_DESTROY_OVERLOAD }) },
+  // 기폭은 스위치를 누르는 일이다 — Capability 요구 없이 시간만 든다(C5).
+  contractDetonate: { label: '기폭', capability: null, base: () => ({ time: CONTRACT_DETONATE_TIME }) },
   contractIntel: { label: '데이터 확보', capability: 'hacking', base: () => ({ time: CONTRACT_ACQUIRE_TIME, overload: CONTRACT_ACQUIRE_OVERLOAD }) },
   contractTransmit: { label: '데이터 송출', capability: 'hacking', base: () => ({ time: CONTRACT_TRANSMIT_TIME, overload: CONTRACT_TRANSMIT_OVERLOAD }) },
   cleanTraces: {
@@ -193,6 +197,14 @@ export const ACTION_SPECS = {
     label: '가짜 목표 송출',
     capability: 'deception',
     base: () => ({ time: FALSE_BROADCAST_TIME, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP }),
+  },
+  // 가짜 소음 — 지속이 통화인 다른 Deception 행동과 달리 고정 지속(소음 사건의 기본 수명)이라
+  // durationByStep을 넘기지 않는다. 층계는 시간 가감과 불가 판정만 맡는다.
+  fakeNoise: {
+    label: '가짜 소음',
+    capability: 'deception',
+    required: () => FAKE_NOISE_REQUIREMENT,
+    base: () => ({ time: FAKE_NOISE_TIME, overload: FAKE_NOISE_OVERLOAD }),
   },
 };
 
@@ -330,9 +342,9 @@ export function forecastUnknownPrizeFarm(mode = 'normal') {
 export function requireActionCost(actionId, opts = {}) {
   const forecast = forecastAction(actionId, opts);
   if (forecast.blocked) {
-    throw new Error(`${forecast.capabilityKind} too low (needs ${forecast.required}, have ${opts.value ?? 0})`);
+    throw new RuleViolation(`${forecast.capabilityKind} too low (needs ${forecast.required}, have ${opts.value ?? 0})`);
   }
-  if (!forecast.cost) throw new Error(`${actionId} has no capability cost`);
+  if (!forecast.cost) throw new RuleViolation(`${actionId} has no capability cost`);
   return forecast.cost;
 }
 

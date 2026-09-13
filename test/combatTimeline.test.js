@@ -48,3 +48,22 @@ test('combat timeline keeps intermediate combat snapshots and ends at the reduce
   assert.equal(timeline[0].animation.label, '턴 종료');
   assert.deepEqual(timeline.at(-1).after, gameReducer(snapshot, command));
 });
+
+test('advanceTurn은 advanceTurnWithSteps의 얇은 껍데기다 — 구현이 한 벌뿐이다', () => {
+  // 적 턴 해결 규칙이 두 벌로 갈라졌던 시절의 회귀 방지(리뷰 A5). 몬스터 전원에 대해 두 경로가
+  // 같은 결과를 내는지는 위 테스트가 보고, 여기서는 "껍데기"라는 계약 자체를 못 박는다.
+  const state = combat();
+  assert.deepEqual(advanceTurn(state), advanceTurnWithSteps(state).state);
+  // 적 턴이 아닌 상태(이미 승패가 난 전투)에서는 아무 일도 일어나지 않는다.
+  const finished = { ...state, phase: 'victory' };
+  assert.equal(advanceTurnWithSteps(finished).steps.length, 1, '턴 종료 프레임 하나만 남는다');
+  assert.equal(advanceTurn(finished).phase, 'victory');
+});
+
+test('resolveEnemyTurn은 steps 없이 불러도 같은 상태를 낸다', async () => {
+  const { resolveEnemyTurn, endPlayerTurn } = await import('../src/engine/combatEngine.js');
+  const enemyTurn = endPlayerTurn(combat());
+  const steps = [];
+  assert.deepEqual(resolveEnemyTurn(enemyTurn), resolveEnemyTurn(enemyTurn, steps));
+  assert.ok(steps.length > 0, 'steps를 주면 채워져야 한다');
+});

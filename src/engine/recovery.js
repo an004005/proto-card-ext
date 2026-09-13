@@ -12,11 +12,15 @@
 // runEngine.js가 이미 크므로 신규 세 개는 여기 둔다. 전부 순수 함수이고 시간 진행은
 // runEngine.js의 advanceTime을 그대로 쓴다.
 
+import { RuleViolation } from './errors.js';
 import { applyCapabilityCost } from './runEngine.js';
 import { requireActionCost } from './actionCosts.js';
 import {
   POWER_CUT_DURATION, FALSE_BROADCAST_OVERLOAD, FALSE_BROADCAST_INTENSITY, ADJACENT_SECTOR_IDS,
+  FALSE_BROADCAST_ANY_SECTOR_DECEPTION, FAKE_NOISE_RANGE_BY_DECEPTION, FAKE_NOISE_REQUIREMENT,
+  FAKE_NOISE_STRONG_DECEPTION, FAKE_NOISE_INTENSITY, FAKE_NOISE_STRONG_INTENSITY,
 } from '../data/facilityLayout.js';
+import { bfsHopDistances } from './graphUtils.js';
 
 /** @typedef {import('./types.js').FacilityRunState} FacilityRunState */
 
@@ -36,6 +40,46 @@ function interfaceHere(state) {
 }
 
 /**
+ * 실효 Deception이 가짜 소음을 심을 수 있는 홉 범위. 자격 미달(1 미만)이면 0이다.
+ * @param {number} effectiveDeception
+ * @returns {number}
+ */
+export function fakeNoiseRange(effectiveDeception) {
+  return FAKE_NOISE_RANGE_BY_DECEPTION[Math.max(-2, Math.min(4, effectiveDeception)) + 2];
+}
+
+/**
+ * 가짜 소음(Deception) — 지정한 노드에 소음 사건 하나를 심는다. 위협은 그것을 실제 소음과
+ * 구별하지 못하고 조사하러 간다(selectThreatTarget이 같은 우선순위 표로 둘을 함께 본다).
+ *
+ * 가짜 목표 송출과 다른 점은 셋이다: 접속 인터페이스가 필요 없고, 경계도를 옮기지 않으며,
+ * 대신 **어디에 심을지**를 고른다. 경계도를 건드리지 않으므로 ADR-0073의 총량 보존과 무관하다 —
+ * 이것은 수습 수단이 아니라 유인 수단이다.
+ *
+ * 사거리는 Deception이 정한다(1홉/2홉/3홉). 3 이상이면 심는 소음이 강도 2가 되어 더 멀리까지
+ * 들린다. 지속은 소음 사건의 기본 수명 그대로다.
+ * @param {FacilityRunState} state
+ * @param {number} effectiveDeception
+ * @param {string} targetNodeId
+ * @returns {FacilityRunState}
+ */
+export function plantFakeNoise(state, effectiveDeception, targetNodeId) {
+  if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('fake noise unavailable');
+  const target = state.graph.nodes.find((n) => n.id === targetNodeId);
+  if (!target) throw new RuleViolation(`unknown node ${targetNodeId}`);
+  const range = fakeNoiseRange(effectiveDeception);
+  if (range <= 0) throw new RuleViolation(`deception too low (needs ${FAKE_NOISE_REQUIREMENT}, have ${effectiveDeception})`);
+  // 심을 수 있는 거리는 "들리는 거리"와 같은 잣대로 잰다 — 잠긴 문 너머에도 소리는 만들 수 있다.
+  const hops = bfsHopDistances(state.graph.edges, state.playerNodeId).get(targetNodeId);
+  if (hops === undefined || hops > range) throw new RuleViolation(`${targetNodeId} is out of fake-noise range (${range} hops)`);
+
+  const cost = requireActionCost('fakeNoise', { value: effectiveDeception });
+  const intensity = effectiveDeception >= FAKE_NOISE_STRONG_DECEPTION ? FAKE_NOISE_STRONG_INTENSITY : FAKE_NOISE_INTENSITY;
+  // 다른 현장 작업과 같다 — 소음은 시작이 아니라 **완료 시각**에 난다.
+  return applyCapabilityCost(state, { ...cost, duration: null }, undefined, 'fakeNoise', { targetNodeId, intensity });
+}
+
+/**
  * 흔적 정리(Perception) — 현재 노드의 흔적을 전부 지운다. 경계도 상승의 원인 자체를 없애는
  * 것이라 총량은 건드리지 않는다. 시간이 크고 그동안 무방비다(D12) — Perception이 높을수록 짧다.
  * @param {FacilityRunState} state
@@ -43,9 +87,9 @@ function interfaceHere(state) {
  * @returns {FacilityRunState}
  */
 export function cleanTraces(state, effectivePerception) {
-  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('trace cleanup unavailable');
+  if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('trace cleanup unavailable');
   const here = state.evidence.filter((e) => e.nodeId === state.playerNodeId);
-  if (here.length === 0) throw new Error('no traces at this node');
+  if (here.length === 0) throw new RuleViolation('no traces at this node');
 
   // Perception은 자기 통화가 없어 시간으로만 받는다(D8의 타협). 수치별 기준 시간표가 이미
   // 있으므로 그것이 곧 전용 시간 규칙이다 — 층계 가감을 또 얹으면 같은 Perception 수치에
@@ -64,11 +108,11 @@ export function cleanTraces(state, effectivePerception) {
  * @returns {FacilityRunState}
  */
 export function cutPower(state, effectiveForce) {
-  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('power cut unavailable');
-  if (!interfaceHere(state)) throw new Error('not at an access interface');
+  if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('power cut unavailable');
+  if (!interfaceHere(state)) throw new RuleViolation('not at an access interface');
   const sectorId = sectorOf(state.playerNodeId);
   if (state.powerCuts.some((cut) => cut.sectorId === sectorId && cut.expiresAt > state.time)) {
-    throw new Error('power is already cut in this sector');
+    throw new RuleViolation('power is already cut in this sector');
   }
 
   const cost = requireActionCost('cutPower', { value: effectiveForce });
@@ -85,19 +129,23 @@ export function cutPower(state, effectiveForce) {
  * @returns {FacilityRunState}
  */
 export function broadcastFalseTarget(state, effectiveDeception, targetSectorId) {
-  if (state.phase !== 'active' || !state.playerNodeId) throw new Error('false broadcast unavailable');
-  if (!interfaceHere(state)) throw new Error('not at an access interface');
+  if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('false broadcast unavailable');
+  if (!interfaceHere(state)) throw new RuleViolation('not at an access interface');
 
   const sectorId = sectorOf(state.playerNodeId);
+  // Deception 3 이상은 인접이 아니라 아무 구역으로나 쏠 수 있다 — 경계를 옆으로 미는 것과
+  // 시설 반대편으로 던지는 것은 전혀 다른 계획이고, 그 차이가 Deception 상위 수치의 값이다.
+  const anySector = effectiveDeception >= FALSE_BROADCAST_ANY_SECTOR_DECEPTION;
   const neighbors = ADJACENT_SECTOR_IDS[sectorId] || [];
-  if (!neighbors.includes(targetSectorId)) throw new Error(`${targetSectorId} is not adjacent to ${sectorId}`);
+  if (!anySector && !neighbors.includes(targetSectorId)) throw new RuleViolation(`${targetSectorId} is not adjacent to ${sectorId}`);
+  if (targetSectorId === sectorId) throw new RuleViolation('cannot broadcast a false target into this very sector');
   const current = state.sectorAlerts[sectorId];
-  if (current.level <= 0) throw new Error('no alert to move');
+  if (current.level <= 0) throw new RuleViolation('no alert to move');
   // 옮길 곳이 이미 최대면 옮길 수 없다. 그냥 진행하면 +1이 상한에서 잘려 사라지고 이쪽만
   // 내려가, 총량 보존(ADR-0073)을 깨고 경계도를 실제로 지워버린다 — Deception이 통제실보다
   // 싼 경계도 소거기가 되어 "진짜로 낮추는 것은 통제실 장악뿐"이라는 D12의 전제가 무너진다.
   if (state.sectorAlerts[targetSectorId].level >= 3) {
-    throw new Error(`${targetSectorId} alert is already at maximum — there is nowhere to move it`);
+    throw new RuleViolation(`${targetSectorId} alert is already at maximum — there is nowhere to move it`);
   }
 
   // Deception이 모자라면 가짜 목표가 오래 버티지 못한다 — 경계는 옮겨가지만 시선은 금방

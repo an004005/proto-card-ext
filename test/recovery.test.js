@@ -114,7 +114,11 @@ test('broadcastFalseTarget conserves total alert: it moves one level to an adjac
   };
   assert.throws(() => broadcastFalseTarget(raised, -2, neighborId), /deception/);
   const far = Object.keys(base.sectorAlerts).find((id) => id !== sectorId && !ADJACENT_SECTOR_IDS[sectorId].includes(id));
-  assert.throws(() => broadcastFalseTarget(raised, 3, far), /not adjacent/);
+  assert.throws(() => broadcastFalseTarget(raised, 2, far), /not adjacent/);
+  // Deception 3부터는 인접이 아니라 아무 구역으로나 던질 수 있다.
+  const thrown = broadcastFalseTarget(raised, 3, far);
+  assert.equal(thrown.sectorAlerts[far].level, raised.sectorAlerts[far].level + 1);
+  assert.ok(thrown.falseTargets.some((t) => t.sourceNodeId.startsWith(`${far}_`)));
 
   const before = raised.sectorAlerts[sectorId].level + raised.sectorAlerts[neighborId].level;
   const after = broadcastFalseTarget(raised, 1, neighborId);

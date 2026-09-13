@@ -1,5 +1,5 @@
 ---
-status: amended by implementation spec §7.1 and §9.1
+status: amended by implementation spec — 카드별 소음 태그는 용량 6 게이지에 누적된다
 ---
 
 # 카드와 적 행동은 유형별 소음 태그를 가진다

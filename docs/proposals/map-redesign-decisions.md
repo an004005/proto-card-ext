@@ -54,18 +54,21 @@ Capability는 장착 장비 합산으로 런 내내 고정이므로, 순수 관�
 그 관문조차 항상 접근법을 두 개 이상 제공한다. 나머지 지형은 전부 비용 차이로 표현한다.
 질문을 "들어갈 수 있나"에서 "얼마를 내고 들어갈까"로 옮기는 것이 목적이다.
 
-| 구역 | 유리한 Capability | 그 구역이 부과하는 대가 |
-|---|---|---|
-| 관리동 | Perception, Deception | 없음에 가깝다. 대신 얻는 것도 정보뿐이다. |
-| 실험동 | Hacking, Perception | 격실을 열 때마다 과부화가 쌓인다. |
-| 격납고 | Force, Mobility | 개방 공간이라 실효 Stealth가 깎인다. |
-| 보안동 | Hacking, Deception, Perception | 발각 시 경계도가 인접 구역까지 번진다. |
-| 동력동 | Force, Hacking, Mobility | 발전기를 끄면 일부 통로가 닫힌다. |
-| 폐기물 | Mobility, Force, Stealth | 비인가 통로는 내구도 또는 HP를 요구한다. |
-| 통신동 | Hacking, Perception, Deception | 퇴로가 하나여서 들키면 갇힌다. |
-| 거주동 | Stealth, Deception | 병목이 많아 회피 실패의 대가가 크다. |
+| 구역 | 유리한 Capability | 그 구역이 부과하는 대가 | 구현 |
+|---|---|---|---|
+| 관리동 | Perception, Deception | 없음에 가깝다. 대신 얻는 것도 정보뿐이다. | 구현 |
+| 실험동 | Hacking, Perception | 격실을 열 때마다 과부화가 쌓인다. | 구현 — 전자 잠금 개방의 과부화 대가가 이 역할을 한다 |
+| 격납고 | Force, Mobility | 개방 공간이라 실효 Stealth가 깎인다. | 구현 — 대공간 노드의 `HALL_STEALTH_PENALTY` |
+| 보안동 | Hacking, Deception, Perception | 발각 시 경계도가 인접 구역까지 번진다. | **백로그** — 구역 경계도는 그 구역에만 오른다 |
+| 동력동 | Force, Hacking, Mobility | 발전기를 끄면 일부 통로가 닫힌다. | **백로그** — 발전기 무력화는 적 갑옷만 없앤다 |
+| 폐기물 | Mobility, Force, Stealth | 비인가 통로는 내구도 또는 HP를 요구한다. | **백로그** — 비인가 통로는 도면에 없다는 점만 구현됐고 통과 대가는 일반 엣지와 같다 |
+| 통신동 | Hacking, Perception, Deception | 퇴로가 하나여서 들키면 갇힌다. | 구현 — 탑 배치 원형의 1층 로비 단일 접점 |
+| 거주동 | Stealth, Deception | 병목이 많아 회피 실패의 대가가 크다. | 구현 — 사슬 배치 원형 |
 
 유리한 Capability는 대가를 줄이는 것이지 없애는 것이 아니다.
+
+**백로그** 표시 세 줄은 아직 코드에 없다. 이 문서는 제안 문서이므로 그대로 두되, 현재 동작의
+근거로 읽어서는 안 된다 — 지금 무엇이 도는지는 [맵 구현 명세](../extraction-map-implementation-spec.md)가 유일한 참조다.
 
 ## D15. 위협 조작은 기본 동사이고 Capability가 정밀도를 가른다
 
