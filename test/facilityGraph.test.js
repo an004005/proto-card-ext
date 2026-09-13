@@ -1,20 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, sectorRingPairs } from '../src/engine/facilityGraph.js';
 import { countEdgeDisjointPaths, reachableSet, baselineWalkDistances, baselineWalkArcs } from '../src/engine/graphUtils.js';
 import {
-  SECTOR_IDS, SECTOR_LAYOUTS, TOTAL_NODES, THREAT_COUNT_BY_SECTOR, EXIT_AB_MIN_DISTANCE,
+  ALL_SECTOR_IDS, SECTOR_LAYOUTS, totalNodesFor, THREAT_COUNT_BY_SECTOR, EXIT_AB_MIN_DISTANCE,
+  GENERATOR_SECTOR_IDS,
   ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR, TOWER_ELEVATOR_REQUIREMENT, NODE_MIN_SEPARATION,
   SECTOR_NODE_RADIUS,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
-  LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SECTOR_ADJACENCY,
+  LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX,
   LANDMARK_CANDIDATE_MIN, LANDMARK_CANDIDATE_MAX,
 } from '../src/data/facilityLayout.js';
 import { generateSectorLayout } from '../src/engine/layoutArchetypes.js';
 import { createRngState } from '../src/engine/rng.js';
 
-const ADJACENT_SECTOR_KEYS = new Set(SECTOR_ADJACENCY.map(([a, b]) => [a, b].sort().join('|')));
+/** 이 런의 링에서 맞닿은 구역 쌍 — 구역이 런마다 다르므로 그래프에서 만든다. @param {{sectorIds: string[]}} graph */
+function adjacentSectorKeys(graph) {
+  return new Set(sectorRingPairs(graph.sectorIds).map(([a, b]) => [a, b].sort().join('|')));
+}
 
 /** @param {string} nodeId */
 function sectorOf(nodeId) { return nodeId.split('_')[0]; }
@@ -38,21 +42,23 @@ test('different seeds usually produce different graphs', () => {
 test('node/sector/threat/special-edge counts match the spec for many seeds', () => {
   for (let seed = 0; seed < 40; seed++) {
     const { graph } = generateFacilityGraph(seed);
-    assert.equal(graph.nodes.length, TOTAL_NODES, `seed ${seed}: node count`);
+    assert.equal(graph.nodes.length, totalNodesFor(graph.sectorIds), `seed ${seed}: node count`);
 
     const bySector = {};
     for (const node of graph.nodes) (bySector[node.sectorId] ||= []).push(node);
-    for (const sectorId of SECTOR_IDS) {
+    for (const sectorId of graph.sectorIds) {
       assert.equal(bySector[sectorId]?.length, SECTOR_LAYOUTS[sectorId].nodeCount, `seed ${seed}: ${sectorId} node count`);
     }
 
     const threatsBySector = {};
     for (const threat of graph.threats) threatsBySector[threat.sectorId] = (threatsBySector[threat.sectorId] || 0) + 1;
-    for (const sectorId of SECTOR_IDS) {
+    for (const sectorId of graph.sectorIds) {
       assert.equal(threatsBySector[sectorId] || 0, THREAT_COUNT_BY_SECTOR[sectorId], `seed ${seed}: ${sectorId} threat count`);
     }
-    assert.equal(graph.generators.length, 2, `seed ${seed}: two battery generators`);
-    assert.deepEqual(new Set(graph.generators.map((generator) => generator.sectorId)), new Set(['power', 'labs']));
+    // 발전기는 뽑힌 구역 중 전력 구역에만 놓인다 — 둘 다 안 뽑힌 런에는 발전기가 없다.
+    const poweredSectorIds = GENERATOR_SECTOR_IDS.filter((id) => graph.sectorIds.includes(id));
+    assert.equal(graph.generators.length, poweredSectorIds.length, `seed ${seed}: battery generators`);
+    assert.deepEqual(new Set(graph.generators.map((generator) => generator.sectorId)), new Set(poweredSectorIds));
     for (const generator of graph.generators) {
       assert.equal(graph.nodes.find((node) => node.id === generator.nodeId)?.sectorId, generator.sectorId);
     }
@@ -60,14 +66,17 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
     const specialEdges = graph.edges.filter((e) => e.features.length > 0);
     const withinSector = specialEdges.filter((e) => sectorOf(e.from) === sectorOf(e.to));
     const crossSector = specialEdges.filter((e) => sectorOf(e.from) !== sectorOf(e.to));
-    const adjacentCross = crossSector.filter((e) => ADJACENT_SECTOR_KEYS.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
-    const longRange = crossSector.filter((e) => !ADJACENT_SECTOR_KEYS.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
+    const adjacentKeys = adjacentSectorKeys(graph);
+    const adjacentCross = crossSector.filter((e) => adjacentKeys.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
+    const longRange = crossSector.filter((e) => !adjacentKeys.has([sectorOf(e.from), sectorOf(e.to)].sort().join('|')));
     // 배치 원형이 구조적으로 두는 특수 엣지(통신·관제탑 승강기)는 무작위 배치와 별개로 항상 있다.
-    const architecturalTotal = Object.values(ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR).reduce((a, b) => a + b, 0);
-    const withinTotalMin = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MIN + architecturalTotal;
-    const withinTotalMax = SECTOR_IDS.length * SPECIAL_EDGES_PER_SECTOR_MAX + architecturalTotal;
-    const crossTotalMin = SECTOR_IDS.length * CROSS_SECTOR_SPECIAL_EDGES_MIN;
-    const crossTotalMax = SECTOR_IDS.length * CROSS_SECTOR_SPECIAL_EDGES_MAX;
+    // 그 구역이 이번 런에 뽑혔을 때만 센다.
+    const architecturalTotal = graph.sectorIds.reduce((sum, id) => sum + (ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR[id] || 0), 0);
+    const n = graph.sectorIds.length;
+    const withinTotalMin = n * SPECIAL_EDGES_PER_SECTOR_MIN + architecturalTotal;
+    const withinTotalMax = n * SPECIAL_EDGES_PER_SECTOR_MAX + architecturalTotal;
+    const crossTotalMin = n * CROSS_SECTOR_SPECIAL_EDGES_MIN;
+    const crossTotalMax = n * CROSS_SECTOR_SPECIAL_EDGES_MAX;
     assert.ok(withinSector.length >= withinTotalMin && withinSector.length <= withinTotalMax, `seed ${seed}: within-sector special edge total ${withinSector.length}`);
     assert.ok(adjacentCross.length >= crossTotalMin && adjacentCross.length <= crossTotalMax, `seed ${seed}: adjacent cross-sector special edge total ${adjacentCross.length}`);
     // 원거리 지름길은 "매우 소수"가 요구사항이라, 인접 쌍처럼 상한을 넉넉히 잡지 않고 정확히
@@ -79,7 +88,7 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
       const sectorId = sectorOf(edge.from);
       withinBySector[sectorId] = (withinBySector[sectorId] || 0) + 1;
     }
-    for (const sectorId of SECTOR_IDS) {
+    for (const sectorId of graph.sectorIds) {
       const count = withinBySector[sectorId] || 0;
       const architectural = ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR[sectorId] || 0;
       assert.ok(
@@ -165,7 +174,7 @@ test('every node is reachable from the start node', () => {
 test('landmarks declare at least two capability approaches', () => {
   for (let seed = 0; seed < 20; seed++) {
     const { graph } = generateFacilityGraph(seed);
-    assert.equal(graph.landmarks.length, SECTOR_IDS.length);
+    assert.equal(graph.landmarks.length, graph.sectorIds.length);
     for (const landmark of graph.landmarks) {
       assert.ok(landmark.approaches.length >= 2, `landmark ${landmark.id} has <2 approaches`);
     }
@@ -199,7 +208,7 @@ test('cameras and access interfaces are deterministic, independent, and present 
   const { graph } = generateFacilityGraph(42);
   assert.ok(graph.cameras.length > 0);
   assert.ok(graph.accessInterfaces.length > 0);
-  for (const sectorId of SECTOR_IDS) {
+  for (const sectorId of graph.sectorIds) {
     assert.ok(graph.cameras.some((device) => device.nodeId.startsWith(`${sectorId}_`)), `${sectorId}: camera`);
     assert.ok(graph.accessInterfaces.some((device) => device.nodeId.startsWith(`${sectorId}_`)), `${sectorId}: interface`);
   }
@@ -256,14 +265,20 @@ test('every node carries a type and each sector shows its archetype signature', 
     for (const node of graph.nodes) (typesBySector[node.sectorId] ||= new Set()).add(node.type);
 
     // 서명 유형: 그 구역에서 가장 무거운 방 유형은 반드시 한 번은 나온다(attachRooms가 보장).
-    for (const sectorId of SECTOR_IDS) {
+    for (const sectorId of graph.sectorIds) {
       const layout = SECTOR_LAYOUTS[sectorId];
       const signature = layout.roomTypes.reduce((best, item) => (item.weight > best.weight ? item : best), layout.roomTypes[0]).value;
       assert.ok(typesBySector[sectorId].has(signature), `seed ${seed}: ${sectorId} is missing its signature type ${signature}`);
     }
-    // 대공간은 격납고에만, 비인가 통로는 폐기물에만 있다.
-    assert.deepEqual(new Set(graph.nodes.filter((n) => n.type === 'hall').map((n) => n.sectorId)), new Set(['hangar']));
-    assert.deepEqual(new Set(graph.nodes.filter((n) => n.type === 'crawlway').map((n) => n.sectorId)), new Set(['waste']));
+    // 대공간은 격납고에만, 비인가 통로는 폐기물에만 있다 — 그 구역이 뽑히지 않은 런에는 아예 없다.
+    assert.deepEqual(
+      new Set(graph.nodes.filter((n) => n.type === 'hall').map((n) => n.sectorId)),
+      new Set(graph.sectorIds.includes('hangar') ? ['hangar'] : []),
+    );
+    assert.deepEqual(
+      new Set(graph.nodes.filter((n) => n.type === 'crawlway').map((n) => n.sectorId)),
+      new Set(graph.sectorIds.includes('waste') ? ['waste'] : []),
+    );
   }
 });
 
@@ -274,9 +289,10 @@ test('sectors are joined only by gateways, two per sector, on ring-adjacent pair
 
     const gatewaysBySector = {};
     for (const node of graph.nodes) if (node.isGateway) gatewaysBySector[node.sectorId] = (gatewaysBySector[node.sectorId] || 0) + 1;
-    for (const sectorId of SECTOR_IDS) {
+    for (const sectorId of graph.sectorIds) {
       assert.equal(gatewaysBySector[sectorId], 2, `seed ${seed}: ${sectorId} should have exactly two gateways`);
     }
+    const adjacentKeys = adjacentSectorKeys(graph);
 
     // 일반 엣지 중 구역을 넘는 것은 관문뿐이고, 관문은 링에서 인접한 구역만 잇는다.
     for (const edge of graph.edges) {
@@ -285,7 +301,7 @@ test('sectors are joined only by gateways, two per sector, on ring-adjacent pair
       const to = typeById.get(edge.to);
       if (from.sectorId === to.sectorId) continue;
       assert.ok(from.isGateway && to.isGateway, `seed ${seed}: ${edge.id} crosses sectors without gateways`);
-      assert.ok(ADJACENT_SECTOR_KEYS.has([from.sectorId, to.sectorId].sort().join('|')), `seed ${seed}: ${edge.id} links non-adjacent sectors`);
+      assert.ok(adjacentKeys.has([from.sectorId, to.sectorId].sort().join('|')), `seed ${seed}: ${edge.id} links non-adjacent sectors`);
     }
   }
 });
@@ -316,7 +332,7 @@ test('nodes inside a sector never overlap', () => {
     const { graph } = generateFacilityGraph(seed);
     const bySector = {};
     for (const node of graph.nodes) (bySector[node.sectorId] ||= []).push(node);
-    for (const sectorId of SECTOR_IDS) {
+    for (const sectorId of graph.sectorIds) {
       const nodes = bySector[sectorId];
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
@@ -364,7 +380,7 @@ test('the landmark always sits on one of the archetype-fixed candidate rooms', (
 
 test('every sector offers 2-4 landmark candidates — enough to narrow down, not enough to be certain', () => {
   for (let seed = 0; seed < 20; seed++) {
-    for (const sectorId of SECTOR_IDS) {
+    for (const sectorId of ALL_SECTOR_IDS) {
       const layout = generateSectorLayout(createRngState(seed), sectorId);
       assert.ok(
         layout.landmarkIndices.length >= LANDMARK_CANDIDATE_MIN && layout.landmarkIndices.length <= LANDMARK_CANDIDATE_MAX,
@@ -377,8 +393,12 @@ test('every sector offers 2-4 landmark candidates — enough to narrow down, not
 // 탑 제약은 세 군데(관문 연결, 구역 간·원거리 특수 엣지, 구역 안 특수 엣지)에서 각각 지켜야
 // 성립한다. 새 종류의 엣지가 하나 추가되면 조용히 깨지므로 바깥에서 관찰 가능한 성질로 못박는다.
 test('the comms tower only touches other sectors through its ground-floor lobby', () => {
+  let checked = 0;
   for (let seed = 0; seed < 20; seed++) {
     const { graph } = generateFacilityGraph(seed);
+    // 통신동은 런마다 뽑히기도 안 뽑히기도 한다(ADR-0081) — 뽑힌 시드만 본다.
+    if (!graph.sectorIds.includes('comms')) continue;
+    checked += 1;
     const inTower = new Set(graph.nodes.filter((n) => n.sectorId === 'comms').map((n) => n.id));
     // 로비 = 1층 복도(층 사슬의 아래 끝)와 거기 일반 엣지로 붙은 방.
     const corridors = graph.nodes.filter((n) => n.sectorId === 'comms' && n.type === 'corridor');
@@ -396,11 +416,15 @@ test('the comms tower only touches other sectors through its ground-floor lobby'
       assert.ok(lobby.has(endpoint), `seed ${seed}: ${edge.id} leaves the tower from ${endpoint}, which is not the lobby`);
     }
   }
+  assert.ok(checked > 0, '통신동이 뽑힌 시드가 하나도 없었다 — 표본을 늘려야 한다');
 });
 
 test('inside the comms tower nothing crosses a floor except the stairs and the elevator', () => {
+  let checked = 0;
   for (let seed = 0; seed < 20; seed++) {
     const { graph } = generateFacilityGraph(seed);
+    if (!graph.sectorIds.includes('comms')) continue;
+    checked += 1;
     const inTower = new Set(graph.nodes.filter((n) => n.sectorId === 'comms').map((n) => n.id));
     const corridorIds = new Set(graph.nodes.filter((n) => n.sectorId === 'comms' && n.type === 'corridor').map((n) => n.id));
     // 층 번호를 그래프에서 되짚는다: 복도는 y 순서가 곧 층이고, 방은 자기를 매단 복도의 층이다.
@@ -432,11 +456,15 @@ test('inside the comms tower nothing crosses a floor except the stairs and the e
       }
     }
   }
+  assert.ok(checked > 0, '통신동이 뽑힌 시드가 하나도 없었다 — 표본을 늘려야 한다');
 });
 
 test('the comms tower is a straight column with a locked elevator from bottom to top', () => {
+  let checked = 0;
   for (let seed = 0; seed < 20; seed++) {
     const { graph } = generateFacilityGraph(seed);
+    if (!graph.sectorIds.includes('comms')) continue;
+    checked += 1;
     const corridors = graph.nodes.filter((n) => n.sectorId === 'comms' && n.type === 'corridor');
     // 곧은 기둥이라 복도의 x 편차가 층 간격보다 훨씬 작다.
     const xs = corridors.map((n) => n.x);
@@ -453,4 +481,5 @@ test('the comms tower is a straight column with a locked elevator from bottom to
     assert.ok(elevator.features.includes('electronic'), `seed ${seed}: the elevator should also open with Hacking`);
     assert.equal(elevator.requiredCapability, TOWER_ELEVATOR_REQUIREMENT, `seed ${seed}: elevator requirement`);
   }
+  assert.ok(checked > 0, '통신동이 뽑힌 시드가 하나도 없었다 — 표본을 늘려야 한다');
 });

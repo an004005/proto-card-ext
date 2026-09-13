@@ -16,11 +16,12 @@ import { RuleViolation } from './errors.js';
 import { applyCapabilityCost } from './runEngine.js';
 import { requireActionCost } from './actionCosts.js';
 import {
-  POWER_CUT_DURATION, FALSE_BROADCAST_OVERLOAD, FALSE_BROADCAST_INTENSITY, ADJACENT_SECTOR_IDS,
+  POWER_CUT_DURATION, FALSE_BROADCAST_OVERLOAD, FALSE_BROADCAST_INTENSITY,
   FALSE_BROADCAST_ANY_SECTOR_DECEPTION, FAKE_NOISE_RANGE_BY_DECEPTION,
   FAKE_NOISE_STRONG_DECEPTION, FAKE_NOISE_INTENSITY, FAKE_NOISE_STRONG_INTENSITY,
 } from '../data/facilityLayout.js';
 import { bfsHopDistances } from './graphUtils.js';
+import { adjacentSectorIds } from './facilityGraph.js';
 
 /** @typedef {import('./types.js').FacilityRunState} FacilityRunState */
 
@@ -138,7 +139,7 @@ export function broadcastFalseTarget(state, effectiveDeception, targetSectorId) 
   // Deception 3 이상은 인접이 아니라 아무 구역으로나 쏠 수 있다 — 경계를 옆으로 미는 것과
   // 시설 반대편으로 던지는 것은 전혀 다른 계획이고, 그 차이가 Deception 상위 수치의 값이다.
   const anySector = effectiveDeception >= FALSE_BROADCAST_ANY_SECTOR_DECEPTION;
-  const neighbors = ADJACENT_SECTOR_IDS[sectorId] || [];
+  const neighbors = adjacentSectorIds(state.graph, sectorId);
   if (!anySector && !neighbors.includes(targetSectorId)) throw new RuleViolation(`${targetSectorId} is not adjacent to ${sectorId}`);
   if (targetSectorId === sectorId) throw new RuleViolation('cannot broadcast a false target into this very sector');
   const current = state.sectorAlerts[sectorId];

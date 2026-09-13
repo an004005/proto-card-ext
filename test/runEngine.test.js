@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, requestExtraction, reportNoise, reportSighting, moveToAdjacentNode,
   openSpecialEdge, basicRecon, useOpportunity, applyOverloadDelta, useFieldEquipment, isAtOpenExit,
@@ -17,7 +17,7 @@ import {
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
   OVERLOAD_MELTDOWN, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
   TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_EXIT_CLOSE_WINDOW,
-  ADJACENT_SECTOR_IDS, REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
+  REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
   NOISE_DURATION, CAMERA_FORCE_TIME, GENERATOR_FORCE_TIME,
   MOVE_MIN_TIME, MOBILITY_MOVE_TIME_DELTA, CAPABILITY_STEP_TIME_DELTA, CAPABILITY_STEP_HP_COST,
   CONTRACT_DETONATE_TIME, CONTRACT_DETONATE_MIN_HOPS,
@@ -171,9 +171,19 @@ test('noise events expire after their duration and only reach threats within hop
   assert.equal(expired.noiseEvents.length, 0, `noise event should have expired at t=${NOISE_DURATION}`);
 });
 
+/** 그 구역이 실제로 뽑힌 첫 시드의 그래프 — 구역 추첨(ADR-0081) 이후의 픽스처 규칙이다. */
+function graphWithSector(seed, sectorId) {
+  for (let s = seed; s < seed + 200; s++) {
+    const result = generateFacilityGraph(s);
+    if (result.graph.sectorIds.includes(sectorId)) return { graph: result.graph, seed: s };
+  }
+  throw new Error(`no seed near ${seed} draws ${sectorId}`);
+}
+
 // D16/D17: 도면은 처음부터 보이고 내용물만 감춘다. 비인가 통로는 도면에 없는 유일한 예외다.
 test('the floor plan is charted from the start; only unauthorized passages stay off it', () => {
-  const state = makeRun(1);
+  const { graph, seed } = graphWithSector(1, 'waste');
+  const state = createRunState(graph, seed);
   const offPlan = state.graph.nodes.filter((n) => !isOnFloorPlan(n));
   assert.ok(offPlan.length > 0, 'fixture seed should contain an unauthorized level');
   // 비인가층은 폐기물 처리장에만 있고, 비인가 통로는 전부 거기 속한다.
@@ -648,7 +658,10 @@ test('battery generators can be hacked directly or through a hacked same-sector 
 
 test('useConcealment applies its node\'s fixed bonus, costs CONCEALMENT_ACTION_TIME_COST, and only affects the node it was used at', () => {
   const { graph } = generateFacilityGraph(2);
-  const concealedNodeId = Object.keys(graph.concealmentByNodeId)[0];
+  // 카메라가 살아 있는 노드는 상황 보정으로 Stealth가 −1이라 은엄폐 값만 보려는 이 테스트의
+  // 기준선이 흐려진다 — 장치가 없는 은엄폐 노드를 고른다.
+  const cameraNodeIds = new Set(graph.cameras.map((c) => c.nodeId));
+  const concealedNodeId = Object.keys(graph.concealmentByNodeId).find((id) => !cameraNodeIds.has(id));
   assert.ok(concealedNodeId, 'fixture seed should have at least one concealed node');
   const bonus = graph.concealmentByNodeId[concealedNodeId];
 
@@ -732,7 +745,7 @@ test('통제실 장악은 구역당 한 번뿐이다 (C3, ADR-0067)', () => {
 test('hackControlRoom level 2 lowers this sector alert by (hacking - 1), and level 3 also lowers both adjacent sectors by 1 (D12)', () => {
   const { graph } = generateFacilityGraph(2);
   const landmark = graph.landmarks[0];
-  const neighbors = ADJACENT_SECTOR_IDS[landmark.sectorId];
+  const neighbors = adjacentSectorIds(graph, landmark.sectorId);
   let state = { ...createRunState(graph, 2), playerNodeId: landmark.nodeId };
   const raised = { level: 3, resolvedEventIds: [] };
   state = {
@@ -783,13 +796,15 @@ test('getSectorLandmarkArrowTarget points at the current sector\'s landmark unti
 // (planned §9.4)은 taskScheduling.test.js에서 따로 본다.
 function withContract(seed, contractId) {
   const contract = CONTRACT_DEFS.find((c) => c.id === contractId);
-  const { graph } = generateFacilityGraph(seed);
-  return { ...createRunState(graph, seed, { contract }), threats: {} };
+  // 구역은 런마다 넷만 뽑히므로(ADR-0081) 아무 시드나 이 계약의 목표부 구역을 갖고 있지는
+  // 않다. 주어진 시드부터 올라가며 그 구역이 든 첫 시드를 쓴다 — 여전히 결정론적이다.
+  const { graph, seed: used } = graphWithSector(seed, contract.sectorId);
+  return { ...createRunState(graph, used, { contract }), threats: {} };
 }
 
 test('acquireContractGoods requires being at the objective and Stealth or Mobility 1+, then sets acquired + lockdown + accelerates exit B', () => {
   const state = withContract(1, 'sample_retrieval');
-  const landmark = state.graph.landmarks.find((l) => l.sectorId === 'labs');
+  const landmark = state.graph.landmarks.find((l) => l.sectorId === state.contract.sectorId);
   assert.notEqual(landmark.nodeId, state.playerNodeId, 'fixture should not start at the objective');
 
   assert.throws(() => acquireContractGoods(state, 1, 1), /objective/, 'wrong node should be rejected');
@@ -814,7 +829,7 @@ test('acquireContractGoods requires being at the objective and Stealth or Mobili
 
 test('파괴 계약은 설치와 기폭 두 장이다 — 설치에서 봉쇄가 켜지고, 기폭은 목표부에서 떨어져야 한다 (C5)', () => {
   const state = withContract(1, 'generator_shutdown');
-  const landmark = state.graph.landmarks.find((l) => l.sectorId === 'power');
+  const landmark = state.graph.landmarks.find((l) => l.sectorId === state.contract.sectorId);
   const at = { ...state, playerNodeId: landmark.nodeId };
 
   assert.throws(() => destroyContractTarget(at, -2), /force/);
@@ -845,7 +860,7 @@ test('정보 송출은 목표부 구역과 비인접 구역에서는 할 수 없
   const state = withContract(1, 'record_review');
   const landmark = state.graph.landmarks.find((l) => l.sectorId === 'entrance');
   const acquired = acquireContractIntel({ ...state, playerNodeId: landmark.nodeId }, 1);
-  const adjacentIds = ADJACENT_SECTOR_IDS.entrance;
+  const adjacentIds = adjacentSectorIds(state.graph, 'entrance');
 
   assert.throws(
     () => transmitContractIntel({ ...acquired, playerNodeId: landmark.nodeId }, 1),
@@ -875,7 +890,7 @@ test('intel contracts need a two-step acquire-then-transmit at an adjacent-secto
   assert.ok(acquired.lockdown);
   const lockedAt = acquired.lockdown.startedAt;
 
-  const otherLandmark = acquired.graph.landmarks.find((l) => ADJACENT_SECTOR_IDS.entrance.includes(l.sectorId));
+  const otherLandmark = acquired.graph.landmarks.find((l) => adjacentSectorIds(acquired.graph, 'entrance').includes(l.sectorId));
   assert.throws(
     () => acquireContractIntel({ ...acquired, playerNodeId: otherLandmark.nodeId }, 1),
     /no intel contract to acquire/,
@@ -900,13 +915,13 @@ test('정보 계약의 봉쇄는 출구 B 폐쇄를 앞당기지 않는다 — �
   assert.equal(acquired.exits.A.disabledAt, EXIT_A_DISABLED_AT, 'A는 어느 계약에서도 봉쇄가 건드리지 않는다');
 
   // 송출(완료)도 B를 건드리지 않는다 — 봉쇄는 확보에서 한 번만 켜진다.
-  const neighbor = acquired.graph.landmarks.find((l) => ADJACENT_SECTOR_IDS.entrance.includes(l.sectorId));
+  const neighbor = acquired.graph.landmarks.find((l) => adjacentSectorIds(acquired.graph, 'entrance').includes(l.sectorId));
   const transmitted = transmitContractIntel({ ...acquired, playerNodeId: neighbor.nodeId }, 1);
   assert.equal(transmitted.exits.B.disabledAt, EXIT_B_DISABLED_AT);
 
   // 봉쇄의 나머지 효과는 정보 계약에서도 그대로 — 위협 이동이 봉쇄표로 빨라진다.
   // 같은 상태에서 lockdown만 떼어낸 대조군과 비교해 봉쇄표가 실제로 쓰였는지 본다.
-  const baseThreats = makeRun(1).threats;
+  const baseThreats = createRunState(acquired.graph, 1).threats;
   const threatId = Object.keys(baseThreats)[0];
   const withThreats = { ...acquired, threats: baseThreats, time: 0 };
   const lockedMoved = advanceTime(withThreats, THREAT_MOVE_INTERVAL.patrol);
@@ -920,13 +935,13 @@ test('정보 계약의 봉쇄는 출구 B 폐쇄를 앞당기지 않는다 — �
 
   // 회수·파괴는 그대로 앞당긴다.
   const retrieval = withContract(1, 'sample_retrieval');
-  const labs = retrieval.graph.landmarks.find((l) => l.sectorId === 'labs');
+  const labs = retrieval.graph.landmarks.find((l) => l.sectorId === retrieval.contract.sectorId);
   const goods = acquireContractGoods({ ...retrieval, playerNodeId: labs.nodeId }, 1, 0);
   assert.equal(goods.exits.B.disabledAt, goods.time + LOCKDOWN_EXIT_CLOSE_WINDOW);
   assert.ok(goods.exits.B.disabledAt < EXIT_B_DISABLED_AT);
 
   const destroy = withContract(1, 'generator_shutdown');
-  const power = destroy.graph.landmarks.find((l) => l.sectorId === 'power');
+  const power = destroy.graph.landmarks.find((l) => l.sectorId === destroy.contract.sectorId);
   const planted = destroyContractTarget({ ...destroy, playerNodeId: power.nodeId }, 1);
   assert.equal(planted.exits.B.disabledAt, planted.time + LOCKDOWN_EXIT_CLOSE_WINDOW);
   assert.ok(planted.exits.B.disabledAt < EXIT_B_DISABLED_AT);

@@ -8,15 +8,21 @@ import { addItem, createItem } from './inventoryEngine.js';
 /** @typedef {import('./types.js').GameSnapshot} GameSnapshot */
 
 /**
- * 유형별로 하나씩, 정확히 3개를 뽑는다. 순수 함수 — rngState를 명시적으로 스레딩한다.
+ * 유형별로 하나씩 뽑는다. 후보는 **이 런이 실제로 생성할 구역**의 계약뿐이다(ADR-0081) — 가지
+ * 않을 구역의 목표부를 제안하면 수락하는 순간 완수 불가능한 계약이 된다. 그래서 제안이 항상
+ * 3장은 아니다: 뽑힌 구역에 그 유형의 계약이 없으면 그 유형은 빠진다. 시작 구역 entrance는
+ * 항상 뽑히고 거기 정보 계약(record_review)이 있으므로 최소 1장은 보장된다.
+ * 순수 함수 — rngState를 명시적으로 스레딩한다.
  * @param {import('./rng.js').RngState} rngState
+ * @param {readonly string[]} sectorIds 이 런의 구역
  * @returns {{contracts: import('../data/contracts.js').ContractDef[], rngState: import('./rng.js').RngState}}
  */
-export function offerContracts(rngState) {
+export function offerContracts(rngState, sectorIds) {
   let state = rngState;
   const contracts = [];
   for (const type of /** @type {const} */ (['retrieval', 'destroy', 'intel'])) {
-    const pool = CONTRACT_DEFS.filter((c) => c.type === type);
+    const pool = CONTRACT_DEFS.filter((c) => c.type === type && sectorIds.includes(c.sectorId));
+    if (pool.length === 0) continue;
     const { value, state: next } = pick(state, pool);
     state = next;
     contracts.push(value);

@@ -2,7 +2,7 @@
 // 묶음. inventoryReducer.js(장착 로직 재사용)와 runEngine.js(refreshLocalObservations)에만
 // 의존한다 — facilityReducer.js/combatReducer.js/rewardReducer.js와는 무관하다(순환 없음).
 import { createRngState, pick } from './rng.js';
-import { generateFacilityGraph } from './facilityGraph.js';
+import { generateFacilityGraph, selectRunSectorIds } from './facilityGraph.js';
 import { createRunState, refreshLocalObservations } from './runEngine.js';
 import { offerContracts } from './contractReducer.js';
 import { computeCapabilities } from './capabilityEngine.js';
@@ -72,8 +72,10 @@ function buildStartingWarehouse(loadout) {
 /** @param {number} seed @returns {GameSnapshot} */
 export function newRun(seed) {
   const loadout = defaultLoadout();
-  const rngState = createRngState(seed);
-  const offered = offerContracts(rngState);
+  // 구역 추첨이 계약 제안보다 **먼저**다(ADR-0081) — 제안은 이 런이 실제로 생성할 구역의
+  // 계약으로만 좁혀지므로, 어느 구역을 갈지가 먼저 정해져 있어야 한다.
+  const selected = selectRunSectorIds(createRngState(seed));
+  const offered = offerContracts(selected.rngState, selected.sectorIds);
   return {
     currentScreen: 'contract',
     playerState: {
@@ -88,6 +90,7 @@ export function newRun(seed) {
     pendingReward: null,
     combatSummary: null,
     rngState: offered.rngState,
+    runSectorIds: selected.sectorIds,
     offeredContracts: offered.contracts,
     activeContract: null,
   };
@@ -133,7 +136,7 @@ export function confirmLoadout(snapshot) {
   const inventory = { ...snapshot.playerState.inventory, capacity };
   const playerState = { ...snapshot.playerState, hp: maxHp, maxHp, overload: floor, inventory };
   const seed = snapshot.rngState;
-  const { graph, rngState } = generateFacilityGraph(seed);
+  const { graph, rngState } = generateFacilityGraph(seed, snapshot.runSectorIds);
   const contract = snapshot.activeContract;
   const facilityRunState = refreshLocalObservations(createRunState(graph, seed, {
     overloadFloor: floor, overloadGainMultiplier: computeOverloadGainMultiplier(loadout),

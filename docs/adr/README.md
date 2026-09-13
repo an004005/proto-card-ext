@@ -74,6 +74,8 @@
 | 0057 Force 층계 1~4 | amended | MVP는 tier 1만 구현, 상위 티어는 planned.md |
 | 0058 Deception 층계 1~4 | amended | MVP는 tier 1만 구현, 상위 티어는 planned.md |
 | 0077 조우 3단계 판정 | amended | ADR-0079의 상황 보정(왼쪽 변의 재료가 넓어짐) |
+| 0078 8구역 206노드 | amended | ADR-0081 — 배치 원형과 구역 성격은 유효하고, 한 런은 여덟 중 넷만 쓴다 |
+| 0076 출구 A–B 최소 120칸 | amended | ADR-0081의 90칸(네 구역 링에서는 120칸이 도달 불가) |
 | 0023 Perception 다섯 단계 정보 사다리 | amended | 정보 깊이 표(PERCEPTION_INFO_TABLE) — 사다리라는 방향은 유효하고 각 단의 내용과 사거리가 바뀌었다 |
 | 0024 상세 정보는 정찰로만 | amended | 정보 깊이 표 — 정찰이 정보의 유일한 수단이라는 원칙은 유효하나 상세/집중 정찰이라는 별도 행동은 없다. 정찰 하나가 Perception만큼 깊어진다 |
 | 0055 Perception은 진행을 막지 않는다 | amended | 정보 깊이 표 — 원칙은 그대로 유효하고 수치(요구치·시간)가 바뀌었다 |

@@ -21,7 +21,10 @@ test('측정 결과는 시드마다 Mobility 네 값을 모두 담는다', () =>
     for (const mobility of MOBILITY_VALUES) {
       const entry = seedResult.byMobility[mobility];
       assert.ok(entry, `Mobility ${mobility} 누락`);
-      assert.equal(Object.keys(entry.contracts).length, CONTRACT_DEFS.length);
+      // 한 런은 네 구역만 쓰므로(ADR-0081) 그 구역에 목표부가 있는 계약만 측정 대상이다.
+      const expected = CONTRACT_DEFS.filter((def) => seedResult.sectorIds.includes(def.sectorId));
+      assert.ok(expected.length >= 1, `시드 ${seedResult.seed}: 잴 계약이 하나도 없다`);
+      assert.deepEqual(new Set(Object.keys(entry.contracts)), new Set(expected.map((def) => def.id)));
     }
   }
 });
@@ -63,6 +66,7 @@ test('계약 왕복은 확보 시각과 봉쇄 유예를 함께 계산한다', (
     for (const mobility of MOBILITY_VALUES) {
       for (const def of CONTRACT_DEFS) {
         const entry = seedResult.byMobility[mobility].contracts[def.id];
+        if (!entry) continue; // 이 시드가 뽑지 않은 구역의 계약
         // 봉쇄는 목표부 행동이 끝나는 순간 켜진다 — 파괴 계약도 설치 완료 시각이 기준이고
         // 기폭 시각이 아니다(C5).
         assert.equal(entry.acquiredAt, entry.toObjective + entry.actionCost);

@@ -1,6 +1,6 @@
 import { html } from '../lib.js';
 import { snapshotSignal } from '../state/runState.js';
-import { RUN_COLLAPSE_TIME, TOTAL_NODES } from '../data/facilityLayout.js';
+import { RUN_COLLAPSE_TIME } from '../data/facilityLayout.js';
 import { computeInventoryScore, computeContractOutcome, startNewRun } from './runEndHelpers.js';
 
 // 'meltdown' phase는 과부화 3단계 개편에서 사라졌다(overloadEngine.js) — 죽은 분기를 남겨두면
@@ -14,6 +14,8 @@ export function GameOverScreen() {
   const snapshot = snapshotSignal.value;
   const run = snapshot.facilityRunState;
   const visitedCount = run ? run.visitedNodeIds.length : 0;
+  // 노드 총수는 런마다 다르다 — 구역이 런 시작에 뽑히기 때문이다(ADR-0081).
+  const totalNodes = run ? run.graph.nodes.length : 0;
   const outcome = computeContractOutcome(run);
   const score = computeInventoryScore(snapshot.playerState.inventory) + (outcome?.scoreDelta ?? 0);
 
@@ -24,7 +26,7 @@ export function GameOverScreen() {
       <div style=${{ display: 'flex', gap: 'var(--space-8)', margin: 'var(--space-4) 0', fontSize: '14px' }}>
         <span>사인 <strong>${causeOfDeath(run)}</strong></span>
         <span>붕괴까지 <strong>${Math.max(0, RUN_COLLAPSE_TIME - (run ? run.time : 0))}</strong>칸 남은 시점 (시각 ${run ? run.time : 0} / ${RUN_COLLAPSE_TIME})</span>
-        <span>탐사 노드 <strong>${visitedCount}</strong>/${TOTAL_NODES}</span>
+        <span>탐사 노드 <strong>${visitedCount}</strong>/${totalNodes}</span>
       </div>
       <p style=${{ fontSize: '12px', opacity: 0.6 }}>미회수 점수: ${score}cr</p>
       ${outcome ? html`

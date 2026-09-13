@@ -2,7 +2,7 @@
 // 정수 칸으로만 존재하고, 1칸씩 진행하는 순서가 쪼개도 같은가"라는 성질이다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import {
   createRunState, advanceTime, requestExtraction, basicRecon, reportNoise, reportSighting,
   moveToAdjacentNode, useFieldEquipment, destroyContractTarget, moveTimeCost, openSpecialEdge,
@@ -16,9 +16,20 @@ import {
   REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
   EXIT_A_DISABLED_AT, EXIT_OPEN_WINDOW, MOVE_MIN_TIME, BASIC_RECON_TIME, FORCE_TIER1_TIME,
   APPROACH_TIME_DELTA, TRACE_CLEANUP_TIME_BY_PERCEPTION, FALSE_BROADCAST_TIME,
-  FALSE_BROADCAST_DURATION_BY_STEP, ADJACENT_SECTOR_IDS,
+  FALSE_BROADCAST_DURATION_BY_STEP,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency } from '../src/engine/graphUtils.js';
+
+/** 시작 노드에 잠긴 특수 엣지가 붙은 첫 시드의 런. @returns {{run: any, blocked: any}} */
+function runWithBlockedEdgeAtStart() {
+  for (let seed = 0; seed < 200; seed++) {
+    const run = makeRun(seed);
+    const blocked = run.graph.edges.find((e) => e.features.includes('blocked')
+      && (e.from === run.playerNodeId || e.to === run.playerNodeId));
+    if (blocked) return { run, blocked };
+  }
+  throw new Error('no seed puts a blocked special edge on the start node');
+}
 
 function makeRun(seed = 1, overloadConfig) {
   const { graph } = generateFacilityGraph(seed);
@@ -124,8 +135,10 @@ test('a threat that speeds up pulls its reservation in with min(); one that slow
 });
 
 test('entering lockdown pulls every sector reinforcement clock to min(existing, now + lockdown interval)', () => {
-  const contract = CONTRACT_DEFS.find((c) => c.type === 'destroy');
   const { graph } = generateFacilityGraph(1);
+  // 구역이 런마다 뽑히므로(ADR-0081) 이 런에 목표부 구역이 있는 파괴 계약을 고른다.
+  const contract = CONTRACT_DEFS.find((c) => c.type === 'destroy' && graph.sectorIds.includes(c.sectorId));
+  assert.ok(contract, '픽스처 시드는 파괴 계약이 있는 구역을 뽑아야 한다');
   const base = createRunState(graph, 1, { contract });
   const landmark = graph.landmarks.find((l) => l.sectorId === contract.sectorId);
 
@@ -236,11 +249,9 @@ test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예�
   const reconRun = makeRun(7);
   assert.equal(charged(reconRun, basicRecon(reconRun)), BASIC_RECON_TIME);
 
-  // 특수 엣지 개방 — 층계 가감과 접근 가감이 함께 걸리는 유일한 자리다.
-  const edgeRun = makeRun(6); // 시작 노드에 'blocked' 특수 엣지가 붙는 시드.
-  const blocked = edgeRun.graph.edges.find((e) => e.features.includes('blocked')
-    && (e.from === edgeRun.playerNodeId || e.to === edgeRun.playerNodeId));
-  assert.ok(blocked, '접근 가감을 검증할 특수 엣지가 있어야 한다');
+  // 특수 엣지 개방 — 층계 가감과 접근 가감이 함께 걸리는 유일한 자리다. 구역 추첨(ADR-0081)
+  // 때문에 어느 시드가 시작 노드에 'blocked' 엣지를 두는지는 고정이 아니라, 찾아서 쓴다.
+  const { run: edgeRun, blocked } = runWithBlockedEdgeAtStart();
   for (const mode of ['safe', 'normal', 'rush']) {
     for (const force of [0, 1, 3]) {
       const required = blocked.requiredCapability ?? 1;
@@ -268,7 +279,7 @@ test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예�
   const entry = interfaceRun.graph.accessInterfaces[0];
   const atInterface = { ...interfaceRun, playerNodeId: entry.nodeId };
   const sectorId = entry.nodeId.split('_')[0];
-  const targetSectorId = ADJACENT_SECTOR_IDS[sectorId][0];
+  const targetSectorId = adjacentSectorIds(interfaceRun.graph, sectorId)[0];
   const raised = {
     ...atInterface,
     sectorAlerts: {

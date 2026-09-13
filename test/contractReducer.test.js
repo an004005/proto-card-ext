@@ -5,21 +5,31 @@ import { offerContracts, computeContractOutcome } from '../src/engine/contractRe
 import { createRngState } from '../src/engine/rng.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 
-/** offerContracts는 언제나 [retrieval, destroy, intel] 순서로 하나씩 뽑는다(구현 순서 그대로). */
+import { selectRunSectorIds } from '../src/engine/facilityGraph.js';
+
+/** offerContracts는 [retrieval, destroy, intel] 순서로, 뽑힌 구역에 있는 유형만 하나씩 뽑는다. */
 function startLoadoutWithType(seed, type) {
   const offered = gameReducer(null, { type: 'NEW_RUN', seed });
   const contract = offered.offeredContracts.find((c) => c.type === type);
   return gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
 }
 
-test('offerContracts returns exactly one of each type and is deterministic for the same seed', () => {
-  for (let seed = 0; seed < 10; seed++) {
-    const a = offerContracts(createRngState(seed));
-    const b = offerContracts(createRngState(seed));
+test('offerContracts only offers contracts in the run’s own sectors, at most one per type, and is deterministic', () => {
+  for (let seed = 0; seed < 30; seed++) {
+    const { sectorIds } = selectRunSectorIds(createRngState(seed));
+    const a = offerContracts(createRngState(seed), sectorIds);
+    const b = offerContracts(createRngState(seed), sectorIds);
     assert.deepEqual(a.contracts, b.contracts);
-    assert.equal(a.contracts.length, 3);
-    assert.deepEqual(a.contracts.map((c) => c.type).sort(), ['destroy', 'intel', 'retrieval']);
-    for (const c of a.contracts) assert.ok(CONTRACT_DEFS.includes(c));
+    // 갈 수 없는 구역의 계약은 제안되지 않는다 — 수락하는 순간 완수 불가능한 계약이 된다.
+    for (const c of a.contracts) {
+      assert.ok(CONTRACT_DEFS.includes(c));
+      assert.ok(sectorIds.includes(c.sectorId), `seed ${seed}: ${c.id}의 구역 ${c.sectorId}은 이 런에 없다`);
+    }
+    // 유형별 최대 하나. 구역 조합에 그 유형이 없으면 빠지므로 1~3장이다.
+    const types = a.contracts.map((c) => c.type);
+    assert.deepEqual(types, [...new Set(types)]);
+    assert.ok(a.contracts.length >= 1, `seed ${seed}: 제안이 한 장도 없다`);
+    assert.ok(a.contracts.length <= 3);
   }
 });
 
@@ -152,23 +162,26 @@ test('파괴 계약은 설치 뒤 목표부에서 떨어진 자리에서 기폭�
 // ---- C5: 정보 계약의 송출 지점은 목표부 구역의 이웃 둘뿐 ----
 
 test('정보 송출은 목표부 구역에 인접한 구역의 랜드마크에서만 된다', async () => {
-  const { ADJACENT_SECTOR_IDS } = await import('../src/data/facilityLayout.js');
+  const { adjacentSectorIds } = await import('../src/engine/facilityGraph.js');
 
   let s = startLoadoutWithType(3, 'intel');
   const contract = s.activeContract;
   s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
   const run = s.facilityRunState;
-  const adjacentIds = ADJACENT_SECTOR_IDS[contract.sectorId];
+  const adjacentIds = adjacentSectorIds(run.graph, contract.sectorId);
   const objectiveLandmark = run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
   const adjacentLandmark = run.graph.landmarks.find((l) => adjacentIds.includes(l.sectorId));
   const farLandmark = run.graph.landmarks.find((l) => l.sectorId !== contract.sectorId && !adjacentIds.includes(l.sectorId));
   assert.ok(objectiveLandmark && adjacentLandmark && farLandmark);
 
   // 확보 이후 상태를 직접 세운다 — Hacking 게이팅 자체는 runEngine.test.js가 본다.
+  // 위협은 비운다 — 여기서 보는 것은 "어디서 송출할 수 있는가"이지 작업이 중단되는가가
+  // 아니다. 구역이 런마다 뽑히면서(ADR-0081) 이웃 랜드마크 옆에 위협이 서 있는 시드가 생겨
+  // 송출 작업이 중단되곤 했다.
   const atNode = (nodeId) => ({
     ...s,
     facilityRunState: {
-      ...run, playerNodeId: nodeId,
+      ...run, playerNodeId: nodeId, threats: {},
       contract: { ...contract, status: 'acquired', acquiredAt: run.time },
       lockdown: { startedAt: run.time },
     },
