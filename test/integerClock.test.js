@@ -12,13 +12,14 @@ import { cleanTraces, broadcastFalseTarget } from '../src/engine/recovery.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import {
-  RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL, EDGE_TIME_MIN, EDGE_TIME_MAX,
+  RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
   REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
-  EXIT_A_DISABLED_AT, EXIT_OPEN_WINDOW, MOVE_MIN_TIME, BASIC_RECON_TIME, FORCE_TIER1_TIME,
+  EXIT_A_DISABLED_AT, EXIT_OPEN_WINDOW, BASIC_RECON_TIME, FORCE_TIER1_TIME,
   APPROACH_TIME_DELTA, TRACE_CLEANUP_TIME_BY_PERCEPTION, FALSE_BROADCAST_TIME,
   FALSE_BROADCAST_DURATION_BY_STEP,
 } from '../src/data/facilityLayout.js';
 import { buildAdjacency } from '../src/engine/graphUtils.js';
+import { finishTask } from './helpers/finishTask.js';
 
 /** 시작 노드에 잠긴 특수 엣지가 붙은 첫 시드의 런. @returns {{run: any, blocked: any}} */
 function runWithBlockedEdgeAtStart() {
@@ -62,12 +63,12 @@ test('every time field in a live run state is an integer number of 칸', () => {
   // 소음(지속), 장비(지속+쿨다운), 그리고 여러 칸의 월드 진행.
   const neighbor = [...buildAdjacency(state.graph.edges).get(state.playerNodeId)][0];
   state = moveToAdjacentNode(state, neighbor, 3, -2);
-  state = basicRecon(state);
+  state = finishTask(basicRecon(state));
   state = reportNoise(state, state.playerNodeId, 2);
-  state = requestExtraction(state, 'A', 1);
+  state = finishTask(requestExtraction(state, 'A', 1));
   const barrier = MAP_EQUIPMENT_CAPABILITIES.module_forcefield.fieldAction;
   const someEdge = state.graph.edges.find((e) => e.from === state.playerNodeId || e.to === state.playerNodeId);
-  state = useFieldEquipment(state, 'ff1', barrier, someEdge.id);
+  state = finishTask(useFieldEquipment(state, 'ff1', barrier, someEdge.id));
   state = advanceTime(state, state.time + 37);
 
   const fields = [];
@@ -78,14 +79,14 @@ test('every time field in a live run state is an integer number of 칸', () => {
   }
 });
 
-test('every generated corridor cost is an integer 칸 and stays inside [EDGE_TIME_MIN, EDGE_TIME_MAX]', () => {
+test('통로에는 고유한 시간 비용이 없고, 거리는 정수 홉수다(ADR-0084)', () => {
   for (const seed of [1, 2, 3, 7, 13, 21, 42]) {
     const { graph } = generateFacilityGraph(seed);
     for (const edge of graph.edges) {
-      assert.ok(Number.isInteger(edge.timeCost), `seed ${seed} ${edge.id}: ${edge.timeCost}`);
-      assert.ok(edge.timeCost >= EDGE_TIME_MIN && edge.timeCost <= EDGE_TIME_MAX, `seed ${seed} ${edge.id}: ${edge.timeCost}`);
+      assert.equal(edge.timeCost, undefined, `seed ${seed} ${edge.id}: 통로는 시간을 들고 있지 않다`);
     }
-    assert.ok(Number.isInteger(graph.exitPlacement.exitAWalkDistance), `seed ${seed}: 시작점-출구 A 거리도 정수 칸이다`);
+    const distance = graph.exitPlacement.exitAWalkDistance;
+    assert.ok(Number.isInteger(distance) && distance > 0, `seed ${seed}: 시작점-출구 A 거리도 정수 홉이다`);
   }
 });
 
@@ -154,7 +155,7 @@ test('entering lockdown pulls every sector reinforcement clock to min(existing, 
   };
   assert.equal(at.reinforcements[contract.sectorId].nextAt, REINFORCEMENT_INTERVAL);
 
-  const locked = destroyContractTarget(at, 1);
+  const locked = finishTask(destroyContractTarget(at, 1));
   assert.ok(locked.lockdown);
   const startedAt = locked.lockdown.startedAt;
   for (const [sectorId, clock] of Object.entries(locked.reinforcements)) {
@@ -170,7 +171,7 @@ test('a 10-칸 effect starts at its completion time C and is already gone at C+1
   assert.equal(contract.duration, 10);
   const edge = base.graph.edges.find((e) => e.from === base.playerNodeId || e.to === base.playerNodeId);
 
-  const used = useFieldEquipment(base, 'ff1', contract, edge.id);
+  const used = finishTask(useFieldEquipment(base, 'ff1', contract, edge.id));
   const completedAt = base.time + contract.timeCost;
   assert.equal(used.time, completedAt, '작업 시간만큼 흐른 뒤 완료된다');
   const barrier = used.activeBarriers.find((b) => b.edgeId === edge.id);
@@ -187,11 +188,13 @@ test('a 10-칸 effect starts at its completion time C and is already gone at C+1
   assert.equal(used.fieldCooldowns.ff1, completedAt + contract.cooldown);
 });
 
-test('ADR-0054: 폐쇄 시각 뒤 새 요청은 막히지만 이미 시작된 개방 대기와 개방 창은 끝까지 진행된다', () => {
-  let state = makeRun(9);
-  // 폐쇄 2칸 전에 요청 → 요청 3칸 + 대기 15칸이 폐쇄 시각을 넘긴다.
+test('ADR-0054: 폐쇄 시각 뒤 새 가동은 막히지만 이미 시작된 가동 게이지와 개방 창은 끝까지 진행된다', () => {
+  // 가동은 중단되면 취소되므로(TASK_ABORTS.exitActivate), 여기서는 위협 없는 런으로 본다 —
+  // 보려는 것은 폐쇄 시각이 이미 시작된 가동을 끊지 않는다는 것뿐이다.
+  let state = { ...makeRun(9), threats: {} };
+  // 폐쇄 2칸 전에 가동 → Hacking 4의 게이지 8칸이 폐쇄 시각을 넘긴다(개방 창까지 붕괴 전에 닫힌다).
   state = advanceTime(state, EXIT_A_DISABLED_AT - 2);
-  state = requestExtraction(state, 'A', 0);
+  state = requestExtraction(state, 'A', 4);
   const opensAt = state.exits.A.opensAt;
   assert.ok(opensAt > EXIT_A_DISABLED_AT);
 
@@ -204,31 +207,21 @@ test('ADR-0054: 폐쇄 시각 뒤 새 요청은 막히지만 이미 시작된 �
 
   state = advanceTime(state, opensAt + EXIT_OPEN_WINDOW);
   assert.equal(state.exits.A.status, 'disabled');
-  assert.throws(() => requestExtraction(state, 'A', 0));
+  assert.throws(() => requestExtraction(state, 'A', 4));
 });
 
 // ---- 3단계: 런타임 배율을 정수 가감·고정표로 교체(ADR-0075) ----
 
-test('Mobility는 통로 비용에 칸을 더하고 뺄 뿐이다 — 저장된 비용에 배율을 곱하지 않는다', () => {
-  // 배율이면 같은 통로가 빌드마다 다른 소수로 갈라져 반올림에 기대게 되고, "이 통로에 몇 칸
-  // 드나"를 뺄셈으로 알 수 없다. 표는 planned §3의 확정값이다.
+test('이동은 통로와 Mobility에 관계없이 언제나 1칸이다(ADR-0084)', () => {
+  // 시간은 이동이 아니라 작업에서 나간다. 통로마다 다른 비용도, Mobility 가감도 없다 —
+  // 그래서 "여기서 저기까지 몇 칸"이 홉수 세기 하나로 끝난다.
   const mobilities = [-2, -1, 0, 1, 2, 3, 4];
-  assert.deepEqual(mobilities.map((m) => moveTimeCost({ timeCost: 5 }, m)), [7, 6, 5, 4, 3, 2, 2]);
-  assert.deepEqual(mobilities.map((m) => moveTimeCost({ timeCost: 10 }, m)), [12, 11, 10, 9, 8, 7, 6]);
-
-  // 하한 2칸은 남는다 — 짧은 통로에서는 Mobility 추가 이득이 없고, 긴 통로에서만 값을 한다.
-  assert.equal(moveTimeCost({ timeCost: EDGE_TIME_MIN }, 4), MOVE_MIN_TIME);
-  // 범위 밖 수치는 표 양끝으로 잘린다(장비 보정이 상한을 넘겨도 표를 벗어나지 않는다).
-  assert.equal(moveTimeCost({ timeCost: 9 }, 9), moveTimeCost({ timeCost: 9 }, 4));
-  assert.equal(moveTimeCost({ timeCost: 9 }, -9), moveTimeCost({ timeCost: 9 }, -2));
-
-  // 생성 가능한 모든 통로 비용에서 결과가 정수이고 하한을 지킨다.
-  for (let b = EDGE_TIME_MIN; b <= EDGE_TIME_MAX; b++) {
-    for (const m of mobilities) {
-      const cost = moveTimeCost({ timeCost: b }, m);
-      assert.ok(Number.isInteger(cost) && cost >= MOVE_MIN_TIME, `B=${b}, M=${m} -> ${cost}`);
-    }
+  for (const m of mobilities) {
+    assert.equal(moveTimeCost({ features: [] }, m), 1, `Mobility ${m}`);
+    // 범위 밖 수치도 같다(장비 보정이 상한을 넘겨도 마찬가지다).
+    assert.equal(moveTimeCost({ features: [] }, m * 10), 1);
   }
+  assert.equal(moveTimeCost(), 1, '통로를 넘기지 않아도 답은 같다');
 });
 
 test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예고값과 같다', () => {
@@ -247,7 +240,7 @@ test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예�
 
   // 기본 정찰 — Capability가 걸리지 않은 고정 비용.
   const reconRun = makeRun(7);
-  assert.equal(charged(reconRun, basicRecon(reconRun)), BASIC_RECON_TIME);
+  assert.equal(charged(reconRun, finishTask(basicRecon(reconRun))), BASIC_RECON_TIME);
 
   // 특수 엣지 개방 — 층계 가감과 접근 가감이 함께 걸리는 유일한 자리다. 구역 추첨(ADR-0081)
   // 때문에 어느 시드가 시작 노드에 'blocked' 엣지를 두는지는 고정이 아니라, 찾아서 쓴다.
@@ -259,7 +252,7 @@ test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예�
         time: FORCE_TIER1_TIME, timeDelta: APPROACH_TIME_DELTA[mode],
       });
       if (forecast.step === 'impossible') continue;
-      const opened = openSpecialEdge(edgeRun, blocked.id, 'force', force, mode);
+      const opened = finishTask(openSpecialEdge(edgeRun, blocked.id, 'force', force, mode));
       assert.equal(charged(edgeRun, opened), forecast.timeCost, `개방 ${mode}/F=${force}`);
     }
   }
@@ -271,7 +264,7 @@ test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예�
     const forecast = resolveCapabilityCost('perception', perception, 1, {
       time: TRACE_CLEANUP_TIME_BY_PERCEPTION[perception + 2], dedicatedTimeRule: true,
     });
-    assert.equal(charged(traced, cleanTraces(traced, perception)), forecast.timeCost, `흔적 정리 P=${perception}`);
+    assert.equal(charged(traced, finishTask(cleanTraces(traced, perception))), forecast.timeCost, `흔적 정리 P=${perception}`);
   }
 
   // 가짜 목표 송출 — 시간은 층계 가감, 지속은 고정표. 둘 다 예고와 같아야 한다.
@@ -292,7 +285,7 @@ test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예�
     const forecast = resolveCapabilityCost('deception', deception, 1, {
       time: FALSE_BROADCAST_TIME, durationByStep: FALSE_BROADCAST_DURATION_BY_STEP,
     });
-    const after = broadcastFalseTarget(raised, deception, targetSectorId);
+    const after = finishTask(broadcastFalseTarget(raised, deception, targetSectorId));
     assert.equal(charged(raised, after), forecast.timeCost, `가짜 목표 D=${deception}`);
     // 미끼는 작업 **완료 시각** C에 심기고 거기서부터 고정표의 지속만큼 버틴다 — 시작 시각에
     // 심으면 긴 작업에서 완료 전에 이미 만료돼 버린다.

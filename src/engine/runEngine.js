@@ -21,8 +21,8 @@ import { rollFieldLootOptions } from './fieldLoot.js';
 import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 import {
   RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
-  EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
-  INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
+  EXIT_OPEN_WINDOW, EXIT_ACTIVATE_TIME_BY_HACKING, NOISE_DURATION,
+  INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_MOVE_INTERVAL, SECTOR_ALERT_FAST_MOVE_LEVEL,
   SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE,
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
@@ -31,7 +31,7 @@ import {
   CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
   INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING,
   CAMERA_SNIPE_AMMO_COST,
-  MOBILITY_MOVE_TIME_DELTA, MOVE_MIN_TIME,
+
   GENERATOR_HACK_TIME, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
   CONCEALMENT_ACTION_TIME_COST, HALL_STEALTH_PENALTY, CONTROL_ROOM_HACK_TIME,
   STEALTH_CONTEXT_CAMERA, STEALTH_CONTEXT_POWER_CUT, STEALTH_CONTEXT_LOCKDOWN,
@@ -39,7 +39,7 @@ import {
   PURSUIT_DECAY_TICKS, INVESTIGATE_DECAY_TICKS, PURSUIT_DECAY_ALERT,
   CONTRACT_ACQUIRE_TIME, CONTRACT_DESTROY_TIME,
   CONTRACT_TRANSMIT_TIME,
-  LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL,
+  LOCKDOWN_THREAT_MOVE_INTERVAL,
   CORPSE_DISPOSAL_TIME, DISCOVERY_NOISE_INTENSITY,
   EVIDENCE_TIER_RAISING_ALERT, REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
   WAIT_TICK_TIME, ENCOUNTER_EVADE_TIME, BASIC_RECON_HOP_RANGE, CONTRACT_DETONATE_MIN_HOPS,
@@ -58,11 +58,12 @@ function freshId(prefix, time, count) { return `${prefix}_${time}_${count}`; }
 function idForNewEntry(state, list, prefix) { return freshId(prefix, state.time, list.length); }
 
 /**
+ * 탈출구 가동 게이지의 길이(칸). Hacking이 정한다(ADR-0084).
  * @param {number} effectiveHacking -2..4
  */
-function exitOpenWaitFor(effectiveHacking) {
+export function exitActivateTimeFor(effectiveHacking) {
   const clamped = Math.max(-2, Math.min(4, effectiveHacking));
-  return EXIT_OPEN_WAIT_BY_HACKING[clamped + 2];
+  return EXIT_ACTIVATE_TIME_BY_HACKING[clamped + 2];
 }
 
 /**
@@ -508,8 +509,11 @@ export function requestExtraction(state, exitId, effectiveHacking) {
   if (exit.status !== 'closed') throw new RuleViolation(`exit ${exitId} is not closed (status=${exit.status})`);
   if (state.time >= exit.disabledAt) throw new RuleViolation(`exit ${exitId} is disabled`);
 
-  const interactionEndsAt = state.time + EXIT_REQUEST_TIME;
-  const opensAt = interactionEndsAt + exitOpenWaitFor(effectiveHacking);
+  // 가동은 하나의 게이지다(ADR-0084) — 옛 "요청 3칸 뒤 개방 대기"를 나누지 않고, 게이지가
+  // 차는 그 칸에 문이 열린다. 그래서 두 시각이 같다.
+  const activateTime = actionTimeCost('exitActivate', { value: effectiveHacking });
+  const interactionEndsAt = state.time + activateTime;
+  const opensAt = interactionEndsAt;
   const requestId = freshId(`req_${exitId}`, state.time, 0);
   let next = {
     ...state,
@@ -520,13 +524,12 @@ export function requestExtraction(state, exitId, effectiveHacking) {
       },
     },
   };
-  // §6.2 일반 탈출구 요청: EXIT_REQUEST_TIME칸 소요. 요청 신호는 **시작 효과**라 위에서 이미
-  // 켜졌다(위협이 바로 그쪽으로 움직인다). 요청 작업이 적 접촉으로 중단되면 신호와 요청이 함께
-  // 취소된다(TASK_ABORTS.requestExtraction).
+  // 가동 신호는 **시작 효과**라 위에서 이미 켜졌다(위협이 바로 그쪽으로 움직인다). 가동이
+  // 중단되거나(적 접촉) 자리를 뜨면 신호와 가동이 함께 취소된다(TASK_ABORTS.exitActivate).
   // 명세가 말하는 "소음 4"는 NoiseEvent.intensity(1~3 상한)로 표현되지 않는다 — 탈출 신호는 이미
   // ThreatTarget의 'exitSignal' 우선순위(§7.1, 소음과 별도 채널)로 처리되고 있어, "소음 4"가
   // 정확히 어떤 값에 대응하는지 명세만으로는 확정할 수 없다.
-  return scheduleTask(next, { kind: 'requestExtraction', timeCost: actionTimeCost('requestExtraction'), params: { exitId } });
+  return scheduleTask(next, { kind: 'exitActivate', timeCost: activateTime, params: { exitId } });
 }
 
 /**
@@ -1090,13 +1093,15 @@ function updateThreat(state, threat, tickTime) {
  */
 function resolveMoveInterval(state, threat) {
   const alertLevel = state.sectorAlerts[threat.sectorId].level;
-  const investigating = threat.mode === 'investigate' || threat.mode === 'alert';
   // 봉쇄(D22) — 계약 목표를 확보한 뒤로는 전 구역 위협이 더 빨리 움직인다. 배율이 아니라
   // 고정표다(ADR-0075): 0.6을 곱하면 자투리 칸이 생겨 "몇 칸 뒤에 움직이나"를 셀 수 없다.
-  const table = state.lockdown ? LOCKDOWN_THREAT_MOVE_INTERVAL : THREAT_MOVE_INTERVAL;
-  const alertTable = state.lockdown ? LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL : SECTOR_ALERT_INVESTIGATE_INTERVAL;
-  if (investigating && alertTable[alertLevel]) return alertTable[alertLevel];
-  return table[threat.mode];
+  let interval = (state.lockdown ? LOCKDOWN_THREAT_MOVE_INTERVAL : THREAT_MOVE_INTERVAL)[threat.mode];
+  // 경계도 2 이상인 구역은 모드를 가리지 않고 빨라진다. 봉쇄와 겹치면 둘 중 작은 값이 이긴다 —
+  // 두 가속이 서로를 되돌리면 "깨어난 구역"과 "봉쇄"가 합쳐질 때 오히려 느려지는 자리가 생긴다.
+  if (alertLevel >= SECTOR_ALERT_FAST_MOVE_LEVEL) {
+    interval = Math.min(interval, SECTOR_ALERT_MOVE_INTERVAL[threat.mode]);
+  }
+  return interval;
 }
 
 /**
@@ -1485,19 +1490,37 @@ const TASK_COMPLETIONS = {
     };
   },
   // 시설 상태에 남길 것이 없는 작업들 — 시간만 흐르고, 결과는 호출부가 lastTaskOutcome으로 읽는다.
-  requestExtraction(state) { return state; },
+  exitActivate(state) { return state; },
   equipSwap(state) { return state; },
   mapConsumable(state) { return state; },
   wait(state) { return state; },
 };
 
 /**
- * 중단 시 예약 자원을 되돌린다. 대부분의 작업은 완료 전에 아무것도 바꾸지 않아 되돌릴 것이
- * 없다 — 시작 효과를 낸 탈출 요청만 예외다(신호와 요청이 함께 취소된다, planned §2).
- * @type {Record<string, (state: import('./types.js').FacilityRunState, task: import('./types.js').PendingTask) => import('./types.js').FacilityRunState>}
+ * 중단 시 예약 자원을 되돌리고, 중단됐다는 사실을 화면이 읽을 자리에 적는다. 대부분의 작업은
+ * 완료 전에 아무것도 바꾸지 않아 되돌릴 것이 없다 — 시작 효과를 낸 탈출구 가동과, 자기 배너를
+ * 갖는 파밍만 예외다.
+ * @type {Record<string, (state: import('./types.js').FacilityRunState, task: import('./types.js').PendingTask, reason: string) => import('./types.js').FacilityRunState>}
  */
 const TASK_ABORTS = {
-  requestExtraction(state, task) {
+  // 파밍은 자기 배너를 갖는다(lastActionResult). 붕괴로 끊긴 것을 "매복"이라 적으면 화면이
+  // 없는 적을 말하게 되므로, 적 접촉일 때만 매복으로 적는다.
+  farm(state, task, reason) {
+    if (reason !== 'threatContact') return state;
+    /** @type {import('./types.js').FacilityRunState} */
+    const next = {
+      ...state,
+      lastActionResult: {
+        kind: /** @type {const} */ ('farm'),
+        nodeId: /** @type {string} */ (task.nodeId),
+        opportunityId: task.params.opportunityId,
+        status: /** @type {const} */ ('ambushed'),
+        completedAt: state.time,
+      },
+    };
+    return next;
+  },
+  exitActivate(state, task) {
     const exitId = /** @type {'A'} */ (task.params.exitId);
     const exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (state.exits[exitId]);
     if (!exit || exit.status !== 'requesting') return state;
@@ -1556,24 +1579,24 @@ function completeTask(state, t) {
   return {
     ...next,
     lastTaskOutcome: {
-      kind: task.kind, status: /** @type {const} */ ('completed'), reason: null, startedAt: task.startedAt, completedAt: t,
+      kind: task.kind, status: /** @type {const} */ ('completed'), reason: null, startedAt: task.startedAt, completedAt: t, params: task.params,
     },
   };
 }
 
 /**
  * 작업을 중단한다 — 경과한 칸만 소모되고 미완료 효과는 하나도 적용되지 않는다. 중단 사유는
- * 적 접촉('threatContact')과 런 붕괴('collapsed') 둘뿐이며, 호출부가 결과 문구를 가르는 데
- * 쓰도록 `lastTaskOutcome.reason`에 남긴다.
+ * 적 접촉('threatContact'), 런 붕괴('collapsed'), 그리고 자리를 떠서 포기한 것('abandoned')
+ * 셋이며, 호출부가 결과 문구를 가르는 데 쓰도록 `lastTaskOutcome.reason`에 남긴다.
  * @param {import('./types.js').FacilityRunState} state
- * @param {'threatContact'|'collapsed'} [reason]
+ * @param {'threatContact'|'collapsed'|'abandoned'} [reason]
  * @returns {import('./types.js').FacilityRunState}
  */
 function abortTask(state, reason = 'threatContact') {
   const task = state.pendingTask;
   if (!task) return state;
   const handler = TASK_ABORTS[task.kind];
-  let next = handler ? handler(state, task) : state;
+  let next = handler ? handler(state, task, reason) : state;
   if (task.kind === 'wait') next = { ...next, lastWaitEndedAt: next.time };
   return {
     ...next,
@@ -1581,19 +1604,22 @@ function abortTask(state, reason = 'threatContact') {
     lastTaskOutcome: {
       kind: task.kind,
       status: /** @type {const} */ ('interrupted'),
-      reason: /** @type {'threatContact'|'collapsed'} */ (reason),
+      reason: /** @type {'threatContact'|'collapsed'|'abandoned'} */ (reason),
       startedAt: task.startedAt,
       completedAt: next.time,
+      params: task.params,
     },
   };
 }
 
 /**
- * 현장 작업 하나를 예약하고 완료 시각까지 1칸씩 진행한다(planned §9의 유일한 뼈대).
+ * 현장 작업 하나를 **가동**한다(ADR-0084). 가동에 드는 것은 언제나 1칸이고, 그 1칸 안에 끝나지
+ * 않는 작업은 `pendingTask`로 남아 게이지가 된다 — 남은 칸은 플레이어가 그 자리에서 **대기**로
+ * 채운다. 시작 칸이 게이지의 첫 칸이므로 총 경과는 예전과 같은 `timeCost`다.
  *
- * 임의 취소는 시작 후 허용하지 않는다. 강제 중단 사유는 적 접촉과 런 종료뿐이다. 작업을 시작한
- * 순간 같은 노드에 이미 서 있던 위협은 새 접촉이 아니므로(그 조우는 이미 열려 있고, 열세의
- * 행동권 1회가 바로 이 작업이다) 중단시키지 않는다.
+ * 임의 취소는 없지만 자리를 뜨면 포기가 된다(moveToAdjacentNode). 그 밖의 강제 중단 사유는 적
+ * 접촉과 런 종료다. 작업을 시작한 순간 같은 노드에 이미 서 있던 위협은 새 접촉이 아니므로
+ * (그 조우는 이미 열려 있고, 열세의 행동권 1회가 바로 이 작업이다) 중단시키지 않는다.
  *
  * @param {import('./types.js').FacilityRunState} state
  * @param {{kind: string, timeCost: number, nodeId?: string|null, cost?: object|null, params?: object|null}} task
@@ -1601,6 +1627,12 @@ function abortTask(state, reason = 'threatContact') {
  */
 export function scheduleTask(state, task) {
   if (state.phase !== 'active') throw new RuleViolation('run already ended');
+  // 한 번에 하나다 — 진행 중인 게이지를 둔 채 다른 작업을 걸면 "어느 것이 끝나는가"를 시간으로
+  // 읽을 수 없게 된다. 끝내거나(대기) 떠나거나(포기) 둘 중 하나를 먼저 해야 한다.
+  if (state.pendingTask) throw new RuleViolation(`a task is already in progress (${state.pendingTask.kind})`);
+  // 완료 적용이 게이지 끝으로 미뤄지면서(ADR-0084), 오타 난 종류는 예약 시점이 아니라 몇 칸 뒤에야
+  // 드러난다 — 그때는 이미 시간을 쓴 뒤다. 그래서 가동하는 자리에서 먼저 막는다.
+  if (!TASK_COMPLETIONS[task.kind]) throw new RuleViolation(`unknown task kind ${task.kind}`);
   const timeCost = Math.max(0, task.timeCost || 0);
   const nodeId = task.nodeId === undefined ? state.playerNodeId : task.nodeId;
   const ignoredThreatIds = state.playerNodeId
@@ -1618,7 +1650,18 @@ export function scheduleTask(state, task) {
   const reserved = { ...state, pendingTask: pending, lastTaskOutcome: null };
   // 0칸 작업은 시작과 완료가 같은 순간이다 — 진행할 칸이 없으므로 그 자리에서 확정한다.
   if (timeCost === 0) return completeTask(reserved, reserved.time);
-  return advanceTime(reserved, pending.completesAt);
+  // 가동은 딱 1칸이다. 1칸짜리 작업은 그 칸 경계에서 바로 완료되고, 더 긴 작업은 게이지로 남는다.
+  return advanceTime(reserved, state.time + 1);
+}
+
+/**
+ * 진행 중인 작업을 포기한다(ADR-0084) — 자리를 뜨는 것이 유일한 경로다. 중단과 같은 처리를
+ * 받는다: 효과도 쿨다운도 청구되지 않고, 시작 효과를 낸 작업만 TASK_ABORTS가 되돌린다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function abandonTask(state) {
+  return state.pendingTask ? abortTask(state, 'abandoned') : state;
 }
 
 /**
@@ -1639,6 +1682,9 @@ export function taskCompleted(state) {
  */
 export function waitOneTick(state) {
   if (state.phase !== 'active') throw new RuleViolation('run already ended');
+  // 게이지가 걸려 있으면 대기는 그 게이지를 채우는 1칸이다 — 경쟁하는 'wait' 작업을 따로 걸면
+  // 진행 중인 작업을 밀어내게 된다(ADR-0084).
+  if (state.pendingTask) return advanceTime({ ...state, lastTaskOutcome: null }, state.time + 1);
   return scheduleTask(state, { kind: 'wait', timeCost: actionTimeCost('wait') });
 }
 
@@ -1855,6 +1901,11 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
   });
   if (!traversedEdge) throw new RuleViolation(`${destinationNodeId} is not currently reachable from ${state.playerNodeId}`);
 
+  // 자리를 뜨면 진행 중이던 작업은 포기된다(ADR-0084) — 게이지는 그 노드에 매여 있다.
+  // 포기는 떠나기 **전에**, 아직 그 노드에 서 있는 상태에서 확정한다(시작 효과를 되돌리는
+  // TASK_ABORTS가 옛 자리를 봐야 한다).
+  state = abandonTask(state);
+
   // 고지대는 요구치 3짜리 층계 행동이다(D8). 시간은 이동의 전용 규칙이 이미 청구하므로
   // 여기서 받는 것은 Mobility의 통화인 HP뿐이다. 불가면 위 isEdgeTraversable이 이미 걸렀다.
   const highGroundCost = traversedEdge.features.includes('highGround')
@@ -1877,8 +1928,7 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
     const tier = /** @type {1|2} */ (effectiveStealth <= -2 ? 2 : 1);
     moved = { ...moved, evidence: [...moved.evidence, { id: idForNewEntry(state, moved.evidence, 'evidence'), nodeId: destinationNodeId, tier, createdBySectorId: destinationNodeId.split('_')[0] }] };
   }
-  // 엣지마다 기하학적 길이에 따라 다른 시간 비용을 갖는다(facilityGraph.js 참고) — 더 이상
-  // 모든 이동이 균일한 STANDARD_EDGE_TIME_COST가 아니다.
+  // 통로 하나는 언제나 1칸이다(ADR-0084). 시간은 이동이 아니라 작업에서 나간다.
   return advanceTime(moved, moved.time + moveTimeCost(traversedEdge, effectiveMobility));
 }
 
@@ -2414,12 +2464,9 @@ export function useOpportunity(state, opportunityId, mode) {
     cost: { noise, timeCost: time },
     params: { opportunityId, isPrize, tier, axis: opportunity.axis || 'resource', keyEligible: opportunity.keyEligible },
   });
-  const completed = taskCompleted(next);
-  // 중단됐더라도 사유가 붕괴면 매복이 아니다 — "적에게 당했다"로 적으면 UI가 없는 적을 말한다.
-  if (!completed && next.lastTaskOutcome?.reason !== 'collapsed') {
-    next = { ...next, lastActionResult: { kind: 'farm', nodeId: opportunity.nodeId, opportunityId, status: 'ambushed', completedAt: next.time } };
-  }
-  return { state: next, keyGranted: completed && opportunity.keyEligible };
+  // 매복 배너는 중단이 실제로 일어나는 자리에서 적는다(TASK_ABORTS.farm) — 파밍은 이제 가동한
+  // 커맨드가 아니라 게이지를 채우는 대기에서 끝날 수 있기 때문이다(ADR-0084).
+  return { state: next, keyGranted: taskCompleted(next) && opportunity.keyEligible };
 }
 
 /**

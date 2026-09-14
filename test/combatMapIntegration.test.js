@@ -11,6 +11,7 @@ import {
 import { startCombat, finalizeIfCombatEnded } from '../src/engine/combatReducer.js';
 import { gameReducer } from '../src/engine/gameReducer.js';
 import { COMBAT_ENEMY_AMBUSH_TIME_COST, RUN_COLLAPSE_TIME } from '../src/data/facilityLayout.js';
+import { finishTaskSnapshot } from './helpers/finishTask.js';
 
 /** 위협 하나와 교전 중인 전투 스냅샷 — 라운드 정산만 보기 위한 최소 구성이다. */
 function startedCombat(ambush) {
@@ -107,8 +108,8 @@ test('applyCombatRoundTimeToRunState advances time by the round cost with no noi
   const { graph } = generateFacilityGraph(2);
   const runState = createRunState(graph, 2);
   const before = runState.time;
-  const next = applyCombatRoundTimeToRunState(runState, 60);
-  assert.equal(next.time, before + 60);
+  const next = applyCombatRoundTimeToRunState(runState, 9);
+  assert.equal(next.time, before + 9);
   assert.equal(next.noiseEvents.length, 0);
 });
 
@@ -150,9 +151,9 @@ test('전투 1라운드는 3칸이고, 라운드마다 정확히 한 번만 정�
 
   // 세 번째 라운드에 끝나면 총 9칸 — 턴 종료 두 번(각 3칸) + 마지막 라운드 3칸.
   let s = startedCombat();
-  s = gameReducer(s, { type: 'END_TURN' });
+  s = finishTaskSnapshot(gameReducer(s, { type: 'END_TURN' }));
   assert.equal(s.facilityRunState.time, COMBAT_ROUND_TIME_COST);
-  s = gameReducer(s, { type: 'END_TURN' });
+  s = finishTaskSnapshot(gameReducer(s, { type: 'END_TURN' }));
   assert.equal(s.facilityRunState.time, COMBAT_ROUND_TIME_COST * 2);
   const third = finalizeIfCombatEnded(withPhase(s, 'victory'));
   assert.equal(third.facilityRunState.time, COMBAT_ROUND_TIME_COST * 3);
@@ -165,7 +166,7 @@ test('턴 종료 처리 도중 승리해도 그 라운드는 한 번만 청구�
     ...started,
     activeCombatState: { ...started.activeCombatState, enemies: started.activeCombatState.enemies.map((e) => ({ ...e, hp: 0 })) },
   };
-  const after = gameReducer(downed, { type: 'END_TURN' });
+  const after = finishTaskSnapshot(gameReducer(downed, { type: 'END_TURN' }));
   assert.notEqual(after.currentScreen, 'combat', '이 턴 종료로 전투가 끝난다');
   assert.equal(after.facilityRunState.time, COMBAT_ROUND_TIME_COST, '종료 처리와 승리 처리가 이중 청구하지 않는다');
 });
@@ -206,7 +207,7 @@ test('교전 중인 위협은 맵에서 멈추고 외부 위협은 계속 움직
   };
 
   const before = primed.facilityRunState.threats[engagedId].nodeId;
-  const after = gameReducer(primed, { type: 'END_TURN' }).facilityRunState;
+  const after = finishTaskSnapshot(gameReducer(primed, { type: 'END_TURN' })).facilityRunState;
   assert.equal(after.threats[engagedId].nodeId, before, '교전 중인 위협은 제자리다');
   assert.equal(after.threats[engagedId].nextMoveAt, 1, '예약도 그대로 멈춰 있다');
   assert.notEqual(after.threats[outsider.id].nodeId, outsider.nodeId, '외부 위협은 그 3칸 동안 진행한다');

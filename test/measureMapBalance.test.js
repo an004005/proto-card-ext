@@ -4,13 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { measure, formatReport, parseArgs, MOBILITY_VALUES } from '../scripts/measure-map-balance.mjs';
 import {
-  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
-  EXIT_REQUEST_TIME, EXIT_OPEN_WAIT_BY_HACKING,
+  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_ACTIVATE_TIME_BY_HACKING,
 } from '../src/data/facilityLayout.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 
 const SEEDS = [1, 2, 3];
-const EXIT_OVERHEAD = EXIT_REQUEST_TIME + EXIT_OPEN_WAIT_BY_HACKING[2];
+const EXIT_OVERHEAD = EXIT_ACTIVATE_TIME_BY_HACKING[2];
 
 test('측정 결과는 시드마다 Mobility 네 값을 모두 담는다', () => {
   const result = measure(SEEDS);
@@ -80,9 +79,9 @@ test('계약 왕복은 확보 시각과 완료 행동을 함께 계산한다', (
   }
 });
 
-test('표 출력은 일곱 절을 모두 담는다', () => {
+test('표 출력은 여섯 절을 모두 담는다', () => {
   const report = formatReport(measure(SEEDS));
-  for (const heading of ['## 1. 그래프 형태', '## 2. 시작점', '## 3. 마감별 여유', '## 4. 행동 예산', '## 5. 적 압박', '## 6. 계약 왕복', '## 7. 옛 포인트 체계']) {
+  for (const heading of ['## 1. 그래프 형태', '## 2. 시작점', '## 3. 마감별 여유', '## 4. 행동 예산', '## 5. 적 압박', '## 6. 계약 왕복']) {
     assert.ok(report.includes(heading), `${heading} 누락`);
   }
   assert.ok(report.includes(`붕괴 ${RUN_COLLAPSE_TIME}`));

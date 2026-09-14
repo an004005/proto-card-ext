@@ -10,6 +10,7 @@ import {
   ENCOUNTER_DECEIVE_REQUIREMENT,
 } from '../src/data/facilityLayout.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
+import { finishTask } from './helpers/finishTask.js';
 
 /** 위협이 도중에 끼어들지 않는 조용한 런. */
 function quietRun(seed = 1) {
@@ -41,26 +42,26 @@ test('가짜 소음은 3칸이고, 예고와 청구가 같은 사양표에서 �
   const forecast = forecastAction('fakeNoise', { value: 1 });
   assert.equal(forecast.timeCost, FAKE_NOISE_TIME);
 
-  const planted = plantFakeNoise(run, 1, nodeAtHops(run, 1));
+  const planted = finishTask(plantFakeNoise(run, 1, nodeAtHops(run, 1)));
   assert.equal(planted.time - run.time, forecast.timeCost, '예고한 칸이 그대로 청구된다');
 });
 
 test('가짜 소음은 사거리 안의 노드에만 심을 수 있다 — 요구치 미달은 층계로 더 비싸게 심는다', () => {
   const run = quietRun(1);
-  const strained = plantFakeNoise(run, 0, nodeAtHops(run, 1));
+  const strained = finishTask(plantFakeNoise(run, 0, nodeAtHops(run, 1)));
   assert.ok(strained.time - run.time > FAKE_NOISE_TIME, 'Deception 0(무리)은 시간을 더 쓴다');
   assert.throws(() => plantFakeNoise(run, 0, nodeAtHops(run, 2)), /out of fake-noise range/);
   assert.throws(() => plantFakeNoise(run, -2, nodeAtHops(run, 1)), /too low/, '불가 구간만 막힌다');
   assert.throws(() => plantFakeNoise(run, 1, nodeAtHops(run, 2)), /out of fake-noise range/);
-  assert.ok(plantFakeNoise(run, 2, nodeAtHops(run, 2)));
-  assert.ok(plantFakeNoise(run, 3, nodeAtHops(run, 3)));
+  assert.ok(finishTask(plantFakeNoise(run, 2, nodeAtHops(run, 2))));
+  assert.ok(finishTask(plantFakeNoise(run, 3, nodeAtHops(run, 3))));
 });
 
 test('심은 소음은 대상 노드에 강도 1로 나고, Deception 3 이상이면 강도 2다', () => {
   const run = quietRun(1);
   const target = nodeAtHops(run, 1);
 
-  const weak = plantFakeNoise(run, 1, target);
+  const weak = finishTask(plantFakeNoise(run, 1, target));
   const weakEvent = weak.noiseEvents.find((e) => e.sourceNodeId === target);
   assert.ok(weakEvent, '대상 노드에 소음이 심어져야 한다');
   assert.equal(weakEvent.intensity, 1);
@@ -68,13 +69,13 @@ test('심은 소음은 대상 노드에 강도 1로 나고, Deception 3 이상�
   assert.equal(weakEvent.createdAt, weak.time);
   assert.equal(weakEvent.expiresAt, weak.time + NOISE_DURATION);
 
-  const strong = plantFakeNoise(run, 3, target);
+  const strong = finishTask(plantFakeNoise(run, 3, target));
   assert.equal(strong.noiseEvents.find((e) => e.sourceNodeId === target).intensity, 2);
 });
 
 test('가짜 소음은 구역 경계도를 건드리지 않는다 — 수습 수단이 아니라 유인 수단이다', () => {
   const run = quietRun(1);
-  const after = plantFakeNoise(run, 2, nodeAtHops(run, 2));
+  const after = finishTask(plantFakeNoise(run, 2, nodeAtHops(run, 2)));
   assert.deepEqual(after.sectorAlerts, run.sectorAlerts);
 });
 

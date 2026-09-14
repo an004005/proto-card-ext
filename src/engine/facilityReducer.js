@@ -164,6 +164,14 @@ function withFacilityRunState(snapshot, fn) {
   }
   let playerState = ps;
   ({ run: next, playerState } = settleCapabilityDues(next, playerState));
+  // 게이지가 찬 작업의 **스냅샷 밖** 효과(인벤토리·장비·rng)를 여기서 적용한다(ADR-0084).
+  // 계약 완료·탈출 판정보다 먼저다 — 회수 계약의 완료 판정이 방금 들어온 물건을 봐야 한다.
+  {
+    const deferred = applyDeferredCompletion({ ...snapshot, facilityRunState: next, playerState });
+    next = /** @type {import('./types.js').FacilityRunState} */ (deferred.facilityRunState);
+    playerState = deferred.playerState;
+    snapshot = deferred;
+  }
   // D21: 회수 계약은 확보만으로 완료가 아니다 — 물건을 들고 **탈출해야** 완료다. 인벤토리(여기서만
   // 보이는 정보)와 계약 진행 상태(facilityRunState)를 함께 봐야 하는 판정이라, 파밍 루트처럼
   // withFacilityRunState 바깥이 아니라 탈출 판정 바로 앞인 여기서 처리한다 — 모든 시설맵
@@ -196,41 +204,55 @@ function withFacilityRunState(snapshot, fn) {
  * 액션과 같은 결로, 그 시간 동안 위협이 도착하면 위 triggerCombatIfNeeded가 강제 전투로
  * 전환한다("제자리에서 장비만 계속 바꾸면 안전하다"는 구멍을 막는다).
  * @param {GameSnapshot} snapshot
- * @param {(s: GameSnapshot) => GameSnapshot} applyEquip
+ * @param {string} op EQUIP_OPS의 키 — 게이지가 찰 때 다시 찾아 쓸 수 있도록 이름으로 예약한다.
+ * @param {string} targetId 그 연산의 대상 아이템·장비 id.
  * @returns {GameSnapshot}
  */
-function withMapEquipTimeCost(snapshot, applyEquip) {
-  if (snapshot.currentScreen !== 'map') return applyEquip(snapshot);
+function withMapEquipTimeCost(snapshot, op, targetId) {
+  const applyEquip = EQUIP_OPS[op];
+  if (snapshot.currentScreen !== 'map') return applyEquip(snapshot, targetId);
   if (isBlockedByEncounter(snapshot)) return snapshot;
   // 거부된 시도(파손 장비 재장착 등)는 실제로 아무것도 바뀌지 않은 것 — 시간을 물리지 않는다.
   // 불가 요청과 취소는 0칸이다(planned §10).
-  if (applyEquip(snapshot) === snapshot) return snapshot;
-  // 교체는 예약해 두고 **완료 시각에** 적용된다. 그 3칸 안에 위협이 도착하면 교체는 일어나지
-  // 않고 경과한 칸만 소모된다 — "제자리에서 장비만 계속 바꾸면 안전하다"는 구멍도 그대로 막힌다.
-  const afterTime = withFacilityRunState(snapshot, (run) => scheduleTask(run, { kind: 'equipSwap', timeCost: actionTimeCost('equipSwap') }));
-  if (afterTime === snapshot) return snapshot;
-  if (afterTime.currentScreen !== 'map' || !taskCompleted(afterTime.facilityRunState)) return afterTime;
-  return applyEquip(afterTime);
+  if (applyEquip(snapshot, targetId) === snapshot) return snapshot;
+  // 교체는 가동해 두고 **게이지가 찰 때** 적용된다(ADR-0084). 그 사이에 위협이 도착하거나
+  // 자리를 뜨면 교체는 일어나지 않고 경과한 칸만 소모된다 — "제자리에서 장비만 계속 바꾸면
+  // 안전하다"는 구멍도 그대로 막힌다.
+  return withFacilityRunState(snapshot, (run) => scheduleTask(run, {
+    kind: 'equipSwap', timeCost: actionTimeCost('equipSwap'), params: { op, targetId },
+  }));
 }
+
+/**
+ * 장비 교체 게이지가 찼을 때 실제로 실행할 연산. 작업은 그것을 시작한 커맨드가 아니라 게이지를
+ * 채운 대기에서 끝나므로(ADR-0084), 클로저가 아니라 **이름**으로 예약해 두어야 다시 찾아 쓸 수 있다.
+ * @type {Record<string, (s: GameSnapshot, id: string) => GameSnapshot>}
+ */
+const EQUIP_OPS = {
+  equip: (s, id) => equipItem(s, id),
+  unequip: (s, id) => unequipItem(s, id),
+  unequipImplant: (s, id) => unequipImplant(s, id),
+  unequipConsumable: (s, id) => unequipConsumable(s, id),
+};
 
 /** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
 export function equipItemOnMapCommand(snapshot, itemId) {
-  return withMapEquipTimeCost(snapshot, (s) => equipItem(s, itemId));
+  return withMapEquipTimeCost(snapshot, 'equip', itemId);
 }
 
 /** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
 export function unequipItemOnMapCommand(snapshot, itemId) {
-  return withMapEquipTimeCost(snapshot, (s) => unequipItem(s, itemId));
+  return withMapEquipTimeCost(snapshot, 'unequip', itemId);
 }
 
 /** @param {GameSnapshot} snapshot @param {string} equipmentId @returns {GameSnapshot} */
 export function unequipImplantOnMapCommand(snapshot, equipmentId) {
-  return withMapEquipTimeCost(snapshot, (s) => unequipImplant(s, equipmentId));
+  return withMapEquipTimeCost(snapshot, 'unequipImplant', equipmentId);
 }
 
 /** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
 export function unequipConsumableOnMapCommand(snapshot, itemId) {
-  return withMapEquipTimeCost(snapshot, (s) => unequipConsumable(s, itemId));
+  return withMapEquipTimeCost(snapshot, 'unequipConsumable', itemId);
 }
 
 /**
@@ -266,17 +288,17 @@ export function useMapConsumableCommand(snapshot, itemId) {
   if (snapshot.currentScreen !== 'map') return snapshot;
   if (isBlockedByEncounter(snapshot)) return snapshot;
   if (applyMapConsumable(snapshot, itemId) === snapshot) return snapshot;
-  // 치료도 완료돼야 효과가 난다 — 중단되면 소모품을 쓰지도, 회복하지도 않는다(planned §9.4).
-  const afterTime = withFacilityRunState(snapshot, (run) => scheduleTask(run, { kind: 'mapConsumable', timeCost: actionTimeCost('mapConsumable') }));
-  if (afterTime === snapshot) return snapshot;
-  if (afterTime.currentScreen !== 'map' || !taskCompleted(afterTime.facilityRunState)) return afterTime;
-  return applyMapConsumable(afterTime, itemId);
+  // 치료도 게이지가 차야 효과가 난다 — 중단되면 소모품을 쓰지도, 회복하지도 않는다(planned §9.4).
+  return withFacilityRunState(snapshot, (run) => scheduleTask(run, {
+    kind: 'mapConsumable', timeCost: actionTimeCost('mapConsumable'), params: { itemId },
+  }));
 }
 
 /**
  * 대기(planned §4) — 1칸씩 진행한다. 아무것도 회복시키지 않고 개방·쿨다운·적 위치를 기다리는
- * 용도다. 묶음 대기(최대 5칸)는 1칸 대기를 반복하며 새 조우, 출구 개방/폐쇄, 붕괴가 나면
- * 즉시 멈추므로 실제로 흐른 칸만 소모된다.
+ * 용도이며, 진행 중인 작업이 있으면 그 게이지를 채우는 수단이기도 하다(ADR-0084). 묶음
+ * 대기(최대 5칸)는 1칸 대기를 반복하며 새 조우, 출구 개방/폐쇄, 붕괴, 작업 완료가 나면 즉시
+ * 멈추므로 실제로 흐른 칸만 소모된다.
  * @param {GameSnapshot} snapshot
  * @param {number} [ticks]
  * @returns {GameSnapshot}
@@ -289,7 +311,7 @@ export function waitCommand(snapshot, ticks = 1) {
   const total = Math.min(WAIT_BATCH_MAX_TICKS, requested);
   const startedAt = snapshot.facilityRunState?.time ?? 0;
   let s = snapshot;
-  /** @type {'encounter'|'exitChange'|'runEnded'|'blocked'|null} */
+  /** @type {'encounter'|'exitChange'|'runEnded'|'blocked'|'taskDone'|null} */
   let stopReason = null;
   for (let i = 0; i < total; i++) {
     const before = s;
@@ -300,6 +322,8 @@ export function waitCommand(snapshot, ticks = 1) {
     if (!run || run.phase !== 'active') { stopReason = 'runEnded'; break; }
     if (run.encounter) { stopReason = 'encounter'; break; } // 새 조우
     if (exitStatusesOf(before.facilityRunState) !== exitStatusesOf(run)) { stopReason = 'exitChange'; break; } // 개방/폐쇄
+    // 채우던 게이지가 다 찼으면 더 기다릴 이유가 없다(ADR-0084) — 남은 칸은 다음 결정의 몫이다.
+    if (before.facilityRunState?.pendingTask && !run.pendingTask) { stopReason = 'taskDone'; break; }
   }
   // 몇 칸을 실제로 썼고 왜 멈췄는지는 화면이 말해야 하는 정보다 — 5칸을 눌렀는데 2칸만 흘렀다면
   // 그 사이에 무슨 일이 생긴 것이고, 그것이 다음 결정의 근거다.
@@ -374,16 +398,9 @@ export function hackControlRoomCommand(snapshot) {
  */
 export function acquireContractGoodsCommand(snapshot) {
   const capabilities = computeCapabilities(snapshot.playerState.loadout);
-  const before = snapshot.facilityRunState?.contract;
-  const s = withFacilityRunState(snapshot, (run) => acquireContractGoods(run, capabilities.stealth, capabilities.mobility));
-  if (s === snapshot || !before) return s;
-  // 중단된 확보는 물건을 들고 나오지 못한 것이다 — 인벤토리에도 아무것도 들어오지 않는다.
-  if (!taskCompleted(s.facilityRunState)) return s;
-  let inventory = s.playerState.inventory;
-  for (let i = 0; i < (before.goodsSlots || 0); i++) {
-    inventory = addItem(inventory, createItem('contractGoods', { contractId: before.id, value: before.goodsValuePerSlot }));
-  }
-  return { ...s, playerState: { ...s.playerState, inventory } };
+  // 물건이 인벤토리에 들어오는 것은 게이지가 찰 때다(DEFERRED_COMPLETIONS.contract) — 중단된
+  // 확보는 물건을 들고 나오지 못한 것이라 아무것도 들어오지 않는다.
+  return withFacilityRunState(snapshot, (run) => acquireContractGoods(run, capabilities.stealth, capabilities.mobility));
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
@@ -493,27 +510,67 @@ export function useOpportunityCommand(snapshot, opportunityId, mode) {
   // useOpportunity itself throws when the opportunity is missing/exhausted/not-here, and
   // withFacilityRunState's catch returns `snapshot` unchanged on any such throw — so `s ===
   // snapshot` alone already fully captures "the action failed," no separate success flag needed.
-  const s = withFacilityRunState(snapshot, (run) => useOpportunity(run, opportunityId, mode).state);
-  if (s === snapshot) return s;
-  // 완료 전에 적이 접촉하면 파밍은 중단이다 — 기회도 소모되지 않고 보상도 없다(planned §9.4).
-  if (!taskCompleted(s.facilityRunState)) return s;
+  // 보상은 게이지가 찰 때 들어온다(DEFERRED_COMPLETIONS.farm) — 완료 전에 적이 접촉하거나
+  // 자리를 뜨면 기회도 소모되지 않고 보상도 없다(planned §9.4).
+  return withFacilityRunState(snapshot, (run) => useOpportunity(run, opportunityId, mode).state);
+}
 
-  // 확보 대상은 여기서 아무것도 주지 않는다 — runEngine이 세워둔 후보 셋을 플레이어가 고르면
-  // selectFarmRewardCommand가 지급한다(D11). 매복이 떠서 후보가 서지 못했다면 그것이 강행의
-  // 대가이므로 역시 아무것도 주지 않는다. 보급품만 예전처럼 즉시 들어온다.
-  if (isPrize) return s;
+/**
+ * 게이지가 찬 작업 중 **facilityRunState 바깥**(인벤토리·장비·rng)까지 손대야 하는 것들.
+ *
+ * 작업은 더 이상 그것을 시작한 커맨드 안에서 끝나지 않는다(ADR-0084) — 대기가 게이지를 채우는
+ * 그 칸에 끝난다. 그래서 "완료했으면 준다"를 커맨드마다 두면 대기로 끝난 작업은 아무것도 받지
+ * 못한다. 모든 시설맵 액션이 withFacilityRunState 하나를 지나므로, 완료 판정도 여기 한 곳에 둔다.
+ * 필요한 정보는 작업의 `params`가 들고 오며 `lastTaskOutcome.params`로 다시 읽힌다.
+ * @type {Record<string, (s: GameSnapshot, params: Record<string, any>) => GameSnapshot>}
+ */
+const DEFERRED_COMPLETIONS = {
+  equipSwap(s, params) {
+    const op = EQUIP_OPS[params.op];
+    return op ? op(s, params.targetId) : s;
+  },
+  mapConsumable(s, params) {
+    return applyMapConsumable(s, params.itemId);
+  },
+  contract(s, params) {
+    // 회수 계약의 **확보** 단계에서만 물건이 들어온다. 정보 계약의 확보와 송출·기폭은 같은
+    // 'contract' 작업이지만 인벤토리를 만지지 않는다.
+    const contract = s.facilityRunState?.contract;
+    if (params.nextStatus !== 'acquired' || contract?.type !== 'retrieval') return s;
+    let inventory = s.playerState.inventory;
+    for (let i = 0; i < (contract.goodsSlots || 0); i++) {
+      inventory = addItem(inventory, createItem('contractGoods', { contractId: contract.id, value: contract.goodsValuePerSlot }));
+    }
+    return { ...s, playerState: { ...s.playerState, inventory } };
+  },
+  farm(s, params) {
+    // 확보 대상은 여기서 아무것도 주지 않는다 — runEngine이 세워둔 후보 셋을 플레이어가 고르면
+    // selectFarmRewardCommand가 지급한다(D11). 보급품만 예전처럼 즉시 들어온다.
+    if (params.isPrize) return s;
+    // 보급품 보상 티어를 normal 65% / elite 35%로 무작위화 — 고정 normal 1롤보다 파밍이 매번
+    // 동일하게 느껴지지 않도록 하는 간이 밸런싱(정밀 수치는 실측 후 조정 대상).
+    const tierRoll = weightedPick(s.rngState, [{ value: 'normal', weight: 0.65 }, { value: 'elite', weight: 0.35 }]);
+    const tier = /** @type {'normal'|'elite'} */ (tierRoll.value);
+    const { option: opt, durability, rngState } = rollSupplyLoot(tier, tierRoll.state);
+    let inventory = s.playerState.inventory;
+    if (opt) inventory = grantLootOption(inventory, opt, durability);
+    const facilityRunState = s.facilityRunState && s.facilityRunState.lastActionResult
+      ? { ...s.facilityRunState, lastActionResult: { ...s.facilityRunState.lastActionResult, loot: opt || null } }
+      : s.facilityRunState;
+    return { ...s, rngState, facilityRunState, playerState: { ...s.playerState, inventory } };
+  },
+};
 
-  // 보급품 보상 티어를 normal 65% / elite 35%로 무작위화 — 고정 normal 1롤보다 파밍이 매번
-  // 동일하게 느껴지지 않도록 하는 간이 밸런싱(정밀 수치는 실측 후 조정 대상).
-  const tierRoll = weightedPick(s.rngState, [{ value: 'normal', weight: 0.65 }, { value: 'elite', weight: 0.35 }]);
-  const tier = /** @type {'normal'|'elite'} */ (tierRoll.value);
-  const { option: opt, durability, rngState } = rollSupplyLoot(tier, tierRoll.state);
-  let inventory = s.playerState.inventory;
-  if (opt) inventory = grantLootOption(inventory, opt, durability);
-  const facilityRunState = s.facilityRunState && s.facilityRunState.lastActionResult
-    ? { ...s.facilityRunState, lastActionResult: { ...s.facilityRunState.lastActionResult, loot: opt || null } }
-    : s.facilityRunState;
-  return { ...s, rngState, facilityRunState, playerState: { ...s.playerState, inventory } };
+/**
+ * 방금 끝난 작업이 완료됐다면 그 종류의 스냅샷 밖 효과를 적용한다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+function applyDeferredCompletion(snapshot) {
+  const outcome = snapshot.facilityRunState?.lastTaskOutcome;
+  if (!outcome || outcome.status !== 'completed') return snapshot;
+  const handler = DEFERRED_COMPLETIONS[outcome.kind];
+  return handler ? handler(snapshot, outcome.params || {}) : snapshot;
 }
 
 /**

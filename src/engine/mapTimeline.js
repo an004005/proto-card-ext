@@ -9,8 +9,8 @@
 // 타임라인에 넣지 않는다 — 넣는 순간 정찰과 카메라가 정보 수단으로서 의미를 잃는다.
 
 import {
-  RUN_COLLAPSE_TIME, SECTOR_NAMES, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
-  LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL,
+  RUN_COLLAPSE_TIME, SECTOR_NAMES, THREAT_MOVE_INTERVAL, SECTOR_ALERT_MOVE_INTERVAL,
+  SECTOR_ALERT_FAST_MOVE_LEVEL, LOCKDOWN_THREAT_MOVE_INTERVAL,
 } from '../data/facilityLayout.js';
 import { bfsHopDistances } from './graphUtils.js';
 import { describeThreatDecay, detailIncludes } from './runEngine.js';
@@ -72,7 +72,7 @@ export function runCountdowns(run) {
     let stateTicks = null;
     let text = '폐쇄됨';
     if (!closed) {
-      if (status === 'requesting') { stateTicks = remaining(exit.interactionEndsAt); text = `요청 처리 ${stateTicks}칸 남음`; }
+      if (status === 'requesting') { stateTicks = remaining(exit.interactionEndsAt); text = `가동 ${stateTicks}칸 남음`; }
       else if (status === 'opening') { stateTicks = remaining(exit.opensAt); text = `개방까지 ${stateTicks}칸`; }
       else if (status === 'open') { stateTicks = remaining(exit.openEndsAt); text = `열림 ${stateTicks}칸 남음`; }
       else { stateTicks = inTicks; text = `폐쇄까지 ${inTicks}칸`; }
@@ -191,11 +191,12 @@ export function observableThreatMoves(run) {
  */
 function threatMoveInterval(run, threat) {
   const alertLevel = run.sectorAlerts?.[threat.sectorId]?.level ?? 0;
-  const investigating = threat.mode === 'investigate' || threat.mode === 'alert';
   const table = run.lockdown ? LOCKDOWN_THREAT_MOVE_INTERVAL : THREAT_MOVE_INTERVAL;
-  const alertTable = run.lockdown ? LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL : SECTOR_ALERT_INVESTIGATE_INTERVAL;
-  if (investigating && alertTable[alertLevel]) return alertTable[alertLevel];
-  return table[threat.mode] ?? table.patrol;
+  let interval = table[threat.mode] ?? table.patrol;
+  if (alertLevel >= SECTOR_ALERT_FAST_MOVE_LEVEL) {
+    interval = Math.min(interval, SECTOR_ALERT_MOVE_INTERVAL[threat.mode] ?? SECTOR_ALERT_MOVE_INTERVAL.patrol);
+  }
+  return interval;
 }
 
 /**
@@ -263,11 +264,11 @@ export function upcomingEvents(run, horizon = TIMELINE_HORIZON, opts = {}) {
   for (const exitId of /** @type {const} */ (['A'])) {
     const exit = /** @type {import('./types.js').StandardExitRuntimeState|undefined} */ (run.exits[exitId]);
     if (!exit || exit.kind !== 'standard') continue;
-    // 폐쇄 시각은 "그 뒤로 새 요청을 못 받는다"는 뜻이다(ADR-0054). 이미 요청·개방·열림으로
+    // 폐쇄 시각은 "그 뒤로 새 가동을 시작할 수 없다"는 뜻이다(ADR-0054). 이미 가동·개방·열림으로
     // 넘어간 출구는 그 시각에 아무 일도 일어나지 않으므로, 그때 끝난다고 예고하면 예고 툴팁이
     // "작업 중 종료: 출구 A 영구 폐쇄"라는 거짓말을 한다. 아직 요청 전인 출구만 이 줄을 낸다.
-    if (exit.status === 'closed') push(exit.disabledAt, `출구 ${exitId} 영구 폐쇄(새 요청 마감)`, 'closure', true, exit.nodeId);
-    if (exit.status === 'requesting' && exit.interactionEndsAt !== null) push(exit.interactionEndsAt, `출구 ${exitId} 요청 처리 완료`, 'opening', false, exit.nodeId);
+    if (exit.status === 'closed') push(exit.disabledAt, `출구 ${exitId} 영구 폐쇄(새 가동 마감)`, 'closure', true, exit.nodeId);
+    if (exit.status === 'requesting' && exit.interactionEndsAt !== null) push(exit.interactionEndsAt, `출구 ${exitId} 개방`, 'opening', false, exit.nodeId);
     if (exit.status === 'opening' && exit.opensAt !== null) push(exit.opensAt, `출구 ${exitId} 개방`, 'opening', false, exit.nodeId);
     if (exit.status === 'open' && exit.openEndsAt !== null) push(exit.openEndsAt, `출구 ${exitId} 개방 창 종료`, 'expiry', true, exit.nodeId);
   }
@@ -297,8 +298,11 @@ export function upcomingEvents(run, horizon = TIMELINE_HORIZON, opts = {}) {
     .sort((a, b) => a.nextMoveAt - b.nextMoveAt)[0];
   if (nextThreatMove) push(nextThreatMove.nextMoveAt, `가장 이른 위협 이동 · ${describeNodeLocation(run, nextThreatMove.nodeId, hops)}`, 'threat', false, nextThreatMove.nodeId);
 
-  // 진행 중인 작업 완료 줄은 만들지 않는다 — 커맨드 사이에는 `pendingTask`가 항상 null이라
-  // (작업은 같은 커맨드 안에서 예약되고 해소된다) 이 줄은 실제로 화면에 나올 수 없다.
+  // 진행 중인 작업의 게이지가 차는 시각(ADR-0084). 이제는 커맨드 사이에도 `pendingTask`가
+  // 남아 있을 수 있으므로, 그 완료 시각이 타임라인의 한 줄이 된다.
+  if (run.pendingTask) {
+    push(run.pendingTask.completesAt, `${TASK_LABELS[run.pendingTask.kind] || '작업'} 완료`, 'opening', false, run.pendingTask.nodeId || undefined);
+  }
 
   return events.sort((a, b) => a.at - b.at || a.text.localeCompare(b.text));
 }
@@ -324,7 +328,7 @@ export const TASK_LABELS = {
   evade: '조우 회피',
   concealment: '은엄폐 사용',
   corpse: '시체 처리',
-  requestExtraction: '탈출구 개방 요청',
+  exitActivate: '탈출구 가동',
   equipSwap: '장비 교체',
   mapConsumable: '소모품 사용',
   farm: '파밍',
@@ -345,6 +349,7 @@ export const TASK_LABELS = {
 const INTERRUPT_REASONS = {
   threatContact: '적 접촉',
   collapsed: '시설 붕괴',
+  abandoned: '자리를 떠남',
 };
 
 /**
@@ -383,6 +388,7 @@ const WAIT_STOP_REASONS = {
   exitChange: '출구 상태 변화',
   runEnded: '런 종료',
   blocked: '행동이 막힘',
+  taskDone: '작업 완료',
 };
 
 /**

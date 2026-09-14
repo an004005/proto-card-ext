@@ -4,13 +4,14 @@ import { gameReducer } from '../src/engine/gameReducer.js';
 import { offerContracts, computeContractOutcome } from '../src/engine/contractReducer.js';
 import { createRngState } from '../src/engine/rng.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
+import { finishTaskSnapshot } from './helpers/finishTask.js';
 
 
 /** offerContracts는 [retrieval, destroy, intel] 순서로 유형마다 한 장씩, 여덟 구역 전부에서 뽑는다. */
 function startLoadoutWithType(seed, type) {
-  const offered = gameReducer(null, { type: 'NEW_RUN', seed });
+  const offered = finishTaskSnapshot(gameReducer(null, { type: 'NEW_RUN', seed }));
   const contract = offered.offeredContracts.find((c) => c.type === type);
-  return gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
+  return finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id }));
 }
 
 test('offerContracts는 여덟 구역 전부에서 유형별 한 장씩, 언제나 세 장을 결정론적으로 뽑는다', () => {
@@ -27,17 +28,17 @@ test('offerContracts는 여덟 구역 전부에서 유형별 한 장씩, 언제�
 
 test('ACCEPT_CONTRACT가 구역을 뽑고, 수락한 계약의 목표 구역이 반드시 들어간다', () => {
   for (let seed = 0; seed < 30; seed++) {
-    const offered = gameReducer(null, { type: 'NEW_RUN', seed });
+    const offered = finishTaskSnapshot(gameReducer(null, { type: 'NEW_RUN', seed }));
     assert.equal(offered.runSectorIds, null, `seed ${seed}: 제안 시점에는 구역이 아직 없다`);
     for (const contract of offered.offeredContracts) {
-      const accepted = gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
+      const accepted = finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id }));
       const ids = accepted.runSectorIds;
       assert.equal(ids.length, 4, `seed ${seed}: 구역 수`);
       assert.equal(new Set(ids).size, 4, `seed ${seed}: 중복 없음`);
       assert.equal(ids[0], 'entrance', `seed ${seed}: 시작 구역은 링 0번`);
       assert.ok(ids.includes(contract.sectorId), `seed ${seed}: ${contract.id}의 목표 구역이 빠졌다`);
       // 같은 시드·같은 계약은 같은 구역을 낸다.
-      assert.deepEqual(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id }).runSectorIds, ids);
+      assert.deepEqual(finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id })).runSectorIds, ids);
       // 링 2번(시작점 정반대)은 power가 있으면 power, 없으면 목표 구역이다.
       const deep = ids.includes('power') ? 'power' : (contract.sectorId === 'entrance' ? null : contract.sectorId);
       if (deep) assert.equal(ids[2], deep, `seed ${seed}: 링 2번 자리`);
@@ -46,9 +47,9 @@ test('ACCEPT_CONTRACT가 구역을 뽑고, 수락한 계약의 목표 구역이 
 });
 
 test('ACCEPT_CONTRACT pays the prepayment currency immediately and moves to the loadout screen', () => {
-  const offered = gameReducer(null, { type: 'NEW_RUN', seed: 3 });
+  const offered = finishTaskSnapshot(gameReducer(null, { type: 'NEW_RUN', seed: 3 }));
   const contract = offered.offeredContracts[0];
-  const s = gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
+  const s = finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id }));
   assert.equal(s.currentScreen, 'loadout');
   assert.equal(s.activeContract.id, contract.id);
   assert.equal(s.activeContract.status, 'accepted');
@@ -56,13 +57,13 @@ test('ACCEPT_CONTRACT pays the prepayment currency immediately and moves to the 
   assert.equal(currencyItems.length, 1);
   assert.equal(currencyItems[0].value, contract.prepaymentCurrency);
   // 아직 제안 목록에 없는 id로는 수락되지 않는다(no-op).
-  assert.equal(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: 'not_offered' }), offered);
+  assert.equal(finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: 'not_offered' })), offered);
 });
 
 test('CONFIRM_LOADOUT seeds facilityRunState.contract from the accepted contract and pre-reveals its objective landmark', () => {
   let s = startLoadoutWithType(3, 'destroy');
   const contractId = s.activeContract.id;
-  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = finishTaskSnapshot(gameReducer(s, { type: 'CONFIRM_LOADOUT' }));
   assert.equal(s.facilityRunState.contract.id, contractId);
   assert.equal(s.facilityRunState.contract.status, 'accepted');
   // activeContract는 confirmLoadout 이후 스냅샷에서 지워진다 — facilityRunState.contract가 유일한 소스.
@@ -75,7 +76,7 @@ test('CONFIRM_LOADOUT seeds facilityRunState.contract from the accepted contract
 test('a retrieval contract completes only if the player is still carrying the goods when they extract', () => {
   let s = startLoadoutWithType(3, 'retrieval');
   const contract = s.activeContract;
-  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = finishTaskSnapshot(gameReducer(s, { type: 'CONFIRM_LOADOUT' }));
   const run = s.facilityRunState;
   const landmark = run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
 
@@ -107,7 +108,7 @@ test('a retrieval contract completes only if the player is still carrying the go
       exits: { ...s.facilityRunState.exits, A: { ...s.facilityRunState.exits.A, nodeId: neighborId, status: 'open', openEndsAt: s.facilityRunState.time + 1000 } },
     },
   };
-  const extracted = gameReducer(opened, { type: 'MOVE_TO_NODE', nodeId: neighborId });
+  const extracted = finishTaskSnapshot(gameReducer(opened, { type: 'MOVE_TO_NODE', nodeId: neighborId }));
   assert.equal(extracted.currentScreen, 'extractionComplete');
   assert.equal(extracted.facilityRunState.contract.status, 'completed');
 
@@ -119,7 +120,7 @@ test('a retrieval contract completes only if the player is still carrying the go
       inventory: { ...opened.playerState.inventory, items: opened.playerState.inventory.items.filter((i) => i.kind !== 'contractGoods') },
     },
   };
-  const extractedWithoutGoods = gameReducer(discarded, { type: 'MOVE_TO_NODE', nodeId: neighborId });
+  const extractedWithoutGoods = finishTaskSnapshot(gameReducer(discarded, { type: 'MOVE_TO_NODE', nodeId: neighborId }));
   assert.equal(extractedWithoutGoods.currentScreen, 'extractionComplete', '미완수 탈출도 생존 성공으로 처리한다(불변 핵심 6번)');
   assert.equal(extractedWithoutGoods.facilityRunState.contract.status, 'acquired', '물건 없이 탈출하면 계약은 완료되지 않는다');
 });
@@ -146,7 +147,7 @@ test('파괴 계약은 설치 뒤 목표부에서 떨어진 자리에서 기폭�
 
   let s = startLoadoutWithType(3, 'destroy');
   const contract = s.activeContract;
-  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = finishTaskSnapshot(gameReducer(s, { type: 'CONFIRM_LOADOUT' }));
   const run = s.facilityRunState;
   const landmark = run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
 
@@ -161,12 +162,12 @@ test('파괴 계약은 설치 뒤 목표부에서 떨어진 자리에서 기폭�
   };
 
   // 목표부에 서 있는 채로 누르면 아무 일도 일어나지 않는다(리듀서는 항상 total function).
-  assert.equal(gameReducer(planted, { type: 'DETONATE_CONTRACT_CHARGE' }), planted);
+  assert.equal(finishTaskSnapshot(gameReducer(planted, { type: 'DETONATE_CONTRACT_CHARGE' })), planted);
 
   const hops = bfsHopDistances(run.graph.edges, landmark.nodeId);
   const farNodeId = run.graph.nodes.map((n) => n.id).find((id) => (hops.get(id) ?? -1) >= CONTRACT_DETONATE_MIN_HOPS);
   const away = { ...planted, facilityRunState: { ...planted.facilityRunState, playerNodeId: farNodeId } };
-  const detonated = gameReducer(away, { type: 'DETONATE_CONTRACT_CHARGE' });
+  const detonated = finishTaskSnapshot(gameReducer(away, { type: 'DETONATE_CONTRACT_CHARGE' }));
   assert.equal(detonated.facilityRunState.contract.status, 'completed');
   assert.equal(computeContractOutcome(detonated.facilityRunState).scoreDelta, contract.completionRewardValue);
 });
@@ -178,7 +179,7 @@ test('정보 송출은 목표부 구역에 인접한 구역의 랜드마크에�
 
   let s = startLoadoutWithType(3, 'intel');
   const contract = s.activeContract;
-  s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
+  s = finishTaskSnapshot(gameReducer(s, { type: 'CONFIRM_LOADOUT' }));
   const run = s.facilityRunState;
   const adjacentIds = adjacentSectorIds(run.graph, contract.sectorId);
   const objectiveLandmark = run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
@@ -201,11 +202,11 @@ test('정보 송출은 목표부 구역에 인접한 구역의 랜드마크에�
 
   // 리듀서는 total function이라 불가능한 자리에서는 상태가 그대로다.
   const atObjective = atNode(objectiveLandmark.nodeId);
-  assert.equal(gameReducer(atObjective, { type: 'TRANSMIT_CONTRACT_INTEL' }), atObjective, '목표부 구역은 불가');
+  assert.equal(finishTaskSnapshot(gameReducer(atObjective, { type: 'TRANSMIT_CONTRACT_INTEL' })), atObjective, '목표부 구역은 불가');
   const atFar = atNode(farLandmark.nodeId);
-  assert.equal(gameReducer(atFar, { type: 'TRANSMIT_CONTRACT_INTEL' }), atFar, '인접하지 않은 구역은 불가');
+  assert.equal(finishTaskSnapshot(gameReducer(atFar, { type: 'TRANSMIT_CONTRACT_INTEL' })), atFar, '인접하지 않은 구역은 불가');
 
-  const transmitted = gameReducer(atNode(adjacentLandmark.nodeId), { type: 'TRANSMIT_CONTRACT_INTEL' });
+  const transmitted = finishTaskSnapshot(gameReducer(atNode(adjacentLandmark.nodeId), { type: 'TRANSMIT_CONTRACT_INTEL' }));
   assert.equal(transmitted.facilityRunState.contract.status, 'completed');
   assert.equal(computeContractOutcome(transmitted.facilityRunState).scoreDelta, contract.completionRewardValue);
 });

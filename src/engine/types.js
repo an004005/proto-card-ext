@@ -100,7 +100,6 @@
  * @property {string} from
  * @property {string} to
  * @property {boolean} bidirectional
- * @property {number} timeCost Mobility 0 기준 base 시간 비용.
  * @property {SpecialEdgeFeature[]} features 빈 배열 = 일반 복도.
  * @property {number} [requiredCapability] 이 엣지를 여는 데 필요한 Capability 수치. 없으면 1.
  *   통신·관제탑 승강기처럼 배치 원형이 구조적으로 두는 통로가 더 높은 값을 갖는다.
@@ -115,7 +114,7 @@
 
 /**
  * @typedef {Object} ExitPlacementMeta 출구 배치가 어떻게 정해졌는지 (ADR-0076·ADR-0083).
- * @property {number} exitAWalkDistance 완성 그래프에서 시작점부터 출구 A까지의 거리(칸) —
+ * @property {number} exitAWalkDistance 완성 그래프에서 시작점부터 출구 A까지의 홉수(=칸) —
  *   Capability 0이 아무것도 열지 않고 걸을 수 있는 간선만. A는 시작 구역도 계약 목표 구역도 아닌
  *   구역에서 이 거리가 가장 먼 노드다.
  */
@@ -254,7 +253,7 @@
  * @property {string} nodeId
  * @property {'closed'|'requesting'|'opening'|'open'|'disabled'} status
  * @property {number} disabledAt
- * @property {number|null} interactionEndsAt 요청 행동(50) 완료 시각.
+ * @property {number|null} interactionEndsAt 탈출구 가동 게이지가 차는 시각(ADR-0084).
  * @property {number|null} opensAt
  * @property {number|null} openEndsAt
  * @property {string|null} requestId
@@ -346,11 +345,12 @@
  *   3개(§5단계, D11). 고르기 전에는 아무것도 인벤토리에 들어오지 않는다.
  * @property {PendingTask|null} pendingTask 예약해 둔 현장 작업. 시작 시점에는 아무 효과도 없고,
  *   `completesAt` 칸 경계에서 종류별 완료 적용이 한 번에 확정된다.
- * @property {{kind: string, status: 'completed'|'interrupted', reason: 'threatContact'|'collapsed'|null, startedAt: number, completedAt: number}|null} lastTaskOutcome
+ * @property {{kind: string, status: 'completed'|'interrupted', reason: 'threatContact'|'collapsed'|'abandoned'|null, startedAt: number, completedAt: number, params: Record<string, any>|null}|null} lastTaskOutcome
  *   방금 끝난 작업이 완료됐는지 중단됐는지. 인벤토리를 만지는 호출부(파밍 보상, 계약 물건,
- *   장비 교체)가 이 값으로 "줄지 말지"를 가른다.
+ *   장비 교체)가 이 값으로 "줄지 말지"를 가른다 — 작업은 시작한 커맨드가 아니라 게이지를 채운
+ *   대기에서 끝나므로, 그 호출부가 다시 읽을 수 있도록 `params`를 그대로 들고 나온다(ADR-0084).
  * @property {string|null} engagedThreatId 전투 중인 위협 — 그 전투가 끝날 때까지 맵에서 멈춘다.
- * @property {{requested: number, elapsed: number, reason: 'encounter'|'exitChange'|'runEnded'|'blocked'|null, completedAt: number}|null} [lastWaitBatch]
+ * @property {{requested: number, elapsed: number, reason: 'encounter'|'exitChange'|'runEnded'|'blocked'|'taskDone'|null, completedAt: number}|null} [lastWaitBatch]
  *   방금 끝난 묶음 대기가 몇 칸을 요청해 몇 칸을 실제로 썼고 왜 멈췄는지. 요청한 만큼 다 흘렀으면
  *   말할 것이 없으므로 화면은 모자랄 때만 읽는다.
  */

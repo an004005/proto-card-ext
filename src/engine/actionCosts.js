@@ -15,7 +15,7 @@ import { resolveCapabilityCost } from './capabilityCosts.js';
 import {
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME,
   BASIC_RECON_TIME, WAIT_TICK_TIME, ENCOUNTER_EVADE_TIME, CONCEALMENT_ACTION_TIME_COST,
-  CORPSE_DISPOSAL_TIME, EXIT_REQUEST_TIME,
+  CORPSE_DISPOSAL_TIME, EXIT_ACTIVATE_TIME_BY_HACKING,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   CAMERA_HACK_TIME, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
@@ -28,7 +28,7 @@ import {
   HIGH_GROUND_MOBILITY_REQUIREMENT, ENCOUNTER_DECEIVE_REQUIREMENT,
   TRACE_CLEANUP_TIME_BY_PERCEPTION, POWER_CUT_TIME, POWER_CUT_NOISE,
   FALSE_BROADCAST_TIME, FALSE_BROADCAST_DURATION_BY_STEP,
-  MOBILITY_MOVE_TIME_DELTA, MOVE_MIN_TIME, CAPABILITY_STEP_TIME_DELTA, CAPABILITY_MIN_TIME,
+  CAPABILITY_STEP_TIME_DELTA, CAPABILITY_MIN_TIME,
   WAIT_BATCH_MAX_TICKS,
 } from '../data/facilityLayout.js';
 
@@ -46,7 +46,7 @@ export const MAP_CONSUMABLE_TIME_COST = 2;
  * @property {CapabilityKind} [capabilityKind] 수단을 호출부가 고르는 행동(특수 엣지·회수 계약)의 실제 수단.
  * @property {number} [required] 요구치 R. 사양이 스스로 정하면 그쪽이 이긴다.
  * @property {'safe'|'normal'|'rush'} [mode] 접근 모드.
- * @property {{timeCost: number, requiredCapability?: number|null}} [edge] 이동·특수 엣지의 대상 통로.
+ * @property {{requiredCapability?: number|null}} [edge] 이동·특수 엣지의 대상 통로.
  * @property {boolean} [isPrize] 파밍 등급.
  * @property {'normal'|'elite'} [tier] 확보 대상 등급.
  * @property {number} [ticks] 묶음 대기가 요청하는 칸 수.
@@ -64,16 +64,20 @@ function clampIndex(value) {
 }
 
 /**
- * 통로 하나를 지나는 실제 칸 수. 통로 비용 B에 Mobility 칸 가감을 더하고 하한으로 자른다
- * (ADR-0075) — 배율이 아니므로 반올림이 끼어들 자리가 없다. runEngine이 이 함수를 그대로
- * 재수출하고 MapScreen의 도착 예고도 같은 함수를 쓴다.
- * @param {{timeCost: number}} edge
- * @param {number} effectiveMobility 원시 Mobility(-2~4).
+ * 통로 하나를 지나는 실제 칸 수 — 언제나 1이다(ADR-0084). 통로의 길이도 Mobility도 이 값을
+ * 바꾸지 않는다: 맵의 모든 이동은 한 칸이고, 시간은 이동이 아니라 **작업**에서 나간다.
+ * 인자를 그대로 받아두는 것은 호출부(runEngine·MapScreen·측정 도구)가 통로와 수치를 들고
+ * 부르기 때문이다 — 이 함수가 유일한 이동 시간의 출처로 남는다.
+ * @param {object} [edge]
+ * @param {number} [effectiveMobility] 원시 Mobility(-2~4). 더 이상 시간에 영향을 주지 않는다.
  * @returns {number} 정수 칸.
  */
-export function moveTimeCost(edge, effectiveMobility = 0) {
-  return Math.max(MOVE_MIN_TIME, edge.timeCost + MOBILITY_MOVE_TIME_DELTA[clampIndex(effectiveMobility)]);
+export function moveTimeCost(edge = undefined, effectiveMobility = 0) {
+  return MOVE_TIME_COST;
 }
+
+/** 통로 하나 = 1칸(ADR-0084). */
+export const MOVE_TIME_COST = 1;
 
 /**
  * 접근 모드(안전/표준/강행)의 시간·소음 가감. 층계가 걸리지 않는 행동(파밍)만 여기서 바로
@@ -102,19 +106,13 @@ export function applyApproachMode(baseTime, baseNoise, mode) {
  */
 
 /**
- * 통로를 지나는 행동(이동·고지대 통과)의 공통 기본 비용. 둘 다 Mobility 전용 시간 규칙을 쓰므로
- * 한 곳에서만 만든다 — 갈라져 있으면 이동 시간 규칙이 바뀔 때 한쪽만 따라간다.
+ * 통로를 지나는 행동(이동·고지대 통과)의 공통 기본 비용 — 둘 다 1칸이다(ADR-0084).
+ * 한 곳에서만 만든다: 갈라져 있으면 이동 시간 규칙이 바뀔 때 한쪽만 따라간다.
  * @param {ActionCostOpts} opts
  * @returns {ActionCostBase}
  */
 function moveBase(opts) {
-  const edge = /** @type {{timeCost: number}} */ (opts.edge);
-  return {
-    time: moveTimeCost(edge, opts.value ?? 0),
-    baseTime: edge.timeCost,
-    mobilityDelta: MOBILITY_MOVE_TIME_DELTA[clampIndex(opts.value ?? 0)],
-    timeFloor: MOVE_MIN_TIME,
-  };
+  return { time: MOVE_TIME_COST, baseTime: MOVE_TIME_COST, timeFloor: MOVE_TIME_COST };
 }
 
 /** @type {Record<string, ActionSpec>} */
@@ -122,11 +120,11 @@ export const ACTION_SPECS = {
   move: {
     label: '이동',
     capability: null,
-    // 이동은 Mobility 전용 시간 규칙을 쓴다(층계 가감을 얹지 않는다).
+    // 이동은 언제나 1칸이다 — Mobility도 층계도 이 값을 바꾸지 않는다(ADR-0084).
     base: moveBase,
   },
-  // 고지대 통과 — 이동 그 자체이므로 시간은 이동의 전용 규칙(Mobility 칸 가감)을 그대로 쓰고
-  // (`dedicatedTimeRule`: 층계 시간 가감을 또 얹으면 같은 수치에 대가를 두 번 물린다),
+  // 고지대 통과 — 이동 그 자체이므로 시간은 이동의 전용 규칙(1칸)을 그대로 쓰고
+  // (`dedicatedTimeRule`: 층계 시간 가감을 얹으면 이동이 다시 가변 시간이 된다),
   // 부족분은 Mobility의 통화인 HP로만 받는다. 요구치 3이라 0 이하가 불가 구간이 된다.
   traverseHighGround: {
     label: '고지대 통과',
@@ -154,7 +152,13 @@ export const ACTION_SPECS = {
   evade: { label: '조우 회피', capability: null, base: () => ({ time: ENCOUNTER_EVADE_TIME }) },
   concealment: { label: '은엄폐 사용', capability: null, base: () => ({ time: CONCEALMENT_ACTION_TIME_COST }) },
   corpse: { label: '시체 처리', capability: null, base: () => ({ time: CORPSE_DISPOSAL_TIME }) },
-  requestExtraction: { label: '탈출구 개방 요청', capability: null, base: () => ({ time: EXIT_REQUEST_TIME }) },
+  // 탈출구 가동(ADR-0084) — 1칸을 써서 걸어두고 그 자리에서 대기로 게이지를 채운다. 게이지
+  // 길이는 Hacking이 정한다(옛 요청 3칸 + 개방 대기를 하나로 접은 표).
+  exitActivate: {
+    label: '탈출구 가동',
+    capability: null,
+    base: (opts) => ({ time: EXIT_ACTIVATE_TIME_BY_HACKING[clampIndex(opts.value ?? 0)] }),
+  },
   equipSwap: { label: '장비 교체', capability: null, base: () => ({ time: MAP_EQUIP_TIME_COST }) },
   mapConsumable: { label: '소모품 사용', capability: null, base: () => ({ time: MAP_CONSUMABLE_TIME_COST }) },
   farm: {

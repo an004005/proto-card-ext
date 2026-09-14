@@ -10,6 +10,7 @@ import {
 import { describeObservedThreat, observableThreatMoves } from '../src/engine/mapTimeline.js';
 import { PERCEPTION_INFO_TABLE, FREE_OBSERVATION_DETAIL_LEVEL, BASIC_RECON_TIME } from '../src/data/facilityLayout.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
+import { finishTask } from './helpers/finishTask.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -18,7 +19,7 @@ function makeRun(seed = 1) {
 
 /** 정찰을 실제로 완료시킨 상태. */
 function scout(run, perception) {
-  return advanceTime(basicRecon({ ...run, threats: {} }, perception), run.time + BASIC_RECON_TIME);
+  return advanceTime(finishTask(basicRecon({ ...run, threats: {} }, perception)), run.time + BASIC_RECON_TIME);
 }
 
 test('정찰 사거리는 Perception이 정한다 — 2 이하 1홉, 3 이상 2홉', () => {
@@ -38,7 +39,7 @@ test('정찰 사거리는 Perception이 정한다 — 2 이하 1홉, 3 이상 2�
 test('정찰 비용은 Perception과 무관하게 4칸 고정이다', () => {
   const run = { ...makeRun(1), threats: {} };
   for (const perception of [-2, 0, 2, 4]) {
-    const scouted = basicRecon(run, perception);
+    const scouted = finishTask(basicRecon(run, perception));
     assert.equal(scouted.time - run.time, BASIC_RECON_TIME);
   }
 });

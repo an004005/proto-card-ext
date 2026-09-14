@@ -1,4 +1,4 @@
-// 맵 정수 시간(ADR-0075) 전환 뒤 마감 상수(붕괴 490 / A 폐쇄 300)가
+// 맵 정수 시간(ADR-0075)과 1칸 이동(ADR-0084) 전환 뒤 마감 상수(붕괴 50 / A 폐쇄 30)가
 // 실제 시드에서 얼마나 빡빡한지 재는 측정 도구다. 아무 상수도 바꾸지 않고 읽기만 한다 —
 // 결과 요약은 docs/proposals/map-time-balance-measurement.md.
 //
@@ -17,14 +17,15 @@ import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { canClimbHighGround } from '../src/engine/runEngine.js';
 import {
   RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
-  EXIT_REQUEST_TIME, EXIT_OPEN_WAIT_BY_HACKING, EXIT_OPEN_WINDOW,
-  EDGE_TIME_MIN, EDGE_TIME_MAX, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
+  EXIT_ACTIVATE_TIME_BY_HACKING, EXIT_OPEN_WINDOW,
+  BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
   CORPSE_DISPOSAL_TIME,
-  COMBAT_ROUND_TIME_COST, THREAT_MOVE_INTERVAL, REINFORCEMENT_INTERVAL,
+  COMBAT_ROUND_TIME_COST, THREAT_MOVE_INTERVAL, SECTOR_ALERT_MOVE_INTERVAL, REINFORCEMENT_INTERVAL,
   FORCE_TIER1_TIME, HACKING_TIER1_TIME,
 } from '../src/data/facilityLayout.js';
 
-/** 측정에 쓰는 Mobility 값. 이동 비용이 바뀌고, 고지대는 층계 불가 구간(유효 0 이하)에서만 길이 끊긴다. */
+/** 측정에 쓰는 Mobility 값. 이동 비용은 더 이상 Mobility를 타지 않고(ADR-0084), 고지대만
+ * 층계 불가 구간(유효 0 이하)에서 길을 끊는다 — 그래서 Mobility가 바꾸는 것은 **경로**뿐이다. */
 export const MOBILITY_VALUES = [-2, 0, 2, 4];
 
 /** 기본 로드아웃 = 모든 Capability 0. 문 개방·계약 행동 비용은 전부 이 값으로 계산한다. */
@@ -35,18 +36,7 @@ const KNOWN_AT_START = {
   objective: true,   // 계약 목표부 랜드마크는 수락 시 공개된다(createRunState revealLandmarkSectorIds).
   exits: true,       // A는 런 시작부터 지도에 보인다(ADR-0025). 열쇠 출구만 비공개다.
   keyExit: false,    // 열쇠 출구는 열쇠를 확보해야 지도에 나타난다.
-  edgeCosts: false,  // 통로 비용은 그 통로를 볼 때까지 모른다.
   threats: false,
-};
-
-/** 옛 포인트 체계(HEAD 기준) — 반올림 편향 비교 전용 상수. 현재 코드에는 없다. */
-const LEGACY = {
-  edgePerLengthUnit: 2,
-  edgeMin: 40,
-  edgeMax: 260,
-  moveMultiplier: [1.4, 1.2, 1, 0.9, 0.8, 0.7, 0.6],
-  moveMin: 10,
-  pointsPerTick: 20,
 };
 
 // ---- 작은 통계 도구 ----
@@ -128,30 +118,6 @@ function buildArcs(graph, mobility, allowOpening) {
   return arcs;
 }
 
-/** 옛 포인트 체계의 통로 비용을 현재 그래프 좌표에서 다시 만든다(반올림 편향 비교 전용). */
-function buildLegacyArcs(graph, mobility) {
-  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const index = Math.max(-2, Math.min(4, mobility)) + 2;
-  /** @type {Map<string, {to: string, cost: number}[]>} */
-  const arcs = new Map();
-  const link = (from, to, cost) => {
-    if (!arcs.has(from)) arcs.set(from, []);
-    arcs.get(from).push({ to, cost });
-  };
-  for (const edge of graph.edges) {
-    if (edge.features.includes('highGround') && !canClimbHighGround(mobility)) continue;
-    if (edge.features.includes('blocked') || edge.features.includes('electronic')) continue;
-    const a = byId.get(edge.from);
-    const b = byId.get(edge.to);
-    const length = Math.hypot(a.x - b.x, a.y - b.y);
-    const points = Math.max(LEGACY.edgeMin, Math.min(LEGACY.edgeMax, Math.round(length * LEGACY.edgePerLengthUnit)));
-    const cost = Math.max(LEGACY.moveMin, Math.round(points * LEGACY.moveMultiplier[index]));
-    link(edge.from, edge.to, cost);
-    if (!edge.features.includes('oneWay')) link(edge.to, edge.from, cost);
-  }
-  return arcs;
-}
-
 /**
  * 방향성 Dijkstra. 노드 200여 개라 우선순위 큐 없이 O(V^2)로 충분하다.
  * @param {Map<string, {to: string, cost: number}[]>} arcs
@@ -184,8 +150,8 @@ function distOf(distances, nodeId) {
 
 // ---- 시드 하나 측정 ----
 
-/** 탈출구를 실제로 쓰려면 도착 뒤 요청 3칸과 개방 대기(Hacking 0 -> 15칸)가 더 든다. */
-const EXIT_OVERHEAD = EXIT_REQUEST_TIME + EXIT_OPEN_WAIT_BY_HACKING[BASE_CAPABILITY + 2];
+/** 탈출구를 실제로 쓰려면 도착 뒤 가동 게이지(Hacking 0 -> 18칸)를 다 채워야 한다(ADR-0084). */
+const EXIT_OVERHEAD = EXIT_ACTIVATE_TIME_BY_HACKING[BASE_CAPABILITY + 2];
 
 /**
  * 목표부에서 치르는 비용(Capability 0). C5 이후로는 이것이 **완료**가 아니다 — 회수는 물건을
@@ -219,11 +185,6 @@ export function measureSeed(seed) {
   const runContractDefs = CONTRACT_DEFS.filter((def) => graph.sectorIds.includes(def.sectorId));
   const landmarkBySector = Object.fromEntries(graph.landmarks.map((l) => [l.sectorId, l.nodeId]));
 
-  /** 통로 비용 히스토그램(2~13). */
-  const edgeCostHistogram = {};
-  for (let c = EDGE_TIME_MIN; c <= EDGE_TIME_MAX; c++) edgeCostHistogram[c] = 0;
-  for (const edge of graph.edges) edgeCostHistogram[edge.timeCost] = (edgeCostHistogram[edge.timeCost] || 0) + 1;
-
   const featureCounts = { plain: 0, oneWay: 0, blocked: 0, electronic: 0, highGround: 0 };
   for (const edge of graph.edges) {
     if (edge.features.length === 0) featureCounts.plain += 1;
@@ -237,18 +198,11 @@ export function measureSeed(seed) {
     const openArcs = buildArcs(graph, mobility, true);
     const walk = dijkstra(walkArcs, graph.startNodeId);
     const open = dijkstra(openArcs, graph.startNodeId);
-    const legacy = dijkstra(buildLegacyArcs(graph, mobility), graph.startNodeId);
 
     const exits = {};
     for (const exitId of ['A', 'key']) {
       const nodeId = exitNodeIds[exitId];
-      exits[exitId] = {
-        nodeId,
-        walk: distOf(walk, nodeId),
-        open: distOf(open, nodeId),
-        legacyPoints: distOf(legacy, nodeId),
-        legacyTicks: distOf(legacy, nodeId) / LEGACY.pointsPerTick,
-      };
+      exits[exitId] = { nodeId, walk: distOf(walk, nodeId), open: distOf(open, nodeId) };
     }
 
     // 왕복 여유 — 각 마감에서 최단 경로를 뺀다. walk 기준(잠긴 문을 열지 않는 기본 경로)이
@@ -257,8 +211,6 @@ export function measureSeed(seed) {
       exitA: EXIT_A_DISABLED_AT - exits.A.walk,
       exitAOpen: EXIT_A_DISABLED_AT - exits.A.open,
       collapseViaA: RUN_COLLAPSE_TIME - (exits.A.walk + EXIT_OVERHEAD),
-      // 옛 체계에서 같은 목적지까지의 여유(칸 환산) — 반올림 편향 비교용.
-      legacyExitA: EXIT_A_DISABLED_AT - exits.A.legacyTicks,
     };
 
     // 계약별 왕복: 시작 -> 목표부 -> 가장 가까운 사용 가능 출구.
@@ -296,6 +248,7 @@ export function measureSeed(seed) {
           total,
           deadline,
           slack: deadline - total,
+          // A 폐쇄는 **가동을 시작하는 시각**만 본다(ADR-0054). 붕괴는 가동이 끝나는 시각을 본다.
           usable: total < deadline && total + EXIT_OVERHEAD < RUN_COLLAPSE_TIME,
         };
       }
@@ -310,10 +263,7 @@ export function measureSeed(seed) {
       };
     }
 
-    const moveCosts = [];
-    for (const arcList of walkArcs.values()) for (const arc of arcList) moveCosts.push(arc.cost);
-
-    byMobility[mobility] = { exits, slack, contracts, moveCostStats: stats(moveCosts) };
+    byMobility[mobility] = { exits, slack, contracts };
   }
 
   return {
@@ -322,7 +272,6 @@ export function measureSeed(seed) {
     exitPlacement: graph.exitPlacement,
     nodeCount: graph.nodes.length,
     edgeCount: graph.edges.length,
-    edgeCostHistogram,
     featureCounts,
     byMobility,
   };
@@ -335,7 +284,7 @@ export function measure(seeds) {
     seeds,
     constants: {
       RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
-      EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, exitOverheadAtHacking0: EXIT_OVERHEAD,
+      EXIT_OPEN_WINDOW, exitOverheadAtHacking0: EXIT_OVERHEAD,
     },
     knownAtStart: KNOWN_AT_START,
     seedResults: seeds.map(measureSeed),
@@ -367,31 +316,23 @@ export function formatReport(result) {
   const rs = result.seedResults;
   const pick = (fn) => rs.map(fn);
 
-  out.push('맵 정수 시간 밸런스 측정 (ADR-0075)');
+  out.push('맵 정수 시간 밸런스 측정 (ADR-0075 · ADR-0084)');
   out.push(`시드 ${seeds[0]}..${seeds[seeds.length - 1]} (${seeds.length}개) · 기본 로드아웃(전 Capability 0)`);
   out.push(`마감: 붕괴 ${RUN_COLLAPSE_TIME} / A 폐쇄 ${EXIT_A_DISABLED_AT} (봉쇄는 출구를 앞당겨 닫지 않는다, ADR-0083)`);
-  out.push(`탈출 부대비용: 요청 ${EXIT_REQUEST_TIME} + 개방 대기 ${EXIT_OPEN_WAIT_BY_HACKING[2]}(Hacking 0) = ${EXIT_OVERHEAD}칸`);
-  out.push('모든 거리는 사후 최단(전지 시점)이다 — 실제 탐색 비용은 포함하지 않는다.');
+  out.push(`탈출 부대비용: 탈출구 가동 게이지 ${EXIT_OVERHEAD}칸(Hacking 0) · 개방 창 ${EXIT_OPEN_WINDOW}칸`);
+  out.push('모든 거리는 사후 최단(전지 시점)이고, 이동 1홉 = 1칸이다(ADR-0084).');
   out.push('');
 
   // 6. 그래프 형태
   out.push('## 1. 그래프 형태');
   out.push(`노드 ${stats(pick((r) => r.nodeCount)).median} · 엣지 중앙 ${stats(pick((r) => r.edgeCount)).median} (최소 ${stats(pick((r) => r.edgeCount)).min} / 최대 ${stats(pick((r) => r.edgeCount)).max})`);
-  const histWidths = [6, 10, 8];
-  out.push(row(['비용', '엣지 수(합)', '비율'], histWidths));
-  let histTotal = 0;
-  for (let c = EDGE_TIME_MIN; c <= EDGE_TIME_MAX; c++) histTotal += rs.reduce((sum, r) => sum + r.edgeCostHistogram[c], 0);
-  for (let c = EDGE_TIME_MIN; c <= EDGE_TIME_MAX; c++) {
-    const count = rs.reduce((sum, r) => sum + r.edgeCostHistogram[c], 0);
-    out.push(row([`${c}칸`, count, `${(count / histTotal * 100).toFixed(1)}%`], histWidths));
-  }
   const feat = ['plain', 'oneWay', 'blocked', 'electronic', 'highGround']
     .map((k) => `${k} ${(rs.reduce((s, r) => s + (r.featureCounts[k] || 0), 0) / rs.length).toFixed(1)}`).join(' · ');
   out.push(`시드당 평균 엣지 성격: ${feat}`);
   out.push('');
 
   // 1. 시작점에서 각 출구까지
-  out.push('## 2. 시작점 -> 출구 최단 가중거리(칸) [A 위치는 시작 시점 공개, 열쇠는 비공개]');
+  out.push('## 2. 시작점 -> 출구 최단 홉수(=칸) [A 위치는 시작 시점 공개, 열쇠는 비공개]');
   const distWidths = [8, 6, 22, 22, 10];
   out.push(row(['Mobility', '출구', '개방 없이 최소/중앙/최대', '문 개방 허용(Cap 0)', '도달불가'], distWidths));
   for (const m of MOBILITY_VALUES) {
@@ -430,7 +371,7 @@ export function formatReport(result) {
   out.push('');
 
   // 4. 행동 예산
-  out.push(`## 4. 행동 예산 — A 탈출 런(여유 = ${EXIT_A_DISABLED_AT} − 시작->A 거리 − 부대비용)을 대표 행동으로 나눈 값`);
+  out.push(`## 4. 행동 예산 — A 탈출 런에서 "가는 길에 다른 것을 할 수 있는 칸"을 대표 행동으로 나눈 값`);
   const doorForce = forecastAction('openEdge', { edge: { timeCost: 0, requiredCapability: 1 }, capabilityKind: 'force', value: 0 }).timeCost;
   const doorHack = forecastAction('openEdge', { edge: { timeCost: 0, requiredCapability: 1 }, capabilityKind: 'hacking', value: 0 }).timeCost;
   // 수습 행동(시체 처리·흔적 정리)도 같은 줄에 둔다 — 다른 행동 대비 얼마나 비싼지가 보이지
@@ -442,8 +383,14 @@ export function formatReport(result) {
   out.push(row(['Mobility', '여유(중앙)', '정찰만', '보급파밍만', '확보파밍만', '전투라운드만', '표준세트'], budgetWidths));
   // 표준세트 = 정찰 6 + 보급 파밍 4 + 확보 파밍 2 + 전투 3라운드.
   const SET_COST = 6 * BASIC_RECON_TIME + 4 * SUPPLY_FARM_TIME + 2 * PRIZE_FARM_TIME.normal + 3 * COMBAT_ROUND_TIME_COST;
+  out.push('두 마감이 각각 다른 것을 묶는다. A 폐쇄는 **가동을 시작하는 시각**만 본다(ADR-0054: 이미 시작된');
+  out.push('가동은 폐쇄 시각을 넘겨도 끝까지 간다). 붕괴는 가동이 다 끝나는 시각을 본다. 그래서 예산은');
+  out.push('min(A 폐쇄 − 거리, 붕괴 − 거리 − 가동 게이지)이다.');
   for (const m of MOBILITY_VALUES) {
-    const budgets = pick((r) => EXIT_A_DISABLED_AT - r.byMobility[m].exits.A.walk - EXIT_OVERHEAD);
+    const budgets = pick((r) => Math.min(
+      EXIT_A_DISABLED_AT - r.byMobility[m].exits.A.walk,
+      RUN_COLLAPSE_TIME - r.byMobility[m].exits.A.walk - EXIT_OVERHEAD,
+    ));
     const s = stats(budgets);
     const per = (cost) => (s.median > 0 ? Math.floor(s.median / cost) : 0);
     out.push(row([
@@ -456,15 +403,16 @@ export function formatReport(result) {
 
   // 5. 적 압박
   out.push('## 5. 적 압박 — 대표 행동 한 번 동안 위협이 움직이는 횟수');
-  const pressureWidths = [18, 10, 12, 12];
-  out.push(row(['행동(칸)', '순찰 5칸', '추격 3칸', '조사·경계 4칸'], pressureWidths));
-  const medianMove = stats(MOBILITY_VALUES.flatMap((m) => pick((r) => r.byMobility[m].moveCostStats.median))).median;
-  const moveMedian0 = stats(pick((r) => r.byMobility[0].moveCostStats.median)).median;
+  const pressureWidths = [22, 12, 12, 14, 16];
+  out.push(row([
+    '행동(칸)', `순찰 ${THREAT_MOVE_INTERVAL.patrol}칸`, `추격 ${THREAT_MOVE_INTERVAL.pursuit}칸`,
+    `조사·경계 ${THREAT_MOVE_INTERVAL.investigate}칸`, `경계도 2+ 순찰 ${SECTOR_ALERT_MOVE_INTERVAL.patrol}칸`,
+  ], pressureWidths));
   const actions = [
     [`정찰 ${BASIC_RECON_TIME}`, BASIC_RECON_TIME],
     [`확보 파밍 ${PRIZE_FARM_TIME.normal}`, PRIZE_FARM_TIME.normal],
-    [`이동 중앙 ${moveMedian0}(Mob 0)`, moveMedian0],
-    [`탈출 부대 ${EXIT_OVERHEAD}`, EXIT_OVERHEAD],
+    ['이동 1', 1],
+    [`탈출구 가동 ${EXIT_OVERHEAD}`, EXIT_OVERHEAD],
   ];
   for (const [label, cost] of actions) {
     out.push(row([
@@ -472,13 +420,17 @@ export function formatReport(result) {
       Math.floor(cost / THREAT_MOVE_INTERVAL.patrol),
       Math.floor(cost / THREAT_MOVE_INTERVAL.pursuit),
       Math.floor(cost / THREAT_MOVE_INTERVAL.investigate),
+      Math.floor(cost / SECTOR_ALERT_MOVE_INTERVAL.patrol),
     ], pressureWidths));
   }
   for (const m of MOBILITY_VALUES) {
-    const s = stats(pick((r) => EXIT_A_DISABLED_AT - r.byMobility[m].exits.A.walk - EXIT_OVERHEAD));
+    const s = stats(pick((r) => Math.min(
+      EXIT_A_DISABLED_AT - r.byMobility[m].exits.A.walk,
+      RUN_COLLAPSE_TIME - r.byMobility[m].exits.A.walk - EXIT_OVERHEAD,
+    )));
     out.push(`Mobility ${m}: A 탈출 런 예산 ${num(s.median, 1)}칸 동안 증원(${REINFORCEMENT_INTERVAL}칸 주기) ${Math.floor(Math.max(0, s.median) / REINFORCEMENT_INTERVAL)}회, 붕괴 ${RUN_COLLAPSE_TIME}까지 총 ${Math.floor(RUN_COLLAPSE_TIME / REINFORCEMENT_INTERVAL)}회`);
   }
-  out.push(`(전 Mobility 통합 이동 비용 중앙값 ${num(medianMove, 1)}칸)`);
+  out.push('(이동은 통로·Mobility와 무관하게 언제나 1칸이다 — 압박을 만드는 것은 작업 게이지다: 한 칸에 한 홉을 걷는 나를 위협은 순찰 5칸에 한 홉으로 따라오지만, 18칸짜리 가동 게이지 동안에는 세 홉을 좁힌다.)');
   out.push('');
 
   // 2. 계약 왕복
@@ -513,24 +465,6 @@ export function formatReport(result) {
     out.push('');
   }
 
-  // 7. 옛 체계 비교
-  out.push('## 7. 옛 포인트 체계 대비 (같은 그래프, 옛 통로 비용·배율을 20으로 나눈 값)');
-  const legacyWidths = [8, 6, 22, 22, 20];
-  out.push(row(['Mobility', '출구', '현재(칸) 최소/중앙/최대', '옛 환산(칸)', '차이 중앙(현재−옛)'], legacyWidths));
-  for (const m of MOBILITY_VALUES) {
-    for (const exitId of ['A', 'key']) {
-      const now = stats(pick((r) => r.byMobility[m].exits[exitId].walk));
-      const old = stats(pick((r) => r.byMobility[m].exits[exitId].legacyTicks));
-      const diff = stats(pick((r) => r.byMobility[m].exits[exitId].walk - r.byMobility[m].exits[exitId].legacyTicks));
-      out.push(row([
-        m, exitId,
-        `${num(now.min)} / ${num(now.median, 1)} / ${num(now.max)}`,
-        `${num(old.min, 1)} / ${num(old.median, 1)} / ${num(old.max, 1)}`,
-        `${diff.median > 0 ? '+' : ''}${num(diff.median, 1)} (${num(diff.min, 1)}..${num(diff.max, 1)})`,
-      ], legacyWidths));
-    }
-  }
-  out.push('');
   return out.join('\n');
 }
 

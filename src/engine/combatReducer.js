@@ -3,7 +3,7 @@ import { applyStatus, applyDamage } from './statusEngine.js';
 import {
   createCombatState, beginPlayerFirst, beginEnemyFirst, playCard, advanceTurn, checkWinLoss,
 } from './combatEngine.js';
-import { refreshLocalObservations } from './runEngine.js';
+import { refreshLocalObservations, abandonTask } from './runEngine.js';
 import { computeCapabilities } from './capabilityEngine.js';
 import {
   applyCombatRoundTimeToRunState, applyCombatCardNoise, beginDisengage, cancelDisengage, addDisengageProgress, canDisengage,
@@ -153,8 +153,9 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
 
   // 교전에 들어간 위협은 전투가 끝날 때까지 맵에서 멈춘다. 외부 위협은 계속 움직이지만,
   // 도착해도 현재 전투에 끼어들지 않고 종료 후 조우로 처리된다(planned §8).
+  // 전투에 들어가면 진행 중이던 현장 작업은 포기된다(ADR-0084) — 칼을 맞으면서 문을 딸 수는 없다.
   let facilityRunState = snapshot.facilityRunState
-    ? { ...snapshot.facilityRunState, engagedThreatId: context.threatId || null }
+    ? { ...abandonTask(snapshot.facilityRunState), engagedThreatId: context.threatId || null }
     : snapshot.facilityRunState;
   // 적 기습으로 생기는 추가 선공 구간은 라운드와 별도로 3칸이다. 플레이어 기습의 스턴은 적
   // 행동을 막을 뿐 라운드 시간을 줄이지 않으므로 여기에 대응하는 할인이 없다.

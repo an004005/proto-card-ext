@@ -9,6 +9,7 @@ import {
 } from '../src/engine/runEngine.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { CAMERA_FORCE_TIME, ALERT_PRESSURE } from '../src/data/facilityLayout.js';
+import { finishTask } from './helpers/finishTask.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -31,12 +32,12 @@ test('Force pays in noise and equipment durability, and never raises the alert',
   const base = makeRun(21);
   const state = { ...base, graph: { ...base.graph, cameras: [{ id: 'cam', nodeId: base.playerNodeId }] } };
 
-  const standard = destroyCamera(state, 'cam', 1);
+  const standard = finishTask(destroyCamera(state, 'cam', 1));
   assert.equal(standard.time - state.time, CAMERA_FORCE_TIME);
   assert.equal(standard.pendingDurabilityLoss, 0, '요구치를 맞췄으면 연장은 멀쩡하다');
   assert.deepEqual(standard.sectorAlerts, state.sectorAlerts, 'Force는 경계도로 값을 치르지 않는다');
 
-  const severe = destroyCamera(state, 'cam', -1);
+  const severe = finishTask(destroyCamera(state, 'cam', -1));
   assert.ok(severe.pendingDurabilityLoss > 0, '크게 모자라면 연장이 상한다');
   assert.ok(severe.time - state.time > standard.time - state.time);
   const loudest = severe.noiseEvents[severe.noiseEvents.length - 1];
@@ -52,19 +53,19 @@ test('Hacking pays in the sector alert, and a surplus actually costs less than t
   };
   const sectorId = state.playerNodeId.split('_')[0];
 
-  const standard = hackAccessInterface(state, 'iface', 1);
+  const standard = finishTask(hackAccessInterface(state, 'iface', 1));
   assert.equal(standard.sectorAlerts[sectorId].level, 0, '요구치를 맞췄으면 들키지 않는다');
 
-  const strained = hackAccessInterface(state, 'iface', 0);
+  const strained = finishTask(hackAccessInterface(state, 'iface', 0));
   assert.equal(strained.sectorAlerts[sectorId].pressure, 0, 'strained는 아직 경계 게이지를 올리지 않는다');
   assert.ok(strained.time > standard.time);
   assert.equal(strained.pendingHpLoss, 0, 'Hacking은 HP로 받지 않는다');
 
-  const severe = hackAccessInterface(state, 'iface', -1);
+  const severe = finishTask(hackAccessInterface(state, 'iface', -1));
   assert.equal(severe.sectorAlerts[sectorId].level, 0, '한 번 들켰다고 단계가 바로 오르지는 않는다(ADR-0082)');
   assert.equal(severe.sectorAlerts[sectorId].pressure, ALERT_PRESSURE.botchedAction, '크게 모자라면 그 자리에서 들켜 게이지가 찬다');
 
-  const surplus = hackAccessInterface(state, 'iface', 3);
+  const surplus = finishTask(hackAccessInterface(state, 'iface', 3));
   assert.ok(surplus.time < standard.time, '여유가 있으면 더 빨리 끝난다');
   assert.equal(surplus.sectorAlerts[sectorId].level, 0);
 });
@@ -83,15 +84,15 @@ test('Stealth pays in a strong trace, and a severe shortfall raises the sector a
   };
   const sectorId = landmark.nodeId.split('_')[0];
 
-  const standard = acquireContractGoods(at, 1, 0);
+  const standard = finishTask(acquireContractGoods(at, 1, 0));
   assert.equal(standard.evidence.filter((e) => e.tier === 2).length, 0, '요구치를 맞췄으면 강한 흔적은 없다');
   assert.equal(standard.sectorAlerts[sectorId].level, 0);
 
-  const strained = acquireContractGoods(at, 0, 0);
+  const strained = finishTask(acquireContractGoods(at, 0, 0));
   assert.ok(strained.evidence.some((e) => e.nodeId === landmark.nodeId && e.tier === 2), '모자라면 강한 흔적이 남는다');
   assert.equal(strained.sectorAlerts[sectorId].level, 0, '아직은 발견되기를 기다리는 단계다');
 
-  const severe = acquireContractGoods(at, -1, -1);
+  const severe = finishTask(acquireContractGoods(at, -1, -1));
   assert.equal(severe.sectorAlerts[sectorId].pressure, ALERT_PRESSURE.botchedAction, '크게 모자라면 그 자리에서 바로 들켜 게이지가 찬다');
   assert.equal(severe.sectorAlerts[sectorId].level, 0, '게이지가 가득 차야 단계가 오른다(ADR-0082)');
 });
@@ -104,7 +105,7 @@ test('the impossible band is what stays locked — and it starts three below the
 
   // 요구치 1: -1(severe)까지는 대가를 치르고 열리고, -2부터 막힌다.
   for (const capability of [1, 0, -1]) {
-    const opened = openSpecialEdge(state, blocked.id, 'force', capability, 'normal');
+    const opened = finishTask(openSpecialEdge(state, blocked.id, 'force', capability, 'normal'));
     assert.ok(opened.openedEdgeIds.includes(blocked.id), `Force ${capability}은 대가를 치르고 열려야 한다`);
   }
   assert.throws(() => openSpecialEdge(state, blocked.id, 'force', -2, 'normal'), /too low/);
@@ -119,7 +120,7 @@ test('Mobility pays in HP, and the reducer settles that off playerState', async 
 
   // Mobility가 Stealth보다 높으면 Mobility 쪽 통화로 청구된다 — 조용히가 아니라 빠르게 해냈으니
   // 흔적 대신 몸이 값을 치른다.
-  const byMobility = acquireContractGoods(at, -1, 0);
+  const byMobility = finishTask(acquireContractGoods(at, -1, 0));
   assert.ok(byMobility.pendingHpLoss > 0, 'Mobility가 모자라면 HP로 받는다');
   assert.equal(byMobility.evidence.filter((e) => e.tier === 2).length, 0, '그 대신 흔적은 남지 않는다');
 
@@ -138,12 +139,12 @@ test('Mobility pays in HP, and the reducer settles that off playerState', async 
 test('고지대 통과는 층계다 — Mobility의 통화(HP)로만 받고, 시간은 이동의 전용 규칙 그대로다', async () => {
   const { forecastAction, moveTimeCost } = await import('../src/engine/actionCosts.js');
   const { CAPABILITY_STEP_HP_COST, HIGH_GROUND_MOBILITY_REQUIREMENT } = await import('../src/data/facilityLayout.js');
-  const edge = { timeCost: 6, features: ['highGround'] };
+  const edge = { features: ['highGround'] };
 
   const standard = forecastAction('traverseHighGround', { edge, value: HIGH_GROUND_MOBILITY_REQUIREMENT });
   assert.equal(standard.step, 'standard');
   assert.equal(standard.cost.hpCost, 0);
-  assert.equal(standard.timeCost, moveTimeCost(edge, 3), '시간은 이동과 같은 값이다 — 층계 가감을 또 얹지 않는다');
+  assert.equal(standard.timeCost, moveTimeCost(edge, 3), '시간은 이동과 같은 1칸이다 — 층계 가감을 또 얹지 않는다');
 
   const strained = forecastAction('traverseHighGround', { edge, value: 2 });
   assert.equal(strained.step, 'strained');

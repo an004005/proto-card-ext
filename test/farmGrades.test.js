@@ -10,6 +10,7 @@ import {
   SUPPLY_FARM_TIME, PRIZE_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_NOISE,
 } from '../src/data/facilityLayout.js';
 import { MAX_DURABILITY } from '../src/engine/equipmentEngine.js';
+import { finishTask, finishTaskSnapshot } from './helpers/finishTask.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -35,11 +36,11 @@ function snapshotOf(run) {
 
 test('a supply opportunity is cheap and grants immediately; a prize costs more and grants nothing yet', () => {
   const base = makeRun(1);
-  const supply = useOpportunity(withOpportunityHere(base, {}), 'opp_test', 'normal').state;
+  const supply = finishTask(useOpportunity(withOpportunityHere(base, {}), 'opp_test', 'normal').state);
   assert.equal(supply.time - base.time, SUPPLY_FARM_TIME);
   assert.equal(supply.pendingFarmChoice, null, '보급품은 고를 것이 없다');
 
-  const prize = useOpportunity(withOpportunityHere(base, { grade: 'prize', tier: 'elite', axis: 'combat' }), 'opp_test', 'normal').state;
+  const prize = finishTask(useOpportunity(withOpportunityHere(base, { grade: 'prize', tier: 'elite', axis: 'combat' }), 'opp_test', 'normal').state);
   assert.equal(prize.time - base.time, PRIZE_FARM_TIME.elite);
   assert.ok(PRIZE_FARM_TIME.elite > PRIZE_FARM_TIME.normal, '등급이 높을수록 오래 걸린다');
   assert.ok(PRIZE_FARM_NOISE.normal > SUPPLY_FARM_NOISE, '확보 대상은 보급품보다 시끄럽다');
@@ -48,8 +49,8 @@ test('a supply opportunity is cheap and grants immediately; a prize costs more a
 });
 
 test('prize options are deterministic for the same seed and never fewer than one', () => {
-  const a = useOpportunity(withOpportunityHere(makeRun(7), { grade: 'prize', tier: 'normal', axis: 'infiltration' }), 'opp_test', 'normal').state;
-  const b = useOpportunity(withOpportunityHere(makeRun(7), { grade: 'prize', tier: 'normal', axis: 'infiltration' }), 'opp_test', 'normal').state;
+  const a = finishTask(useOpportunity(withOpportunityHere(makeRun(7), { grade: 'prize', tier: 'normal', axis: 'infiltration' }), 'opp_test', 'normal').state);
+  const b = finishTask(useOpportunity(withOpportunityHere(makeRun(7), { grade: 'prize', tier: 'normal', axis: 'infiltration' }), 'opp_test', 'normal').state);
   assert.deepEqual(a.pendingFarmChoice.options, b.pendingFarmChoice.options);
   assert.ok(a.pendingFarmChoice.options.length >= 1);
   const keys = a.pendingFarmChoice.options.map((o) => JSON.stringify(o));
@@ -58,30 +59,30 @@ test('prize options are deterministic for the same seed and never fewer than one
 
 test('nothing enters the inventory until a prize option is selected, and only the chosen one does', () => {
   const run = withOpportunityHere(makeRun(3), { grade: 'prize', tier: 'elite', axis: 'resource' });
-  const farmed = gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'opp_test', mode: 'normal' });
+  const farmed = finishTaskSnapshot(gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'opp_test', mode: 'normal' }));
   assert.ok(farmed.facilityRunState.pendingFarmChoice, '후보가 서 있다');
   assert.equal(farmed.playerState.inventory.items.length, 0, '고르기 전에는 아무것도 들어오지 않는다');
   assert.equal(farmed.playerState.inventory.ammo, 0);
 
   const options = farmed.facilityRunState.pendingFarmChoice.options;
-  const picked = gameReducer(farmed, { type: 'SELECT_FARM_REWARD', optionIndex: 0 });
+  const picked = finishTaskSnapshot(gameReducer(farmed, { type: 'SELECT_FARM_REWARD', optionIndex: 0 }));
   assert.equal(picked.facilityRunState.pendingFarmChoice, null, '고르면 대기가 끝난다');
   const gained = picked.playerState.inventory.items.length + (picked.playerState.inventory.ammo > 0 ? 1 : 0);
   assert.equal(gained, 1, '고른 하나만 들어온다');
   assert.notEqual(options.length, 0);
 
   // 이미 고른 뒤에는 같은 커맨드가 아무 일도 하지 않는다 — 후보를 여러 번 챙길 수 없다.
-  assert.equal(gameReducer(picked, { type: 'SELECT_FARM_REWARD', optionIndex: 1 }), picked);
+  assert.equal(finishTaskSnapshot(gameReducer(picked, { type: 'SELECT_FARM_REWARD', optionIndex: 1 })), picked);
 });
 
 test('elite prize equipment arrives new; normal prize equipment arrives used', () => {
   // 등급이 비용만 크고 받는 것이 같으면 elite는 순수 손해가 된다 — 내구도로 값을 치른다.
   function durabilityOfFirstEquipment(seed, tier) {
     const run = withOpportunityHere(makeRun(seed), { grade: 'prize', tier, axis: 'combat' });
-    const farmed = gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'opp_test', mode: 'normal' });
+    const farmed = finishTaskSnapshot(gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'opp_test', mode: 'normal' }));
     const index = farmed.facilityRunState.pendingFarmChoice.options.findIndex((o) => o.kind === 'equipment');
     if (index < 0) return null;
-    const picked = gameReducer(farmed, { type: 'SELECT_FARM_REWARD', optionIndex: index });
+    const picked = finishTaskSnapshot(gameReducer(farmed, { type: 'SELECT_FARM_REWARD', optionIndex: index }));
     return picked.playerState.inventory.items.find((i) => i.kind === 'equipment').durability;
   }
 
@@ -99,13 +100,13 @@ test('elite prize equipment arrives new; normal prize equipment arrives used', (
 
 test('leaving the node discards an unselected prize choice', () => {
   const run = withOpportunityHere(makeRun(5), { grade: 'prize', tier: 'normal', axis: 'combat' });
-  const farmed = gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'opp_test', mode: 'normal' });
+  const farmed = finishTaskSnapshot(gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'opp_test', mode: 'normal' }));
   assert.ok(farmed.facilityRunState.pendingFarmChoice);
 
   const here = farmed.facilityRunState.playerNodeId;
   const edge = farmed.facilityRunState.graph.edges.find((e) => e.from === here || e.to === here);
   const neighborId = edge.from === here ? edge.to : edge.from;
-  const moved = gameReducer(farmed, { type: 'MOVE_TO_NODE', nodeId: neighborId });
+  const moved = finishTaskSnapshot(gameReducer(farmed, { type: 'MOVE_TO_NODE', nodeId: neighborId }));
   assert.notEqual(moved, farmed, '이동이 실제로 일어나야 이 테스트가 의미를 갖는다');
   assert.equal(moved.facilityRunState.pendingFarmChoice, null, '자리를 뜨면 후보는 사라진다');
   assert.equal(moved.playerState.inventory.items.length, 0);

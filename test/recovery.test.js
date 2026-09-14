@@ -14,6 +14,7 @@ import {
   FALSE_BROADCAST_TIME, ALERT_PRESSURE,
 } from '../src/data/facilityLayout.js';
 import { adjacentSectorIds } from '../src/engine/facilityGraph.js';
+import { finishTask, finishTaskSnapshot } from './helpers/finishTask.js';
 
 /**
  * 위협이 하나도 없는 조용한 런 — 수습 수단 자체의 효과를 보는 테스트의 기본값이다(같은 뜻의
@@ -55,17 +56,17 @@ test('cleanTraces needs Perception 1+ and traces to clean, and its cost drops as
   // 0은 더 이상 막히지 않는다 — 되지만 표준보다 오래 걸린다. 그 "더 오래"는 Perception 전용
   // 시간표가 이미 담고 있으므로 층계 가감을 또 얹지 않는다(ADR-0075) — 얹으면 같은 수치에
   // 대가를 두 번 물린다.
-  const strained = cleanTraces(withTraces, 0);
+  const strained = finishTask(cleanTraces(withTraces, 0));
   assert.equal(strained.time - base.time, TRACE_CLEANUP_TIME_BY_PERCEPTION[2], '전용표 값을 그대로 쓴다');
   assert.ok(TRACE_CLEANUP_TIME_BY_PERCEPTION[2] > TRACE_CLEANUP_TIME_BY_PERCEPTION[3], 'Perception이 모자라면 더 오래 걸린다');
   assert.throws(() => cleanTraces(base, 3), /no traces/);
 
-  const cleaned = cleanTraces(withTraces, 1);
+  const cleaned = finishTask(cleanTraces(withTraces, 1));
   assert.equal(cleaned.pendingHpLoss || 0, 0, 'Perception은 시간 말고 다른 통화를 받지 않는다');
   assert.deepEqual(cleaned.evidence.map((e) => e.id), ['elsewhere'], '현재 노드의 흔적만 지운다');
   assert.equal(cleaned.time, base.time + TRACE_CLEANUP_TIME_BY_PERCEPTION[3]); // perception 1 -> index 3
 
-  const fast = cleanTraces(withTraces, 4);
+  const fast = finishTask(cleanTraces(withTraces, 4));
   assert.ok(fast.time - base.time < cleaned.time - base.time, 'Perception이 높을수록 빨리 끝난다');
 });
 
@@ -76,7 +77,7 @@ test('cutPower freezes the sector alert until it expires, and blocks hacking ele
   assert.throws(() => cutPower(base, -2), /force/);
   assert.throws(() => cutPower({ ...base, playerNodeId: base.graph.startNodeId }, 3), /access interface/);
 
-  const cut = cutPower(base, 1);
+  const cut = finishTask(cutPower(base, 1));
   assert.equal(cut.time, base.time + POWER_CUT_TIME);
   assert.ok(cut.powerCuts.some((c) => c.sectorId === sectorId), '그 구역 전원이 끊긴다');
   assert.ok(cut.noiseEvents.length > base.noiseEvents.length, '큰 소음이 대가다');
@@ -118,12 +119,12 @@ test('broadcastFalseTarget conserves total alert: it moves one level to an adjac
   const far = Object.keys(base.sectorAlerts).find((id) => id !== sectorId && !adjacentSectorIds(base.graph, sectorId).includes(id));
   assert.throws(() => broadcastFalseTarget(raised, 2, far), /not adjacent/);
   // Deception 3부터는 인접이 아니라 아무 구역으로나 던질 수 있다.
-  const thrown = broadcastFalseTarget(raised, 3, far);
+  const thrown = finishTask(broadcastFalseTarget(raised, 3, far));
   assert.equal(thrown.sectorAlerts[far].level, raised.sectorAlerts[far].level + 1);
   assert.ok(thrown.falseTargets.some((t) => t.sourceNodeId.startsWith(`${far}_`)));
 
   const before = raised.sectorAlerts[sectorId].level + raised.sectorAlerts[neighborId].level;
-  const after = broadcastFalseTarget(raised, 1, neighborId);
+  const after = finishTask(broadcastFalseTarget(raised, 1, neighborId));
   assert.equal(after.sectorAlerts[sectorId].level, 1, '이 구역은 하나 내려간다');
   assert.equal(after.sectorAlerts[neighborId].level, raised.sectorAlerts[neighborId].level + 1, '인접 구역이 대신 진다');
   assert.equal(after.sectorAlerts[sectorId].level + after.sectorAlerts[neighborId].level, before, '총량은 보존된다');
@@ -134,7 +135,7 @@ test('broadcastFalseTarget conserves total alert: it moves one level to an adjac
 test('the power cut wears off and the sector can be escalated again', () => {
   const base = atInterface(quietRun(1));
   const sectorId = base.playerNodeId.split('_')[0];
-  const cut = cutPower(base, 1);
+  const cut = finishTask(cutPower(base, 1));
   const expiry = cut.powerCuts.find((c) => c.sectorId === sectorId).expiresAt;
   // 효과는 완료 시각 C부터 `[C, C+D)` 동안 유효하다(ADR-0075) — 시작 시각부터가 아니다.
   assert.equal(expiry, base.time + POWER_CUT_TIME + POWER_CUT_DURATION);

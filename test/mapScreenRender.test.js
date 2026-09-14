@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState } from '../src/engine/runEngine.js';
 import { RUN_COLLAPSE_TIME } from '../src/data/facilityLayout.js';
+import { finishTaskSnapshot } from './helpers/finishTask.js';
 
 const projectUrl = (path) => new URL(path, import.meta.url).href;
 register(projectUrl('./helpers/preactResolve.mjs'));
@@ -110,7 +111,10 @@ test('층계가 모자란 통로도 눌리고, 클릭이 엔진까지 간다', (
 
   assert.equal(fire(button, 'click'), 1, '클릭 핸들러가 붙어 있어야 한다');
   assert.ok(snapshotSignal.value.facilityRunState.time > run.time, '클릭이 엔진까지 가지 않았다');
-  assert.ok(snapshotSignal.value.facilityRunState.openedEdgeIds.includes(edge.id));
+  // 가동은 1칸이고 나머지는 게이지다(ADR-0084) — 문이 열리는 것은 그 게이지를 다 채운 뒤다.
+  assert.equal(snapshotSignal.value.facilityRunState.pendingTask?.kind, 'openEdge', '클릭이 작업을 가동했다');
+  const finished = finishTaskSnapshot(snapshotSignal.value);
+  assert.ok(finished.facilityRunState.openedEdgeIds.includes(edge.id));
 });
 
 test('조우가 막는 동안에는 정찰·대기만이 아니라 이동 버튼도 함께 잠긴다', async () => {

@@ -12,8 +12,9 @@ import {
 } from '../src/engine/runEngine.js';
 import { cutPower, broadcastFalseTarget } from '../src/engine/recovery.js';
 import { gameReducer } from '../src/engine/gameReducer.js';
+import { finishTask, finishTaskSnapshot } from './helpers/finishTask.js';
 import {
-  PRIZE_FARM_TIME, PRIZE_FARM_NOISE, BASIC_RECON_TIME, POWER_CUT_TIME, EXIT_REQUEST_TIME,
+  PRIZE_FARM_TIME, PRIZE_FARM_NOISE, BASIC_RECON_TIME, POWER_CUT_TIME,
   WAIT_BATCH_MAX_TICKS, ENCOUNTER_EVADE_TIME, FALSE_BROADCAST_DURATION_BY_STEP, FALSE_BROADCAST_TIME,
   THREAT_MOVE_INTERVAL, COMBAT_ENEMY_AMBUSH_TIME_COST,
 } from '../src/data/facilityLayout.js';
@@ -83,7 +84,8 @@ test('적이 3칸째에 도착하면 10칸 파밍은 거기서 끝난다 — 시
   }, 3);
   assert.equal(PRIZE_FARM_TIME.normal, 10, '이 검증은 10칸짜리 작업을 전제한다');
 
-  const { state: after, keyGranted } = useOpportunity(run, 'p1', 'normal');
+  const { state: started, keyGranted } = useOpportunity(run, 'p1', 'normal');
+  const after = finishTask(started);
 
   assert.equal(after.time - run.time, 3, '경과한 칸만 소모한다');
   assert.equal(after.lastTaskOutcome.status, 'interrupted');
@@ -128,7 +130,8 @@ test('작업 시작 때 같은 노드에 있던 위협도 떠났다 돌아오면
   assert.equal(PRIZE_FARM_TIME.elite, 13, '이 검증은 13칸짜리 작업을 전제한다');
   assert.equal(THREAT_MOVE_INTERVAL.patrol, 5, '이 검증은 순찰 주기 5칸을 전제한다');
 
-  const { state: after } = useOpportunity(run, 'p1', 'normal');
+  const { state: started } = useOpportunity(run, 'p1', 'normal');
+  const after = finishTask(started);
   assert.equal(after.lastTaskOutcome.status, 'interrupted', '되돌아온 위협은 새 접촉이다');
   assert.equal(after.lastTaskOutcome.reason, 'threatContact');
   assert.equal(after.time - run.time, 11, '되돌아온 칸까지만 소모한다');
@@ -149,17 +152,17 @@ test('중단된 작업은 경계도·쿨다운·개방을 하나도 남기지 �
   assert.ok(blocked, '시작 노드에 전자식 차단 엣지를 두는 시드가 있어야 한다');
   const run = withIncomingThreat(base, 1);
 
-  const after = openSpecialEdge(run, blocked.id, 'hacking', 0, 'normal');
+  const after = finishTask(openSpecialEdge(run, blocked.id, 'hacking', 0, 'normal'));
   assert.equal(after.lastTaskOutcome.status, 'interrupted');
   assert.equal(after.openedEdgeIds.length, 0, '문은 열리지 않는다');
   assert.deepEqual(after.sectorAlerts, run.sectorAlerts, '경계도 대가도 청구되지 않는다');
   assert.equal(after.pendingHpLoss || 0, 0);
 });
 
-test('탈출 요청이 중단되면 신호와 요청이 함께 취소된다', () => {
+test('탈출구 가동이 중단되면 신호와 가동이 함께 취소된다', () => {
   const base = quietRun(9);
   const run = withIncomingThreat(base, 1);
-  const after = requestExtraction(run, 'A', 0);
+  const after = finishTask(requestExtraction(run, 'A', 0));
   assert.equal(after.lastTaskOutcome.status, 'interrupted');
   assert.equal(after.exits.A.status, 'closed');
   assert.equal(after.exits.A.signalStartedAt, null);
@@ -185,7 +188,7 @@ test('가짜 목표의 부족 단계(지속 8칸)는 완료 시각 C부터 8칸�
 
   const duration = FALSE_BROADCAST_DURATION_BY_STEP.strained;
   assert.equal(duration, 8);
-  const after = broadcastFalseTarget(raised, 0, targetSectorId); // Deception 0 = 무리(strained)
+  const after = finishTask(broadcastFalseTarget(raised, 0, targetSectorId)); // Deception 0 = 무리(strained)
   const completedAt = after.time;
   assert.equal(completedAt, raised.time + FALSE_BROADCAST_TIME + 2, '무리 단계는 시간 +2칸이다');
 
@@ -198,19 +201,20 @@ test('가짜 목표의 부족 단계(지속 8칸)는 완료 시각 C부터 8칸�
 
 // ---- 3. 시작 효과와 완료 효과의 구분 ----
 
-test('작업 소음은 완료 시각에 나고, 탈출 요청 신호는 시작 시각에 난다', () => {
+test('작업 소음은 완료 시각에 나고, 탈출구 가동 신호는 시작 시각에 난다', () => {
   const base = quietRun(7);
   const entry = base.graph.accessInterfaces[0];
   const atInterface = { ...base, playerNodeId: entry.nodeId };
 
-  const cut = cutPower(atInterface, 1);
+  const cut = finishTask(cutPower(atInterface, 1));
   assert.equal(cut.time, atInterface.time + POWER_CUT_TIME);
   const noise = cut.noiseEvents.at(-1);
   assert.equal(noise.createdAt, cut.time, '소음은 시작이 아니라 완료 시각에 난다');
 
   const requested = requestExtraction(quietRun(9), 'A', 0);
-  assert.equal(requested.exits.A.signalStartedAt, 0, '요청 신호는 시작 효과다');
-  assert.equal(requested.time, EXIT_REQUEST_TIME);
+  assert.equal(requested.exits.A.signalStartedAt, 0, '가동 신호는 시작 효과다');
+  assert.equal(requested.time, 1, '가동에 드는 것은 1칸이고 나머지는 게이지다');
+  assert.ok(requested.pendingTask, '나머지 칸은 그 자리에서 대기로 채운다');
 });
 
 // ---- 4. 정찰은 완료 시점의 상태를 본다 ----
@@ -241,11 +245,15 @@ test('기본 정찰은 완료 시점의 적 위치를 관측한다 — 시작 �
   };
   assert.ok(BASIC_RECON_TIME > 2, '정찰이 끝나기 전에 위협이 한 번 움직여야 한다');
 
-  const after = basicRecon(run);
+  const after = finishTask(basicRecon(run));
   assert.equal(after.time, run.time + BASIC_RECON_TIME);
-  assert.equal(after.threats[template.id].nodeId, away, '정찰 도중 옆방을 떠났다');
+  assert.notEqual(after.threats[template.id].nodeId, watched, '정찰 도중 옆방을 떠났다가 오간다');
   assert.equal(after.observations[watched].observedAt, after.time);
-  assert.equal(after.observations[watched].hasThreat, false, '완료 시점에는 비어 있다');
+  assert.equal(
+    after.observations[watched].hasThreat,
+    after.threats[template.id].nodeId === watched,
+    '관측에 적히는 것은 시작 때가 아니라 완료 시점의 사실이다',
+  );
 });
 
 // ---- 5. 대기 ----
@@ -296,6 +304,9 @@ test('조우 회피는 1칸을 쓰고 추적을 끊으며, 같은 위협의 재�
     lastKnownPlayerNodeId: base.playerNodeId,
     target: { kind: 'player', nodeId: base.playerNodeId },
     nextMoveAt: 500,
+    // 순찰로 돌아가도 제자리를 지키게 한다 — 재판정을 보려면 그 위협이 아직 거기 있어야 한다.
+    patrolRoute: [base.playerNodeId],
+    patrolIndex: 0,
   };
   const run = {
     ...base,
@@ -311,7 +322,8 @@ test('조우 회피는 1칸을 쓰고 추적을 끊으며, 같은 위협의 재�
   assert.equal(evaded.combatTrigger, null, '회피 처리 자체로 같은 위협의 조우를 다시 열지 않는다');
 
   // 다음 유료 행동이 끝날 때 비로소 다시 판정된다 — 위협은 여전히 그 노드에 서 있다.
-  const afterRecon = gameReducer(snapshotOf(evaded), { type: 'BASIC_RECON' });
+  // 정찰은 1칸에 가동되고 게이지로 남는다(ADR-0084) — 재판정은 그 게이지가 다 찰 때 온다.
+  const afterRecon = finishTaskSnapshot(gameReducer(snapshotOf(evaded), { type: 'BASIC_RECON' }));
   assert.ok(afterRecon.facilityRunState.encounter, '다음 유료 행동 종료 때 재판정한다');
   assert.equal(afterRecon.facilityRunState.encounter.threatId, threat.id);
 });
@@ -385,7 +397,8 @@ test('중단이 없으면 파밍이 실제로 청구한 칸과 낸 소음은 표
     ...base,
     graph: { ...base.graph, opportunities: [{ id: 'p1', nodeId, keyEligible: false, usesRemaining: 2, grade: 'prize', tier: 'elite', axis: 'combat' }] },
   };
-  const { state: after } = useOpportunity(run, 'p1', 'normal');
+  const { state: started } = useOpportunity(run, 'p1', 'normal');
+  const after = finishTask(started);
   assert.equal(after.time - run.time, PRIZE_FARM_TIME.elite);
   assert.equal(after.noiseEvents.at(-1).intensity, PRIZE_FARM_NOISE.elite);
   assert.equal(after.graph.opportunities[0].usesRemaining, 1);

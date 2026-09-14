@@ -19,6 +19,7 @@ import {
   FALSE_BROADCAST_TIME, FALSE_BROADCAST_DURATION_BY_STEP, BASIC_RECON_HOP_RANGE,
   INVESTIGATION_MEMORY_DURATION, ALERT_PRESSURE,
 } from '../src/data/facilityLayout.js';
+import { finishTask, finishTaskSnapshot } from './helpers/finishTask.js';
 
 /** 플레이어 노드에서 잠기지 않은 통로로 이어진 이웃 하나. */
 function openNeighborOf(run, nodeId) {
@@ -61,7 +62,7 @@ test('a retrieval contract is not completed by acting at the objective — only 
   const held = snapshotOf(run, { inventory: { items: goods, ammo: 0, capacity: 12 } });
 
   // 물건을 들고 목표부에 서서 아무 행동이나 해도 계약은 완료되지 않는다 — 들고 나가야 한다.
-  const after = gameReducer(held, { type: 'BASIC_RECON' });
+  const after = finishTaskSnapshot(gameReducer(held, { type: 'BASIC_RECON' }));
   assert.equal(after.facilityRunState.contract.status, 'acquired', '목표부에서 정찰만으로 계약이 끝나면 마지막 장이 사라진다');
   assert.equal(after.currentScreen, 'map');
 
@@ -75,7 +76,7 @@ test('a retrieval contract is not completed by acting at the objective — only 
       exits: { ...after.facilityRunState.exits, A: { ...after.facilityRunState.exits.A, nodeId: neighborId, status: 'open', openEndsAt: after.facilityRunState.time + 1000 } },
     },
   };
-  const extracted = gameReducer(opened, { type: 'MOVE_TO_NODE', nodeId: neighborId });
+  const extracted = finishTaskSnapshot(gameReducer(opened, { type: 'MOVE_TO_NODE', nodeId: neighborId }));
   assert.equal(extracted.currentScreen, 'extractionComplete');
   assert.equal(extracted.facilityRunState.contract.status, 'completed');
 });
@@ -155,7 +156,7 @@ test('an ambushed prize grants nothing — the ambush is the cost of rushing it'
       },
     },
   };
-  const after = gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'p1', mode: 'rush' });
+  const after = finishTaskSnapshot(gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'p1', mode: 'rush' }));
 
   assert.equal(after.facilityRunState.lastTaskOutcome.status, 'interrupted', '적이 도착하면 파밍이 중단된다');
   assert.equal(after.playerState.inventory.items.length, 0, '매복당한 확보 대상이 보급품 보상으로 새면 안 된다');
@@ -180,18 +181,18 @@ test('a supply farm still grants while a prize choice is pending — and a secon
       ],
     },
   };
-  const farmed = gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'p1', mode: 'normal' });
+  const farmed = finishTaskSnapshot(gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'p1', mode: 'normal' }));
   const standing = farmed.facilityRunState.pendingFarmChoice;
   assert.ok(standing, '확보 대상 후보가 서 있다');
 
   // 선택이 대기 중이어도 보급품은 예전처럼 바로 들어와야 한다.
-  const supplied = gameReducer(farmed, { type: 'USE_OPPORTUNITY', opportunityId: 's1', mode: 'normal' });
+  const supplied = finishTaskSnapshot(gameReducer(farmed, { type: 'USE_OPPORTUNITY', opportunityId: 's1', mode: 'normal' }));
   const gained = supplied.playerState.inventory.items.length + (supplied.playerState.inventory.ammo > 0 ? 1 : 0);
   assert.equal(gained, 1, '보급품은 대기 중인 선택과 무관하게 지급된다');
   assert.deepEqual(supplied.facilityRunState.pendingFarmChoice, standing, '그리고 서 있던 후보를 건드리지 않는다');
 
   // 반대로 두 번째 확보 대상은 시작조차 되지 않는다 — 허용하면 앞선 후보가 조용히 덮인다.
-  const blocked = gameReducer(supplied, { type: 'USE_OPPORTUNITY', opportunityId: 'p2', mode: 'normal' });
+  const blocked = finishTaskSnapshot(gameReducer(supplied, { type: 'USE_OPPORTUNITY', opportunityId: 'p2', mode: 'normal' }));
   assert.equal(blocked, supplied, '고르기 전에는 다른 확보 대상을 팔 수 없다');
   assert.throws(() => useOpportunity(supplied.facilityRunState, 'p2', 'normal'), /pending farm reward/);
 });
@@ -203,7 +204,7 @@ test('equipment broken by a ladder cost falls back into the inventory instead of
     { ...base, pendingDurabilityLoss: 1 },
     { loadout: { weapons: [weapon], top: null, bottom: null, modules: [], implantIds: [], consumableSlots: [] } },
   );
-  const after = gameReducer(snapshot, { type: 'BASIC_RECON' });
+  const after = finishTaskSnapshot(gameReducer(snapshot, { type: 'BASIC_RECON' }));
 
   assert.equal(after.playerState.loadout.weapons.length, 0, '파손된 장비는 슬롯에서 빠진다');
   // id는 인벤토리가 새로 발급한다(addItem은 넘겨받은 id를 항상 버린다, 리뷰 A4) — 물건이
@@ -217,15 +218,15 @@ test('equipment broken by a ladder cost falls back into the inventory instead of
 test('HP reaching zero from a ladder cost ends the run', () => {
   const base = makeRun(1);
   const snapshot = snapshotOf({ ...base, pendingHpLoss: 8 }, { hp: 5 });
-  const after = gameReducer(snapshot, { type: 'BASIC_RECON' });
+  const after = finishTaskSnapshot(gameReducer(snapshot, { type: 'BASIC_RECON' }));
   assert.equal(after.playerState.hp, 0);
   assert.equal(after.currentScreen, 'gameOver', 'HP 0으로 런이 계속되면 안 된다');
 });
 
 test('expired power cuts are pruned instead of accumulating for the whole run', () => {
   const base = makeRun(1);
-  const state = { ...base, powerCuts: [{ sectorId: 'labs', expiresAt: 100 }, { sectorId: 'entrance', expiresAt: 99999 }] };
-  const after = advanceTime(state, 400);
+  const state = { ...base, powerCuts: [{ sectorId: 'labs', expiresAt: 20 }, { sectorId: 'entrance', expiresAt: 99999 }] };
+  const after = advanceTime(state, 40);
   assert.deepEqual(after.powerCuts.map((c) => c.sectorId), ['entrance']);
 });
 
@@ -257,7 +258,7 @@ function combatSnapshotAt(time) {
 test('a round settlement that crosses the collapse deadline ends the run immediately, whatever the combat is doing', () => {
   // 698에 시작한 전투는 라운드 1 정산(3칸)만으로 700을 넘는다. 승패는 아직 나지 않았다.
   const snapshot = combatSnapshotAt(RUN_COLLAPSE_TIME - COMBAT_ROUND_TIME_COST + 1);
-  const after = gameReducer(snapshot, { type: 'END_TURN' });
+  const after = finishTaskSnapshot(gameReducer(snapshot, { type: 'END_TURN' }));
 
   assert.equal(after.facilityRunState.phase, 'collapsed');
   assert.equal(after.facilityRunState.time, RUN_COLLAPSE_TIME);
@@ -275,7 +276,7 @@ test('a card played on the round that crosses the deadline ends the run too', ()
     facilityRunState: { ...snapshot.facilityRunState, time: RUN_COLLAPSE_TIME, phase: 'collapsed' },
   };
   const card = collapsed.activeCombatState.piles.hand[0];
-  const after = gameReducer(collapsed, { type: 'PLAY_CARD', instanceId: card.instanceId, targetId: collapsed.activeCombatState.enemies[0].id });
+  const after = finishTaskSnapshot(gameReducer(collapsed, { type: 'PLAY_CARD', instanceId: card.instanceId, targetId: collapsed.activeCombatState.enemies[0].id }));
 
   assert.equal(after.currentScreen, 'gameOver');
   assert.equal(after.activeCombatState, null);
@@ -310,7 +311,7 @@ function twoThreats(order) {
 for (const order of ['standingFirst', 'incomingFirst']) {
   test(`a newly arriving threat interrupts the task regardless of threat insertion order (${order})`, () => {
     const run = twoThreats(order);
-    const after = basicRecon(run);
+    const after = finishTask(basicRecon(run));
 
     assert.equal(after.lastTaskOutcome.status, 'interrupted', '새로 도착한 위협은 순서와 무관하게 작업을 끊는다');
     assert.equal(after.lastTaskOutcome.reason, 'threatContact');
@@ -327,7 +328,7 @@ test('a collapse during a task aborts the pending task and says it was the colla
     ...base,
     graph: { ...base.graph, opportunities: [{ id: 'p1', nodeId, keyEligible: false, usesRemaining: 1, grade: 'prize', tier: 'elite', axis: 'combat' }] },
   };
-  const { state: after } = useOpportunity(run, 'p1', 'normal');
+  const after = finishTask(useOpportunity(run, 'p1', 'normal').state);
 
   assert.equal(after.phase, 'collapsed');
   assert.equal(after.pendingTask, null, '끝난 런에 진행 중인 작업이 남으면 안 된다');
@@ -354,7 +355,7 @@ test('a false broadcast whose target filled up while it ran moves nothing — to
   };
   // 예약 시점에는 둘 다 조건을 만족한다. 작업이 도는 동안 대상 구역이 상한에 차면, 완료 시각에
   // 그대로 적용할 때 +1이 잘려 총량이 하나 사라진다(ADR-0073).
-  const reserved = scheduleTask(run, {
+  const reserved = finishTask(scheduleTask(run, {
     kind: 'falseBroadcast',
     timeCost: FALSE_BROADCAST_TIME,
     params: {
@@ -364,15 +365,15 @@ test('a false broadcast whose target filled up while it ran moves nothing — to
       intensity: 2,
       duration: FALSE_BROADCAST_DURATION_BY_STEP.standard,
     },
-  });
-  assert.equal(reserved.pendingTask, null, 'scheduleTask는 완료 시각까지 진행한다');
+  }));
+  assert.equal(reserved.pendingTask, null, '게이지를 다 채우면 작업이 끝난다');
 
   const raisedMidway = {
     ...run,
     sectorAlerts: { ...run.sectorAlerts, [targetSectorId]: { level: 3, pressure: 0, resolvedEventIds: [] } },
   };
   const before = raisedMidway.sectorAlerts[sectorId].level + raisedMidway.sectorAlerts[targetSectorId].level;
-  const done = scheduleTask(raisedMidway, {
+  const done = finishTask(scheduleTask(raisedMidway, {
     kind: 'falseBroadcast',
     timeCost: FALSE_BROADCAST_TIME,
     params: {
@@ -382,7 +383,7 @@ test('a false broadcast whose target filled up while it ran moves nothing — to
       intensity: 2,
       duration: FALSE_BROADCAST_DURATION_BY_STEP.standard,
     },
-  });
+  }));
   const after = done.sectorAlerts[sectorId].level + done.sectorAlerts[targetSectorId].level;
   assert.equal(after, before, '옮길 수 없으면 옮기지 않는다 — 옮기는 수단이 지우는 수단이 되면 안 된다');
   assert.equal(done.sectorAlerts[sectorId].level, 2, '이쪽만 내려가지도 않는다');
@@ -424,7 +425,7 @@ test('대기 중에는 인접 위협 관측이 끊기고, 다음 유료 행동�
   assert.equal(waited.observations[waited.playerNodeId].observedAt, waited.time, '서 있는 자리는 계속 안다');
 
   // 유료 행동 하나면 다시 실시간이다.
-  const acted = refreshLocalObservations(scheduleTask(waited, { kind: 'equipSwap', timeCost: 3 }));
+  const acted = refreshLocalObservations(finishTask(scheduleTask(waited, { kind: 'equipSwap', timeCost: 3 })));
   assert.equal(observationSuspended(acted), false);
   assert.equal(acted.observations[neighborId].observedAt, acted.time);
   assert.equal(acted.observations[neighborId].hasThreat, true, '유료 행동 뒤에는 옆 방이 다시 보인다');
@@ -452,7 +453,7 @@ test('대기 중이어도 같은 방에 들어온 위협과는 조우한다 — 
 
 test('기본 정찰은 2홉까지 관측하고 3홉은 건드리지 않는다', () => {
   const run = makeRun(3);
-  const scouted = basicRecon(run);
+  const scouted = finishTask(basicRecon(run));
   const hops = bfsHopDistances(run.graph.edges, run.playerNodeId);
   const watched = new Set(scouted.activeRecon.targetNodeIds);
   const twoHopIds = [...hops].filter(([, hop]) => hop === BASIC_RECON_HOP_RANGE).map(([id]) => id);
@@ -476,19 +477,19 @@ test('확보 대상의 등급과 역할축은 그 노드를 정찰한 뒤에만 
 
   // 정찰 전에도 팔 수 있다 — 대신 예고는 하나의 값이 아니라 두 등급을 감싸는 범위다.
   const range = forecastUnknownPrizeFarm('normal');
-  const farmed = useOpportunity(run, prize.id, 'normal').state;
+  const farmed = finishTask(useOpportunity(run, prize.id, 'normal').state);
   const chargedTicks = farmed.time - run.time;
   assert.ok(chargedTicks >= range.minTime && chargedTicks <= range.maxTime, `범위 예고 ${range.timeText} 밖에서 청구됐다 (${chargedTicks}칸)`);
   assert.equal(chargedTicks, forecastAction('farm', { isPrize: true, tier: prize.tier, mode: 'normal' }).timeCost, '실제 청구는 실제 등급의 정확한 값이다');
 
   // Perception 0의 정찰은 등급까지만 읽는다 — 역할축은 1부터다(정보 깊이 표).
-  const shallow = basicRecon(run, 0);
+  const shallow = finishTask(basicRecon(run, 0));
   assert.equal(prizeGradeKnown(shallow, prize.id, prize.nodeId), true);
   assert.equal(shallow.observations[prize.nodeId].opportunityGrades[prize.id].tier, prize.tier);
   assert.equal(shallow.observations[prize.nodeId].opportunityGrades[prize.id].axis, null);
 
   // 정찰하면 등급과 축이 관측에 남고, 그 뒤의 무료 관측 갱신이 그것을 지우지 않는다.
-  const scouted = basicRecon(run, 1);
+  const scouted = finishTask(basicRecon(run, 1));
   assert.equal(prizeGradeKnown(scouted, prize.id, prize.nodeId), true);
   const grade = scouted.observations[prize.nodeId].opportunityGrades[prize.id];
   assert.equal(grade.tier, prize.tier);

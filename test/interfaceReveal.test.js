@@ -9,6 +9,7 @@ import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState, hackAccessInterface, interfaceCameraRevealHops } from '../src/engine/runEngine.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
 import { INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING } from '../src/data/facilityLayout.js';
+import { finishTask } from './helpers/finishTask.js';
 
 const sectorOf = (nodeId) => nodeId.split('_')[0];
 
@@ -35,7 +36,7 @@ function findInterfaceWithNearAndFarCameras(hacking) {
 test('인터페이스를 장악하면 같은 구역 사거리 안 카메라가 관측 기록에 드러난다', () => {
   const hacking = 1;
   const { run, entry, near, far, otherSector } = findInterfaceWithNearAndFarCameras(hacking);
-  const after = hackAccessInterface(run, entry.id, hacking);
+  const after = finishTask(hackAccessInterface(run, entry.id, hacking));
 
   assert.ok((after.hackedInterfaceIds || []).includes(entry.id), '인터페이스가 장악 목록에 들어간다');
 
@@ -68,7 +69,7 @@ test('인터페이스를 장악하면 같은 구역 사거리 안 카메라가 �
 test('드러나는 것은 위치와 상태뿐이다 — 관측 깊이는 0이고 현장 기회는 새로 적히지 않는다', () => {
   const hacking = 1;
   const { run, entry, near } = findInterfaceWithNearAndFarCameras(hacking);
-  const after = hackAccessInterface(run, entry.id, hacking);
+  const after = finishTask(hackAccessInterface(run, entry.id, hacking));
 
   const freeSight = new Set([run.playerNodeId]);
   for (const edge of run.graph.edges) {
@@ -96,7 +97,7 @@ test('반경은 유효 Hacking이 정하고 표의 양끝으로 잘린다', () =
   // 해커가 좋을수록 더 멀리 읽는다 — 같은 인터페이스에서 반경만 넓어진다.
   const { run, entry } = findInterfaceWithNearAndFarCameras(1);
   const countRevealed = (hacking) => {
-    const after = hackAccessInterface(run, entry.id, hacking);
+    const after = finishTask(hackAccessInterface(run, entry.id, hacking));
     return run.graph.cameras.filter((c) => (after.observations[c.nodeId]?.contents?.devices || [])
       .some((d) => d.kind === 'camera' && d.id === c.id)).length;
   };

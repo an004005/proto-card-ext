@@ -8,6 +8,7 @@ import { createRunState, advanceTime, disposeCorpse } from '../src/engine/runEng
 import {
   REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, THREAT_COUNT_BY_SECTOR, ALERT_PRESSURE, 
 } from '../src/data/facilityLayout.js';
+import { finishTask, finishTaskSnapshot } from './helpers/finishTask.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -75,7 +76,7 @@ test('disposing of a corpse costs time and removes it', () => {
     ...base,
     corpses: [{ id: 'corpse_y', nodeId, sectorId: nodeId.split('_')[0], createdAt: 0 }],
   };
-  const after = disposeCorpse(state);
+  const after = finishTask(disposeCorpse(state));
   assert.equal(after.corpses.length, 0);
   assert.equal(after.time, state.time + CORPSE_DISPOSAL_TIME);
   assert.throws(() => disposeCorpse(after), /no corpse/);
@@ -88,8 +89,12 @@ test('reinforcement refills a killed marker at a gateway, and never exceeds the 
   const roster = base.graph.threats.filter((t) => t.sectorId === sectorId);
   assert.equal(roster.length, THREAT_COUNT_BY_SECTOR[sectorId]);
 
+  // 교대 주기(180칸)는 런의 마감(붕괴 50칸)보다 길다 — 실제로 교대가 오는 것은 경계도가
+  // 올라 시계를 당길 때뿐이다. 여기서는 그 당겨진 시계를 직접 세워 교대 자체를 본다.
+  const due = (run) => ({ ...run, reinforcements: { ...run.reinforcements, [sectorId]: { nextAt: 3, alertSeen: 0 } } });
+
   // 정원이 찬 상태에서는 교대 시각이 와도 아무도 늘지 않는다.
-  const full = advanceTime(base, REINFORCEMENT_INTERVAL + 1);
+  const full = advanceTime(due(base), 4);
   const liveFull = Object.values(full.threats).filter((t) => t.sectorId === sectorId).length;
   assert.equal(liveFull, roster.length, '정원을 넘겨 증식하지 않는다');
 
@@ -100,7 +105,7 @@ test('reinforcement refills a killed marker at a gateway, and never exceeds the 
   const killed = { ...base, threats };
   assert.equal(Object.values(killed.threats).filter((t) => t.sectorId === sectorId).length, roster.length - 1);
 
-  const refilled = advanceTime(killed, REINFORCEMENT_INTERVAL + 1);
+  const refilled = advanceTime(due(killed), 4);
   const back = refilled.threats[killedId];
   assert.ok(back, '비워진 로스터 자리는 다시 채워진다');
   const gatewayIds = refilled.graph.nodes.filter((n) => n.sectorId === sectorId && n.isGateway).map((n) => n.id);

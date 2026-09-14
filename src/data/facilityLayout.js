@@ -94,11 +94,6 @@ export function totalNodesFor(sectorIds) {
   return sectorIds.reduce((sum, id) => sum + SECTOR_LAYOUTS[id].nodeCount, 0);
 }
 
-// Mobility 0 기준 "평균적인" 일반 복도 시간 비용(칸) — 실제 엣지 시간은 두 노드의 기하학적
-// 거리에 비례해 가감된다(EDGE_TIME_PER_LENGTH_UNIT 이하 참고). 이 값은 그 스케일을 맞추는
-// 기준점일 뿐, 모든 엣지에 균일하게 적용되지 않는다.
-export const STANDARD_EDGE_TIME_COST = 5;
-
 // ---- 기하학적 배치 (구역 링 + 구역별 평면도) ----
 // 구역 중심은 하나의 큰 링 위에 균등 배치한다. 각 구역 내부는 SECTOR_LAYOUTS의 배치 원형에
 // 따라 평면도처럼 생성된다(layoutArchetypes.js) — 더 이상 원판 안 무작위 산포가 아니다.
@@ -138,12 +133,9 @@ export const TOWER_LOBBY_SPREAD = 2.6;
 export const LANDMARK_CANDIDATE_MIN = 2;
 export const LANDMARK_CANDIDATE_MAX = 4;
 
-// 엣지 시간 비용(칸) = clamp(round(기하 거리 * EDGE_TIME_PER_LENGTH_UNIT), MIN, MAX). 구역 내부
-// 최근접 노드 간 평균 거리(~50 단위)가 STANDARD_EDGE_TIME_COST(5)에 가깝게 나오도록 잡은 값.
-// 반올림은 여기서 딱 한 번만 한다 — 생성 이후 통로 비용은 변하지 않는 정수 칸이다.
-export const EDGE_TIME_PER_LENGTH_UNIT = 0.1;
-export const EDGE_TIME_MIN = 2;
-export const EDGE_TIME_MAX = 13;
+// 통로에는 더 이상 고유한 시간 비용이 없다(ADR-0084). 한 칸은 한 홉이고, 통로의 길이는
+// 화면상의 거리로만 남는다 — 거리 지표(graphUtils.baselineWalkDistances, 출구 A 배치)는 전부
+// 홉수로 잰다.
 
 // 특수 엣지를 얹을 때 한 노드가 가질 수 있는 최대 차수. 기저 그래프에는 적용되지 않는다 —
 // 평면도가 만든 문·복도와 관문은 차수를 보지 않고 놓이며, 격자 교차점이나 탑 1층 로비처럼
@@ -335,12 +327,8 @@ export const GENERATOR_HACK_TIME = 5;
 export const GENERATOR_FORCE_TIME = 5;
 export const GENERATOR_FORCE_NOISE = 2;
 export const GENERATOR_COMBAT_START_ARMOR = 5;
-// 유효 Mobility -2/-1/0/1/2/3/4 -> 통로 비용에 더하는 칸 가감(ADR-0075). 저장된 통로 비용에
-// 배율을 곱하지 않는다 — 그러면 같은 통로가 빌드마다 다른 소수로 갈라져 뺄셈으로 예측할 수
-// 없게 된다. 최종 비용은 max(MOVE_MIN_TIME, B + 가감)이다.
-export const MOBILITY_MOVE_TIME_DELTA = [2, 1, 0, -1, -2, -3, -4];
-/** 아무리 빨라도 통로 하나는 2칸이다 — 짧은 통로에서는 Mobility 추가 이득이 없다. */
-export const MOVE_MIN_TIME = 2;
+// 이동은 언제나 1칸이다(ADR-0084) — 통로의 길이도, Mobility도 이동 시간을 바꾸지 않는다.
+// Mobility는 고지대 통과·조우 회피·회수 계약의 판정 통화로 남는다.
 
 // 초기 위협 배치 — 구역 정원이다. 뽑힌 구역만 채워지므로 한 런의 총 위협 수는 조합에 따라
 // 다르다(입구 3 + 나머지 세 구역의 합, 12~16).
@@ -367,39 +355,52 @@ export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
 // 맵 시간의 단위는 정수 "칸" 하나뿐이다(ADR-0075). 아래 값은 전부 칸이며, 런타임에서 이 값에
 // 배율을 곱해 소수를 만들지 않는다.
 
-// 원래 의도는 "시작점에서 가장 먼 출구까지의 실측 중앙값 대비 약 3배" — 가장 먼 탈출구를 찍고
-// 돌아 나올 여유는 있되 시설 전체를 훑고 나갈 만큼은 아니게 잡은 값이다. 구역이 여덟에서
-// 넷으로 줄면서(ADR-0081) 그 중앙값이 220칸 안팎에서 90칸 안팎으로 줄어 옛 값 700은 그
-// 중앙값의 약 8배가 됐고, 마감으로서 아무것도 조이지 않았다. 그래서 시간 예산 전체를 70%로
-// 줄인다(700 → 490). 배수는 여전히 약 5배로 넉넉하지만 붕괴가 다시 보이는 마감이 된다.
-// 증원 주기·봉쇄 간격·작업 시간은 손대지 않았다 — 줄인 것은 "총 시간"뿐이라 한 런에 낄 수 있는
-// 작업 수가 줄지, 각 작업의 값이 바뀌지는 않는다.
-export const RUN_COLLAPSE_TIME = 490; // §2.3 t>=RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
+// 마감은 언제나 "시작점에서 가장 먼 출구(A)까지의 실측 중앙값"에 매여 있다. 이동이 1칸이
+// 되면서(ADR-0084) 그 중앙값이 122칸에서 12칸으로 줄었으므로, 같은 배수를 지키도록 두 마감도
+// 같은 비율로 줄인다: 붕괴 490 → 50(중앙값의 약 4.2배, 옛 4.0배), A 폐쇄 300 → 30(약 2.5배,
+// 옛과 같다). 배수를 그대로 둔 것은 마감이 재는 것이 "몇 칸인가"가 아니라 "가장 먼 출구를
+// 몇 번 왕복할 수 있는가"이기 때문이다.
+//
+// 작업 게이지는 줄이지 않았다. 그래서 이 마감 안에서 시간을 쓰는 쪽은 이동이 아니라 작업이다 —
+// 탈출구 가동 하나가 Hacking 0에서 18칸이고, 그것이 이 설계가 의도한 값이다.
+export const RUN_COLLAPSE_TIME = 50; // §2.3 t>=RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
 
-// 같은 70% 축소(430 → 300, 십의 자리로 떨어지는 값). 표준 출구는 A 하나뿐이다(ADR-0083).
-export const EXIT_A_DISABLED_AT = 300;
-export const EXIT_REQUEST_TIME = 3;
+// 표준 출구는 A 하나뿐이다(ADR-0083).
+export const EXIT_A_DISABLED_AT = 30;
 export const EXIT_OPEN_WINDOW = 5;
 
-// 유효 Hacking -2~-1/0/1/2/3/4 -> 개방 대기 (§2.2, §CONTEXT 탈출 카운트다운). effectiveHacking을
-// -2..4 범위로 clamp한 뒤 이 배열의 (value+2) 인덱스로 조회한다.
-export const EXIT_OPEN_WAIT_BY_HACKING = [15, 15, 15, 13, 10, 8, 5];
+/**
+ * 유효 Hacking -2~-1/0/1/2/3/4 -> **탈출구 가동** 게이지 길이(칸). 옛 요청 3칸 + 개방 대기
+ * [15,15,15,13,10,8,5]를 하나로 접은 값이다(ADR-0084): 가동은 이제 다른 현장 작업과 같은
+ * 모양이다 — 1칸을 써서 걸어두고, 그 자리에서 대기로 게이지를 채운다. 게이지가 차면 출구가
+ * EXIT_OPEN_WINDOW칸 동안 열린다. effectiveHacking을 -2..4로 clamp한 뒤 (value+2) 인덱스로 조회.
+ */
+export const EXIT_ACTIVATE_TIME_BY_HACKING = [18, 18, 18, 16, 13, 11, 8];
 
 export const NOISE_DURATION = 5; // §7.1 소음은 발생 시각 C부터 [C, C+5) 동안 들린다.
 export const INVESTIGATION_MEMORY_DURATION = 15; // §7.1 "출처 도착 또는 기억 만료 전까지".
 export const EVIDENCE_TRACE_DURATION_LIGHT = null; // §7.2: 흔적은 시간 만료가 아니라 발견/정리로만 사라진다.
 
-// §CONTEXT.md "순찰 경로": mode별 다음 엣지 이동 간격(칸). 구역 경계도 2/3은 조사·경계에 한해
-// 더 빨라진다(아래 SECTOR_ALERT_INVESTIGATE_INTERVAL로 override).
+// ---- 위협 이동 간격 ----
+//
+// 이동이 1칸이 되어도(ADR-0084) 위협의 간격표는 그대로다 — 플레이어가 한 칸에 한 홉을 걷게
+// 되면서 이 표는 이제 "내가 한 홉 갈 때 저쪽은 몇 분의 1홉 가는가"로 직접 읽힌다: 순찰 5칸
+// 간격은 내 다섯 홉에 한 홉, 추격 3칸은 세 홉에 한 홉이다. 시간을 쓰는 쪽이 이동이 아니라
+// 작업(게이지)이 되었으므로, 위협이 따라붙는 자리도 이동 중이 아니라 **작업 중**이다.
+
+// §CONTEXT.md "순찰 경로": mode별 다음 엣지 이동 간격(칸).
 export const THREAT_MOVE_INTERVAL = { patrol: 5, investigate: 4, alert: 4, pursuit: 3, exit_guard: 4 };
-/** @type {Partial<Record<0|1|2|3, number>>} sectorAlertLevel -> interval override */
-export const SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 3, 3: 3 };
 
 // 봉쇄 중 이동 간격은 배율이 아니라 고정표다(ADR-0075) — 0.6을 곱하면 자투리 칸이 생기고,
 // "지금 몇 칸 뒤에 움직이나"를 뺄셈으로 알 수 없게 된다.
 export const LOCKDOWN_THREAT_MOVE_INTERVAL = { patrol: 3, investigate: 3, alert: 3, pursuit: 2, exit_guard: 3 };
-/** @type {Partial<Record<0|1|2|3, number>>} 봉쇄 중 sectorAlertLevel -> 조사·경계 간격 override */
-export const LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL = { 2: 2, 3: 2 };
+
+// 구역 경계도 2 이상이면 그 구역의 위협은 **모드를 가리지 않고** 빨라진다. 예전에는 조사·경계만
+// 빨라져서, 경계도가 올라간 구역을 순찰하는 무리는 아무 일도 없던 구역과 똑같은 속도로 걸었다 —
+// "이 구역이 깨어났다"가 실제 압박으로 읽히지 않았다. 봉쇄표와 함께 걸리면 둘 중 작은 값을 쓴다.
+export const SECTOR_ALERT_MOVE_INTERVAL = { patrol: 3, investigate: 3, alert: 3, pursuit: 2, exit_guard: 3 };
+/** 이 경계도부터 위 표가 적용된다. */
+export const SECTOR_ALERT_FAST_MOVE_LEVEL = 2;
 
 /** @type {Record<0|1|2|3, 0|1|2>} */
 export const SECTOR_ALERT_MIN_ENEMY_ALERT = { 0: 0, 1: 1, 2: 2, 3: 2 }; // §7.4

@@ -10,6 +10,7 @@ import { createRngState } from '../src/engine/rng.js';
 import { PRIZE_OPTION_COUNT } from '../src/data/facilityLayout.js';
 import { REWARD_AMMO_MIN, REWARD_AMMO_MAX, REWARD_CURRENCY_VALUE_RANGE } from '../src/data/rewardTables.js';
 import { CONSUMABLE_DROP_WEIGHTS } from '../src/data/dropTables.js';
+import { finishTaskSnapshot } from './helpers/finishTask.js';
 
 const AXES = ['combat', 'infiltration', 'resource'];
 const SEEDS = [1, 2, 7, 42, 99, 1234, 20260911];

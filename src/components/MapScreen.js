@@ -49,7 +49,7 @@ import { forecastAction, describeForecast, forecastUnknownPrizeFarm } from '../e
 import {
   runCountdowns, upcomingEvents, timersEndingBefore, observableThreatMoves, staleThreatSightings,
   interruptionNotice, waitBatchNotice, threatMovesDuring, describeNodeLocation, describeObservedThreat,
-  EXIT_STATUS_LABELS, TIMELINE_HORIZON,
+  EXIT_STATUS_LABELS, TIMELINE_HORIZON, TASK_LABELS,
 } from '../engine/mapTimeline.js';
 import {
   PRIZE_OPTION_COUNT, CAMERA_HACK_DURATION, WAIT_BATCH_MAX_TICKS,
@@ -97,7 +97,12 @@ function forecastTooltip(run, forecast, label, tip, extraNote, ladder) {
   const lines = [tip];
   {
     const completesAt = run.time + forecast.timeCost;
-    lines.push(`${describeForecast(forecast, label)} · 완료까지 ${forecast.timeCost}칸 후(시각 ${completesAt} / ${RUN_COLLAPSE_TIME}).`);
+    // 시간은 "시작 1칸 + 그 자리에서 대기로 채우는 게이지"로 나간다(ADR-0084). 이동만은
+    // 게이지가 없는 1칸짜리 행동이다.
+    const shape = forecast.actionId === 'move' || forecast.timeCost <= 1
+      ? `${forecast.timeCost}칸`
+      : `시작 1칸 · 게이지 ${forecast.timeCost - 1}칸`;
+    lines.push(`${describeForecast(forecast, label)} · ${shape} · 완료까지 ${forecast.timeCost}칸 후(시각 ${completesAt} / ${RUN_COLLAPSE_TIME}).`);
     const ending = timersEndingBefore(run, completesAt);
     if (ending.length > 0) lines.push(`작업 중 종료: ${ending.map((event) => event.text).join(' · ')}.`);
     // 끝나는 타이머만 보면 정작 가장 위험한 변화 — 이 N칸 동안 옆 방의 적이 몇 번 움직이는가 —
@@ -123,16 +128,60 @@ function ActionButton({ run, actionId, opts = {}, label, tip, onClick, disabled,
   const forecast = forecastAction(actionId, opts);
   const ladder = ladderNote(forecast);
   const blockedByEncounter = encounterBlocks(run);
-  const note = blockedByEncounter ? ENCOUNTER_BLOCK_NOTE : (disabledNote || (ladder?.blocked ? `${ladder.note}.` : ''));
+  // 게이지가 도는 동안 다른 유료 행동은 걸 수 없다(ADR-0084) — 대기만이 그 게이지를 채운다.
+  const blockedByTask = !!run.pendingTask && !TASK_FREE_ACTIONS.has(actionId);
+  const note = blockedByEncounter ? ENCOUNTER_BLOCK_NOTE
+    : blockedByTask ? TASK_BLOCK_NOTE
+    : (disabledNote || (ladder?.blocked ? `${ladder.note}.` : ''));
   return html`
-    <${Tooltip} align="left" width=${260} content=${blockedByEncounter ? ENCOUNTER_BLOCK_NOTE : forecastTooltip(run, forecast, label, tip, note, ladder)}>
+    <${Tooltip} align="left" width=${260} content=${blockedByEncounter ? ENCOUNTER_BLOCK_NOTE : blockedByTask ? TASK_BLOCK_NOTE : forecastTooltip(run, forecast, label, tip, note, ladder)}>
       <button
         class="btn btn-secondary"
         style=${{ fontSize: '11px', width: '100%', marginBottom: '4px' }}
-        disabled=${disabled || blockedByEncounter || !!ladder?.blocked}
+        disabled=${disabled || blockedByEncounter || blockedByTask || !!ladder?.blocked}
         onClick=${onClick}
       >${forecast.blocked ? `${label} · 불가` : actionButtonLabel(forecast, label)}${ladder && !ladder.blocked ? html` <${StepBadge} ladder=${ladder} />` : null}</button>
     <//>
+  `;
+}
+
+/** 진행 중인 게이지를 채우는 유일한 수단 — 이 둘만 작업 중에도 누를 수 있다. */
+const TASK_FREE_ACTIONS = new Set(['wait', 'waitBatch']);
+const TASK_BLOCK_NOTE = '진행 중인 작업을 끝내거나 떠나야 합니다.';
+
+/**
+ * 진행 중인 작업의 게이지 블록. 시간은 더 이상 행동이 알아서 소모하지 않는다(ADR-0084) —
+ * 가동한 작업이 여기 남고, 플레이어가 그 자리에서 대기로 게이지를 채우거나 떠나서 포기한다.
+ */
+function PendingTaskPanel({ run, runCommand }) {
+  const task = run.pendingTask;
+  if (!task || task.nodeId !== run.playerNodeId) return null;
+  const total = Math.max(1, task.completesAt - task.startedAt);
+  const filled = Math.max(0, Math.min(total, run.time - task.startedAt));
+  const left = Math.max(0, task.completesAt - run.time);
+  const batchTicks = Math.min(left, WAIT_BATCH_MAX_TICKS);
+  const label = TASK_LABELS[task.kind] || task.kind;
+  return html`
+    <div style=${{ border: '1px solid var(--color-accent-2-600)', padding: '7px', background: 'rgba(14,165,233,0.08)' }}>
+      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-accent-2-700)', marginBottom: '5px' }}>진행 중인 작업</div>
+      <${ThinGauge}
+        label=${label} value=${filled} max=${total} valueText=${`${left}칸 남음`} width="100%"
+        tip=${`${label} — 시작 1칸을 이미 썼고, 남은 ${left}칸은 이 자리에서 대기로 채웁니다. 다른 노드로 이동하면 작업을 포기하게 되며 효과도 보상도 없습니다.`}
+      />
+      <div style=${{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+        <div style=${{ flex: 1 }}>
+          <button class="btn btn-primary" style=${{ fontSize: '11px', width: '100%' }}
+            onClick=${() => runCommand({ type: 'WAIT' })}>대기 · 1칸</button>
+        </div>
+        <div style=${{ flex: 1 }}>
+          <button class="btn btn-secondary" style=${{ fontSize: '11px', width: '100%' }}
+            onClick=${() => runCommand({ type: 'WAIT_BATCH', ticks: batchTicks })}>완료까지 대기 · ${batchTicks}칸</button>
+        </div>
+      </div>
+      <div style=${{ marginTop: '5px', fontSize: '10.5px', color: '#b45309', fontWeight: 700 }}>
+        이 노드를 벗어나면 작업을 포기합니다 — 효과도 보상도 남지 않습니다.
+      </div>
+    </div>
   `;
 }
 
@@ -186,7 +235,7 @@ const FIELD_DEVICE_LABELS = { camera: '카메라 지정', accessInterface: '접�
  * 고지대 통로 한 줄 — 이 통로가 지금 내 Mobility로 공짜인지, HP 몇을 받는지, 아예 못 넘는지.
  * 예전에는 "Mobility 3 필요"만 적혀 있어서 2인 빌드에게는 없는 길로 보였지만, 층계 이후로는
  * 값을 치르고 넘을 수 있다(D8) — 그 값을 누르기 전에 읽을 수 있어야 선택이 된다.
- * @param {{timeCost: number, features: string[]}} edge @param {number} mobility 원시 Mobility.
+ * @param {{features: string[]}} edge @param {number} mobility 원시 Mobility.
  * @returns {string}
  */
 function highGroundNote(edge, mobility) {
@@ -225,7 +274,7 @@ function capabilityActionSummary(key, raw) {
         ? `높은 지형 특수 엣지는 Mobility ${R}이 표준입니다 — 지금은 부족분 ${R - hgValue}만큼 HP로 값을 치르고 넘습니다.`
         : `높은 지형 특수 엣지는 Mobility ${R}이 표준이고, ${R + CAPABILITY_STEP_MIN_GAP} 이상이어야 대가를 치르고 넘을 수 있습니다 — 지금은 통과 불가입니다.`;
     const disengage = raw >= 2 ? '전투 이탈 시작 시 진행도 +1을 받습니다.' : 'Mobility 2부터 전투 이탈 보너스를 받습니다.';
-    return `이동 시간이 이 값에 따라 줄어듭니다. 회수 계약 확보에도 쓰이며, 모자라면 HP로 값을 치릅니다. ${highGround} ${disengage} ${common}`;
+    return `이동은 통로와 무관하게 언제나 1칸이라 Mobility가 이동 시간을 줄이지는 않습니다. 회수 계약 확보에 쓰이며, 모자라면 HP로 값을 치릅니다. ${highGround} ${disengage} ${common}`;
   }
   if (key === 'stealth') {
     const camera = raw >= 3 ? '카메라에 발각되지 않고 이동 흔적도 남기지 않습니다.' : '카메라 노드 진입 시 발각됩니다. Stealth 3부터 카메라를 피할 수 있습니다.';
@@ -241,9 +290,9 @@ function capabilityActionSummary(key, raw) {
 }
 
 const EXIT_STATUS_DESCRIPTIONS = {
-  closed: '아직 요청 전. 이 노드에서 탈출구 개방 요청을 보낼 수 있습니다.',
-  requesting: '개방 요청 처리 중 — 잠시 후 개방 대기 상태로 넘어갑니다.',
-  opening: '요청 완료, 개방 대기 중 — 곧 열립니다(Hacking이 높을수록 대기 시간이 짧아집니다).',
+  closed: '아직 가동 전. 이 노드에서 탈출구를 가동할 수 있습니다.',
+  requesting: '가동 중 — 이 노드에서 대기로 게이지를 채우면 열립니다. 자리를 뜨면 가동이 취소됩니다.',
+  opening: '가동 완료 — 곧 열립니다.',
   open: '지금 이 노드에 있으면 다음 행동(이동/정찰 등)이 끝나는 즉시 자동으로 탈출합니다 — 창이 닫히기 전에 아무 행동이나 하세요.',
   disabled: '더 이상 사용할 수 없는 탈출구입니다.',
 };
@@ -375,8 +424,7 @@ function isTrueAdjacent(run, nodeId) {
   return run.graph.edges.some((e) => (e.from === run.playerNodeId && e.to === nodeId) || (e.to === run.playerNodeId && e.from === nodeId));
 }
 
-/** 현재 위치에서 nodeId로 이어지는 엣지 — 있다면 그 엣지의 timeCost가 실제 이동 소모 시간이다
- * (runEngine.js의 moveToAdjacentNode가 그대로 쓰는 값, 기하학적 길이로 엣지마다 다르다). */
+/** 현재 위치에서 nodeId로 이어지는 엣지. 이동 시간은 어느 통로든 1칸이다(ADR-0084). */
 function findTraversableEdge(run, nodeId) {
   return run.graph.edges.find((e) => (e.from === run.playerNodeId && e.to === nodeId) || (e.to === run.playerNodeId && e.from === nodeId));
 }
@@ -1268,11 +1316,9 @@ export function MapScreen() {
                     ? ` · ${e.features.includes('electronic') ? 'Hacking' : 'Force'} ${e.requiredCapability}이 표준` : '';
                   // 고지대도 층계 행동이라 부족분이 곧 HP다 — 그 값을 통로 위에서 바로 읽게 한다.
                   const highGroundLevelNote = special && highGround ? ` · ${highGroundNote(e, capabilities.mobility)}` : '';
-                  // 이동 시간은 **내 Mobility를 얹은 뒤**의 값이다 — 통로의 기본 비용만 보여 주면
-                  // 그 숫자로 도착 시각을 계산한 플레이어가 매번 틀린다.
-                  const walkTime = moveTimeCost(e, capabilities.mobility);
-                  const walkNote = walkTime === e.timeCost ? `${walkTime}칸` : `${walkTime}칸(기본 ${e.timeCost})`;
-                  const edgeLabel = `${whereIs(e.from)} ${oneWay ? '→' : '↔'} ${whereIs(e.to)} — 이동 시간 ${walkNote}${oneWay ? ' — 일방통행(역방향 이동 불가)' : ''}${special ? ` — 특수 엣지(${featureText(e.features)})${highGround ? '' : opened ? ' · 개방됨' : ' · 미개방'}${levelNote}${highGroundLevelNote}` : ''}${barrierLabel}`;
+                  // 통로에는 더 이상 고유한 이동 시간이 없다(ADR-0084) — 어느 통로든 1칸이므로
+                  // 통로마다 숫자를 적을 것이 없다.
+                  const edgeLabel = `${whereIs(e.from)} ${oneWay ? '→' : '↔'} ${whereIs(e.to)}${oneWay ? ' — 일방통행(역방향 이동 불가)' : ''}${special ? ` — 특수 엣지(${featureText(e.features)})${highGround ? '' : opened ? ' · 개방됨' : ' · 미개방'}${levelNote}${highGroundLevelNote}` : ''}${barrierLabel}`;
                   const { d: pathD, midX, midY, angleDeg } = edgePath(from, to);
                   return html`
                     <g key=${e.id}>
@@ -1561,6 +1607,7 @@ export function MapScreen() {
 
               ${(!selectedNodeId || selectedNodeId === run.playerNodeId) ? html`
                 <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <${PendingTaskPanel} run=${run} runCommand=${runCommand} />
                   <div>
                     <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>정찰</div>
                     <${ActionButton}
@@ -1584,7 +1631,7 @@ export function MapScreen() {
                       <${ActionButton}
                         run=${run} actionId="wait"
                         label="대기"
-                        tip="시계를 1칸 진행시킵니다. HP·경계도는 회복되지 않습니다 — 개방·쿨다운·적 위치를 기다리는 용도입니다."
+                        tip="시계를 1칸 진행시킵니다. HP·경계도는 회복되지 않습니다 — 개방·쿨다운·적 위치를 기다리거나, 진행 중인 작업의 게이지를 채우는 용도입니다."
                         onClick=${() => runCommand({ type: 'WAIT' })}
                       />
                       </div>
@@ -1592,7 +1639,7 @@ export function MapScreen() {
                         <${ActionButton}
                           run=${run} actionId="waitBatch" opts=${{ ticks: WAIT_BATCH_MAX_TICKS }}
                           label="묶음 대기"
-                          tip=${`최대 ${WAIT_BATCH_MAX_TICKS}칸을 1칸씩 기다립니다. 새 조우, 출구 개방/폐쇄, 붕괴가 생기면 즉시 멈추고 실제로 흐른 칸만 소모됩니다 — 아래 칸 수는 그 최대치입니다.`}
+                          tip=${`최대 ${WAIT_BATCH_MAX_TICKS}칸을 1칸씩 기다립니다. 새 조우, 출구 개방/폐쇄, 붕괴, 진행 중인 작업의 완료가 생기면 즉시 멈추고 실제로 흐른 칸만 소모됩니다 — 아래 칸 수는 그 최대치입니다.`}
                           onClick=${() => runCommand({ type: 'WAIT_BATCH', ticks: WAIT_BATCH_MAX_TICKS })}
                         />
                       </div>
@@ -2081,9 +2128,9 @@ export function MapScreen() {
                     <div>
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>탈출구</div>
                       <${ActionButton}
-                        run=${run} actionId="requestExtraction"
-                        label=${`탈출구 ${currentExit.exitId} 개방 요청 (Hacking ${capabilities.hacking})`}
-                        tip="탈출구를 여는 절차를 시작합니다. 요청 후 Hacking Capability가 높을수록 개방까지 대기 시간이 짧아지고, 열리면 이 노드에서 다음 행동이 끝나는 즉시 자동으로 탈출합니다(별도 확정 불필요). 일정 시간이 지나면 창이 다시 닫힙니다."
+                        run=${run} actionId="exitActivate" opts=${{ value: capabilities.hacking }}
+                        label=${`탈출구 ${currentExit.exitId} 가동 (Hacking ${capabilities.hacking})`}
+                        tip="탈출구를 가동합니다. 가동에 드는 것은 1칸이고, 나머지는 이 자리에서 대기로 채우는 게이지입니다 — Hacking이 높을수록 게이지가 짧습니다. 게이지가 차면 문이 열리고, 이 노드에서 다음 행동이 끝나는 즉시 자동으로 탈출합니다. 자리를 뜨면 가동이 취소됩니다."
                         onClick=${() => runCommand({ type: 'REQUEST_EXTRACTION', exitId: currentExit.exitId })}
                       />
                     </div>

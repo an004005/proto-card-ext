@@ -22,11 +22,9 @@
 // the run's sectors form a ring, no gateway edge is a bridge, and a route can go around the ring
 // either way.
 //
-// Each edge's timeCost is an integer number of time 칸, derived once at generation from its actual
-// 2D length (EDGE_TIME_PER_LENGTH_UNIT, rounded and clamped to [EDGE_TIME_MIN, EDGE_TIME_MAX])
-// instead of a flat constant — shorter corridors are faster, longer ones slower. The exit
-// placement's "farthest from the start" therefore uses Dijkstra (graphUtils.js
-// baselineWalkDistances) rather than hop-count * constant.
+// Edges carry no time cost of their own any more (ADR-0084): every corridor is one 칸. Distance
+// metrics — including the exit placement's "farthest from the start" — are therefore plain hop
+// counts over the walkable subgraph (graphUtils.js baselineWalkDistances).
 //
 // Special edges (§4.2) are additional edges layered on top of the base graph, in three flavors:
 // "within-sector" (both endpoints from one sector's pool), "cross-sector" (one endpoint from each
@@ -48,7 +46,6 @@ import { generateSectorLayout } from './layoutArchetypes.js';
 import {
   ALL_SECTOR_IDS, RUN_SECTOR_COUNT, START_SECTOR_ID, DEEPEST_SECTOR_ID,
   SECTOR_RING_RADIUS, SECTOR_NODE_RADIUS,
-  EDGE_TIME_PER_LENGTH_UNIT, EDGE_TIME_MIN, EDGE_TIME_MAX,
   BASE_EDGE_DEGREE_HARD_CAP, EXIT_PLACEMENT_MAX_ATTEMPTS,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
@@ -132,11 +129,6 @@ function edgeId(from, to) { return `edge_${from}_${to}`; }
 /** @param {{x: number, y: number}} a @param {{x: number, y: number}} b */
 function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
-/** @param {number} length */
-function edgeTimeCostForLength(length) {
-  return Math.max(EDGE_TIME_MIN, Math.min(EDGE_TIME_MAX, Math.round(length * EDGE_TIME_PER_LENGTH_UNIT)));
-}
-
 /**
  * @typedef {Object} Topology
  * @property {string[]} sectorIds 이 런의 구역 — 링 순서.
@@ -197,10 +189,8 @@ export function buildBaseGraph(rngState, sectorIds) {
   const addEdge = (a, b, features = [], requiredCapability = undefined) => {
     const key = [a, b].sort().join('|');
     if (existing.has(key)) return;
-    const nodeA = /** @type {import('./types.js').FacilityNode} */ (byId.get(a));
-    const nodeB = /** @type {import('./types.js').FacilityNode} */ (byId.get(b));
     /** @type {import('./types.js').FacilityEdge} */
-    const edge = { id: edgeId(a, b), from: a, to: b, bidirectional: true, timeCost: edgeTimeCostForLength(distance(nodeA, nodeB)), features };
+    const edge = { id: edgeId(a, b), from: a, to: b, bidirectional: true, features };
     if (requiredCapability !== undefined) edge.requiredCapability = requiredCapability;
     edges.push(edge);
     existing.add(key);
@@ -510,10 +500,8 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
       state = sRoll;
       if (roll < SPECIAL_EDGE_SECOND_TAG_CHANCE) features.push('electronic');
     }
-    const dist = distance(/** @type {{x:number,y:number}} */ (byId.get(a)), /** @type {{x:number,y:number}} */ (byId.get(b)));
     specialEdges.push({
-      id: edgeId(a, b), from: a, to: b, bidirectional: category !== 'oneWay',
-      timeCost: edgeTimeCostForLength(dist), features,
+      id: edgeId(a, b), from: a, to: b, bidirectional: category !== 'oneWay', features,
     });
     existing.add(key);
     degree.set(a, /** @type {number} */ (degree.get(a)) + 1);

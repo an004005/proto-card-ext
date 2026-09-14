@@ -29,6 +29,7 @@ import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { RUN_COLLAPSE_TIME, CONTRACT_DETONATE_MIN_HOPS } from '../src/data/facilityLayout.js';
 import { adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
+import { finishTask } from './helpers/finishTask.js';
 
 /** 목표부에서 그 노드까지의 홉수 — 기폭 지점 고르기용. */
 function detonationHops(run, contractDef, nodeId) {
@@ -67,7 +68,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
   }
 
   // 고정 비용 행동.
-  cases.push({ name: '기본 정찰', actionId: 'recon', act: (run) => basicRecon(run) });
+  cases.push({ name: '기본 정찰', actionId: 'recon', act: (run) => finishTask(basicRecon(run)) });
   cases.push({ name: '대기', actionId: 'wait', act: (run) => waitOneTick(run) });
   cases.push({
     name: '조우 회피',
@@ -79,17 +80,17 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
     name: '은엄폐',
     actionId: 'concealment',
     run: { ...base, graph: { ...base.graph, concealmentByNodeId: { ...base.graph.concealmentByNodeId, [nodeId]: 2 } } },
-    act: (run) => useConcealment(run),
+    act: (run) => finishTask(useConcealment(run)),
   });
   cases.push({
     name: '시체 처리',
     actionId: 'corpse',
     run: { ...base, corpses: [{ id: 'c1', nodeId, sectorId }] },
-    act: (run) => disposeCorpse(run),
+    act: (run) => finishTask(disposeCorpse(run)),
   });
-  cases.push({ name: '탈출구 요청', actionId: 'requestExtraction', act: (run) => requestExtraction(run, 'A', 1) });
-  cases.push({ name: '장비 교체', actionId: 'equipSwap', act: (run) => scheduleTask(run, { kind: 'equipSwap', timeCost: actionTimeCost('equipSwap') }) });
-  cases.push({ name: '소모품 사용', actionId: 'mapConsumable', act: (run) => scheduleTask(run, { kind: 'mapConsumable', timeCost: actionTimeCost('mapConsumable') }) });
+  cases.push({ name: '탈출구 가동', actionId: 'exitActivate', opts: { value: 1 }, act: (run) => finishTask(requestExtraction(run, 'A', 1)) });
+  cases.push({ name: '장비 교체', actionId: 'equipSwap', act: (run) => finishTask(scheduleTask(run, { kind: 'equipSwap', timeCost: actionTimeCost('equipSwap') })) });
+  cases.push({ name: '소모품 사용', actionId: 'mapConsumable', act: (run) => finishTask(scheduleTask(run, { kind: 'mapConsumable', timeCost: actionTimeCost('mapConsumable') })) });
 
   // 파밍 — 등급 × 접근 3모드.
   for (const [isPrize, tier] of [[false, 'normal'], [true, 'normal'], [true, 'elite']]) {
@@ -102,7 +103,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
           ...base,
           graph: { ...base.graph, opportunities: [{ id: 'o1', nodeId, keyEligible: false, usesRemaining: 2, grade: isPrize ? 'prize' : 'supply', tier, axis: 'resource' }] },
         },
-        act: (run) => useOpportunity(run, 'o1', mode).state,
+        act: (run) => finishTask(useOpportunity(run, 'o1', mode).state),
       });
     }
   }
@@ -114,7 +115,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
     name: '현장 장비',
     actionId: 'fieldEquipment',
     opts: { contract: barrier },
-    act: (run) => useFieldEquipment(run, 'ff1', barrier, someEdge.id),
+    act: (run) => finishTask(useFieldEquipment(run, 'ff1', barrier, someEdge.id)),
   });
 
   // 특수 엣지 — 층계 × 접근이 함께 걸리는 유일한 자리. 구역 추첨(ADR-0081) 때문에 어느
@@ -135,7 +136,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
         actionId: 'openEdge',
         opts: { value: force, capabilityKind: 'force', edge: blocked, mode },
         run: edgeRun,
-        act: (run) => openSpecialEdge(run, blocked.id, 'force', force, mode),
+        act: (run) => finishTask(openSpecialEdge(run, blocked.id, 'force', force, mode)),
       });
     }
   }
@@ -149,14 +150,14 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
   const landmark = base.graph.landmarks[0];
   const atLandmark = { ...base, playerNodeId: landmark.nodeId };
   for (const value of [0, 1, 2, 4]) {
-    cases.push({ name: `인터페이스 해킹 H=${value}`, actionId: 'hackInterface', opts: { value }, run: atInterface, act: (run) => hackAccessInterface(run, interfaceEntry.id, value) });
-    cases.push({ name: `카메라 해킹 H=${value}`, actionId: 'hackCamera', opts: { value }, run: atCamera, act: (run) => hackCamera(run, camera.id, value) });
-    cases.push({ name: `카메라 파괴 F=${value}`, actionId: 'destroyCamera', opts: { value }, run: atCamera, act: (run) => destroyCamera(run, camera.id, value) });
-    cases.push({ name: `통제실 H=${value}`, actionId: 'controlRoom', opts: { value }, run: atLandmark, act: (run) => hackControlRoom(run, value) });
+    cases.push({ name: `인터페이스 해킹 H=${value}`, actionId: 'hackInterface', opts: { value }, run: atInterface, act: (run) => finishTask(hackAccessInterface(run, interfaceEntry.id, value)) });
+    cases.push({ name: `카메라 해킹 H=${value}`, actionId: 'hackCamera', opts: { value }, run: atCamera, act: (run) => finishTask(hackCamera(run, camera.id, value)) });
+    cases.push({ name: `카메라 파괴 F=${value}`, actionId: 'destroyCamera', opts: { value }, run: atCamera, act: (run) => finishTask(destroyCamera(run, camera.id, value)) });
+    cases.push({ name: `통제실 H=${value}`, actionId: 'controlRoom', opts: { value }, run: atLandmark, act: (run) => finishTask(hackControlRoom(run, value)) });
     if (generator) {
       const atGenerator = { ...base, playerNodeId: generator.nodeId };
-      cases.push({ name: `발전기 해킹 H=${value}`, actionId: 'disableGeneratorHack', opts: { value }, run: atGenerator, act: (run) => disableGenerator(run, generator.id, 'hacking', value) });
-      cases.push({ name: `발전기 파괴 F=${value}`, actionId: 'disableGeneratorForce', opts: { value }, run: atGenerator, act: (run) => disableGenerator(run, generator.id, 'force', value) });
+      cases.push({ name: `발전기 해킹 H=${value}`, actionId: 'disableGeneratorHack', opts: { value }, run: atGenerator, act: (run) => finishTask(disableGenerator(run, generator.id, 'hacking', value)) });
+      cases.push({ name: `발전기 파괴 F=${value}`, actionId: 'disableGeneratorForce', opts: { value }, run: atGenerator, act: (run) => finishTask(disableGenerator(run, generator.id, 'force', value)) });
     }
     // 수습 수단.
     cases.push({
@@ -164,9 +165,9 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
       actionId: 'cleanTraces',
       opts: { value },
       run: { ...base, evidence: [{ id: 'e1', nodeId, tier: 1, createdBySectorId: sectorId }] },
-      act: (run) => cleanTraces(run, value),
+      act: (run) => finishTask(cleanTraces(run, value)),
     });
-    cases.push({ name: `전원 차단 F=${value}`, actionId: 'cutPower', opts: { value }, run: atInterface, act: (run) => cutPower(run, value) });
+    cases.push({ name: `전원 차단 F=${value}`, actionId: 'cutPower', opts: { value }, run: atInterface, act: (run) => finishTask(cutPower(run, value)) });
     const interfaceSectorId = interfaceEntry.nodeId.split('_')[0];
     const targetSectorId = adjacentSectorIds(atInterface.graph, interfaceSectorId)[0];
     cases.push({
@@ -181,7 +182,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
           [targetSectorId]: { ...atInterface.sectorAlerts[targetSectorId], level: 0 },
         },
       },
-      act: (run) => broadcastFalseTarget(run, value, targetSectorId),
+      act: (run) => finishTask(broadcastFalseTarget(run, value, targetSectorId)),
     });
   }
 
@@ -197,9 +198,9 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
       const objective = base.graph.landmarks.find((l) => l.sectorId === def.sectorId);
       return { ...base, playerNodeId: objective.nodeId, contract: { ...def, status: 'accepted' } };
     };
-    cases.push({ name: `회수 확보 S/M=${value}`, actionId: 'contractRetrieve', opts: { value, capabilityKind: 'stealth' }, run: contractRun(retrieval), act: (run) => acquireContractGoods(run, value, value - 1) });
-    cases.push({ name: `파괴 F=${value}`, actionId: 'contractDestroy', opts: { value }, run: contractRun(destroy), act: (run) => destroyContractTarget(run, value) });
-    cases.push({ name: `정보 확보 H=${value}`, actionId: 'contractIntel', opts: { value }, run: contractRun(intel), act: (run) => acquireContractIntel(run, value) });
+    cases.push({ name: `회수 확보 S/M=${value}`, actionId: 'contractRetrieve', opts: { value, capabilityKind: 'stealth' }, run: contractRun(retrieval), act: (run) => finishTask(acquireContractGoods(run, value, value - 1)) });
+    cases.push({ name: `파괴 F=${value}`, actionId: 'contractDestroy', opts: { value }, run: contractRun(destroy), act: (run) => finishTask(destroyContractTarget(run, value)) });
+    cases.push({ name: `정보 확보 H=${value}`, actionId: 'contractIntel', opts: { value }, run: contractRun(intel), act: (run) => finishTask(acquireContractIntel(run, value)) });
     // C5: 송출은 목표부가 아닌 **다른 구역** 랜드마크에서만 된다.
     const acquired = contractRun(intel);
     // 송출은 목표부 구역의 **링 이웃** 랜드마크에서만 된다(C5).
@@ -210,7 +211,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
       actionId: 'contractTransmit',
       opts: { value },
       run: { ...acquired, playerNodeId: otherLandmark.nodeId, contract: { ...acquired.contract, status: 'acquired' } },
-      act: (run) => transmitContractIntel(run, value),
+      act: (run) => finishTask(transmitContractIntel(run, value)),
     });
     // C5: 파괴 계약의 기폭 — 설치한 뒤 목표부에서 2홉 이상 떨어진 자리에서.
     const planted = contractRun(destroy);
@@ -223,7 +224,7 @@ test('모든 유료 행동에서 UI 예고 칸과 엔진이 실제로 청구한 
       actionId: 'contractDetonate',
       opts: {},
       run: { ...planted, playerNodeId: farNode.id, contract: { ...planted.contract, status: 'acquired' } },
-      act: (run) => detonateContractCharge(run),
+      act: (run) => finishTask(detonateContractCharge(run)),
     });
   }
 
@@ -258,7 +259,7 @@ test('등급을 모르는 확보 대상만 범위로 예고하고, 실제 청구
         ...base,
         graph: { ...base.graph, opportunities: [{ id: 'o1', nodeId, keyEligible: false, usesRemaining: 1, grade: 'prize', tier, axis: 'resource' }] },
       };
-      const after = useOpportunity(run, 'o1', mode).state;
+      const after = finishTask(useOpportunity(run, 'o1', mode).state);
       const actual = charged(run, after);
       assert.equal(actual, forecastAction('farm', { isPrize: true, tier, mode }).timeCost, `${mode}/${tier}: 등급을 알면 예고는 정확해야 한다`);
       assert.ok(actual >= range.minTime && actual <= range.maxTime, `${mode}/${tier}: 청구 ${actual}칸이 범위 예고 ${range.timeText} 밖이다`);
@@ -271,19 +272,21 @@ test('등급을 모르는 확보 대상만 범위로 예고하고, 실제 청구
 test('예고 문장은 최종 칸과 그 분해를 함께 말한다', () => {
   // 분해가 최종값과 어긋나면 플레이어는 둘 중 무엇을 믿어야 할지 알 수 없다.
   assert.equal(describeForecast(forecastAction('recon'), '정찰'), '정찰 4칸');
-  const surplus = forecastAction('openEdge', { value: 2, capabilityKind: 'hacking', edge: { timeCost: 0, requiredCapability: 1 }, mode: 'normal' });
+  const surplus = forecastAction('openEdge', { value: 2, capabilityKind: 'hacking', edge: { requiredCapability: 1 }, mode: 'normal' });
   assert.equal(describeForecast(surplus, '문 해킹'), `문 해킹 ${surplus.timeCost}칸 = 기본 ${surplus.baseTime} − 능력 1`);
-  const move = forecastAction('move', { edge: { timeCost: 5 }, value: 1 });
-  assert.equal(describeForecast(move, '이동'), `이동 ${move.timeCost}칸 = 기본 5 − Mobility 1`);
+  // 이동은 가감이 없으므로 분해가 붙지 않는다 — 언제나 1칸이다(ADR-0084).
+  for (const mobility of [-2, 1, 4]) {
+    assert.equal(describeForecast(forecastAction('move', { edge: {}, value: mobility }), '이동'), '이동 1칸');
+  }
 });
 
-test('하한에 잘린 예고는 그 행동의 실제 하한을 말한다 — 이동은 2칸이다', () => {
-  // "(최소 1칸)"을 하드코딩하면 이동에서 화면이 거짓말을 한다. 하한은 행동마다 다르다.
-  const clampedMove = forecastAction('move', { edge: { timeCost: 2 }, value: 4 });
-  assert.equal(clampedMove.floor, 2);
-  assert.ok(describeForecast(clampedMove, '이동').endsWith('(최소 2칸)'), describeForecast(clampedMove, '이동'));
+test('하한에 잘린 예고는 그 행동의 실제 하한을 말한다', () => {
+  // "(최소 1칸)"을 하드코딩하면 행동마다 다른 하한에서 화면이 거짓말을 한다.
+  const move = forecastAction('move', { edge: {}, value: 4 });
+  assert.equal(move.floor, 1);
+  assert.equal(describeForecast(move, '이동'), '이동 1칸');
 
-  const capability = forecastAction('openEdge', { value: 4, capabilityKind: 'hacking', edge: { timeCost: 0, requiredCapability: 1 }, mode: 'rush' });
+  const capability = forecastAction('openEdge', { value: 4, capabilityKind: 'hacking', edge: { requiredCapability: 1 }, mode: 'rush' });
   assert.equal(capability.floor, 1);
 });
 

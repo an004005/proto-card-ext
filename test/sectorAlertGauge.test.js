@@ -7,6 +7,7 @@ import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facility
 import { createRunState, escalateSectorAlert, hackControlRoom, advanceTime } from '../src/engine/runEngine.js';
 import { broadcastFalseTarget } from '../src/engine/recovery.js';
 import { ALERT_GAUGE_CAPACITY, ALERT_PRESSURE, POWER_CUT_DURATION } from '../src/data/facilityLayout.js';
+import { finishTask, finishTaskSnapshot } from './helpers/finishTask.js';
 
 function makeRun(seed = 1) {
   const { graph } = generateFacilityGraph(seed);
@@ -87,7 +88,7 @@ test('통제실 장악은 단계를 낮추면서 반쯤 찬 게이지도 지운�
       [landmark.sectorId]: { level: 2, pressure: ALERT_GAUGE_CAPACITY - 1, resolvedEventIds: [] },
     },
   };
-  const seized = hackControlRoom(state, 2);
+  const seized = finishTask(hackControlRoom(state, 2));
   assert.equal(seized.sectorAlerts[landmark.sectorId].level, 1);
   // 게이지를 남겨두면 장악한 구역이 다음 작은 사건 하나에 곧바로 되돌아간다.
   assert.equal(seized.sectorAlerts[landmark.sectorId].pressure, 0);
@@ -108,7 +109,7 @@ test('가짜 목표 송출은 단계 하나를 옮기고 보내는 쪽 게이지
       [targetSectorId]: { level: 0, pressure: 3, resolvedEventIds: [] },
     },
   };
-  const after = broadcastFalseTarget(raised, 1, targetSectorId);
+  const after = finishTask(broadcastFalseTarget(raised, 1, targetSectorId));
   assert.equal(after.sectorAlerts[sectorId].level, 1, '옮기는 단위는 단계다');
   assert.equal(after.sectorAlerts[targetSectorId].level, 1, '총량은 단계 단위로 보존된다(ADR-0073)');
   assert.equal(after.sectorAlerts[sectorId].pressure, 0, '내준 쪽의 게이지는 지워진다');

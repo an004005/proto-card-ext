@@ -84,17 +84,18 @@ export function bfsHopDistancesOverArcs(arcs, fromId) {
 }
 
 /**
- * Capability 0이 아무것도 열지 않고 실제로 걸어갈 수 있는 간선만으로 잰 가중 최단거리. 판정은
+ * Capability 0이 아무것도 열지 않고 실제로 걸어갈 수 있는 간선만으로 잰 최단 **홉수**. 통로
+ * 하나는 언제나 1칸이므로(ADR-0084) 거리와 칸이 같은 값이다. 판정은
  * runEngine.isEdgeTraversable(개방 없음, 유효 Mobility 0)과 같다 — 잠긴 통로(차단·전자)와
  * 고지대(유효 Mobility 3 필요)는 없는 길로 치고, 일방통행은 생성 방향으로만 지난다. 방향에 따라
  * 값이 달라지므로 결과도 방향성이다.
- * @param {{id: string, from: string, to: string, timeCost: number, features: string[]}[]} edges
+ * @param {{id: string, from: string, to: string, features: string[]}[]} edges
  * @param {string} fromId
  * @returns {Map<string, number>}
  */
 export function baselineWalkDistances(edges, fromId) {
   const arcs = new Map();
-  for (const arc of baselineWalkArcs(edges)) link(arcs, arc.from, arc.to, arc.timeCost);
+  for (const arc of baselineWalkArcs(edges)) link(arcs, arc.from, arc.to, 1);
   return dijkstraOverArcs(arcs, fromId);
 }
 
@@ -103,17 +104,17 @@ export function baselineWalkDistances(edges, fromId) {
  * 판정과 퇴로(2경로) 판정이 같은 "걸을 수 있는 길"을 쓰게 하려고 기준을 여기 한 곳에 둔다.
  * 두 판정이 갈리면 환풍구(일방통행)나 고지대가 한쪽에서만 길로 인정돼, 실제로는 되돌아올 수
  * 없는 자리가 "퇴로 2개"로 통과한다.
- * @param {{id: string, from: string, to: string, timeCost: number, features: string[]}[]} edges
- * @returns {{from: string, to: string, timeCost: number}[]}
+ * @param {{id: string, from: string, to: string, features: string[]}[]} edges
+ * @returns {{from: string, to: string}[]}
  */
 export function baselineWalkArcs(edges) {
-  /** @type {{from: string, to: string, timeCost: number}[]} */
+  /** @type {{from: string, to: string}[]} */
   const arcs = [];
   for (const edge of edges) {
     if (!isEdgeUnlocked(edge)) continue;
     if (edge.features.includes('highGround')) continue;
-    arcs.push({ from: edge.from, to: edge.to, timeCost: edge.timeCost });
-    if (!edge.features.includes('oneWay')) arcs.push({ from: edge.to, to: edge.from, timeCost: edge.timeCost });
+    arcs.push({ from: edge.from, to: edge.to });
+    if (!edge.features.includes('oneWay')) arcs.push({ from: edge.to, to: edge.from });
   }
   return arcs;
 }

@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
+import { finishTaskSnapshot } from './helpers/finishTask.js';
 
 const projectUrl = (path) => new URL(path, import.meta.url).href;
 register(projectUrl('./helpers/preactResolve.mjs'));
