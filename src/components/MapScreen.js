@@ -66,7 +66,7 @@ function featureText(features) {
   return features.map((feature) => EDGE_FEATURE_LABELS[feature] || feature).join('·');
 }
 
-/** 화면의 모든 시각은 상대 표기다 — 절대 시각(424 / 700)은 괄호로만 병기한다. 700칸짜리 시계를
+/** 화면의 모든 시각은 상대 표기다 — 절대 시각(424 / 490)은 괄호로만 병기한다. 490칸짜리 시계를
  * 머릿속에서 빼는 일을 플레이어에게 시키면 계획이 아니라 산수가 된다. */
 function ticksUntil(at, now) { return Math.max(0, at - now); }
 function inTicksText(at, now) { return `${ticksUntil(at, now)}칸 후`; }

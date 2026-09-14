@@ -11,6 +11,7 @@ import { register } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState } from '../src/engine/runEngine.js';
+import { RUN_COLLAPSE_TIME } from '../src/data/facilityLayout.js';
 
 const projectUrl = (path) => new URL(path, import.meta.url).href;
 register(projectUrl('./helpers/preactResolve.mjs'));
@@ -65,7 +66,7 @@ test('초기 상태(pendingTask·lastTaskOutcome·engagedThreatId가 전부 null
   const text = renderMap(run);
   assert.ok(text.includes('붕괴까지'), '상단 카운터가 보여야 한다');
   assert.ok(text.includes('폐쇄까지') || text.includes('폐쇄됨'), '출구 폐쇄 카운터가 보여야 한다');
-  assert.ok(text.includes(`시각 ${run.time} / 700`), 'HUD에 현재 시각이 상시 보여야 한다');
+  assert.ok(text.includes(`시각 ${run.time} / ${RUN_COLLAPSE_TIME}`), 'HUD에 현재 시각이 상시 보여야 한다');
   assert.ok(text.includes('가장 이른 마감'), '가장 가까운 마감이 줄 맨 앞에 한 번 더 보여야 한다');
   assert.ok(text.includes('앞으로 15칸'), '타임라인 블록이 보여야 한다');
   assert.ok(text.includes('기본 정찰 · 4칸'), '예고가 붙은 행동 버튼이 보여야 한다');

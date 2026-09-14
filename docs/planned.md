@@ -62,4 +62,4 @@
 
 ### 11. 시드별 밸런스 확인
 
-- 남은 밸런스 검증: Mobility별 왕복 여유. 700칸 총량은 시작점일 뿐 현재 체감 난이도가 보존된다고 단정하지 않으며, 총량 재조정은 측정 결과를 보고 별도로 결정한다. 측정은 끝났고(시드 1..30, `npm run balance:map`) 결과와 선택지는 `docs/proposals/map-time-balance-measurement.md`에 있다 — 재조정 값은 아직 확정되지 않았다.
+- 남은 밸런스 검증: Mobility별 왕복 여유. 총량 재조정은 측정을 보고 한 번 끝냈다(700 → 490, A 폐쇄 430 → 300). 측정은 `npm run balance:map`으로 다시 돌릴 수 있고, 옛 측정 회차의 원자료와 선택지는 `docs/proposals/map-time-balance-measurement.md`에 있다. 새 예산에서 실제 체감이 어떤지는 플레이테스트로만 확인된다.

@@ -165,7 +165,7 @@ export const BASE_EDGE_DEGREE_HARD_CAP = 4;
 // 걸어서 잴 수 있는 최대 거리 자체가 작아졌다 — 옛 값 120은 시드의 43%에서 재배치 상한
 // (EXIT_PLACEMENT_MAX_ATTEMPTS) 안에 **도달 자체가 불가능**해 relaxed가 예외가 아니라 기본이
 // 되어 버렸다(실측: 200시드의 최대 도달 A–B 중앙값 124, 하위 25%는 109). 90칸은 그 분포에서
-// 시드의 93%가 넘기는 값이라 "보장"이라는 말이 다시 성립한다. 동시에 A 폐쇄 430의 약 21%,
+// 시드의 93%가 넘기는 값이라 "보장"이라는 말이 다시 성립한다. 동시에 A 폐쇄 300의 30%,
 // 봉쇄 유예 LOCKDOWN_EXIT_CLOSE_WINDOW(125)보다 짧으므로 "목표 확보 뒤 A 대신 B로 갈아탈 수
 // 있다"는 원래의 뜻도 그대로다.
 export const EXIT_AB_MIN_DISTANCE = 90;
@@ -357,13 +357,16 @@ export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
 
 // 원래 의도는 "시작점에서 가장 먼 출구까지의 실측 중앙값 대비 약 3배" — 가장 먼 탈출구를 찍고
 // 돌아 나올 여유는 있되 시설 전체를 훑고 나갈 만큼은 아니게 잡은 값이다. 구역이 여덟에서
-// 넷으로 줄면서(ADR-0081) 그 중앙값이 220칸 안팎에서 90칸 안팎으로 줄었고, 지금은 배수가 약
-// 8배다. 즉 이 값은 더 이상 그 의도대로 조여 주지 않는다 — 붕괴가 아니라 출구 폐쇄(430·670)와
-// 봉쇄가 실질 마감이다. 재보정은 플레이테스트 뒤로 미룬다(scripts/measure-map-balance.mjs).
-export const RUN_COLLAPSE_TIME = 700; // §2.3 t>=RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
+// 넷으로 줄면서(ADR-0081) 그 중앙값이 220칸 안팎에서 90칸 안팎으로 줄어 옛 값 700은 그
+// 중앙값의 약 8배가 됐고, 마감으로서 아무것도 조이지 않았다. 그래서 시간 예산 전체를 70%로
+// 줄인다(700 → 490). 배수는 여전히 약 5배로 넉넉하지만 붕괴가 다시 보이는 마감이 된다.
+// 증원 주기·봉쇄 간격·작업 시간은 손대지 않았다 — 줄인 것은 "총 시간"뿐이라 한 런에 낄 수 있는
+// 작업 수가 줄지, 각 작업의 값이 바뀌지는 않는다.
+export const RUN_COLLAPSE_TIME = 490; // §2.3 t>=RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
 
-export const EXIT_A_DISABLED_AT = 430;
-export const EXIT_B_DISABLED_AT = 670;
+// 같은 70% 축소. 430 → 300(십의 자리로 떨어지는 값), 670 → 470.
+export const EXIT_A_DISABLED_AT = 300;
+export const EXIT_B_DISABLED_AT = 470;
 export const EXIT_REQUEST_TIME = 3;
 export const EXIT_OPEN_WINDOW = 5;
 

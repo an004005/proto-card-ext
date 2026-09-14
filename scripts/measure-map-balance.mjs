@@ -523,7 +523,7 @@ export function formatReport(result) {
   }
   for (const m of MOBILITY_VALUES) {
     const s = stats(pick((r) => EXIT_A_DISABLED_AT - r.byMobility[m].exits.A.walk - EXIT_OVERHEAD));
-    out.push(`Mobility ${m}: A 탈출 런 예산 ${num(s.median, 1)}칸 동안 증원(${REINFORCEMENT_INTERVAL}칸 주기) ${Math.floor(Math.max(0, s.median) / REINFORCEMENT_INTERVAL)}회, 붕괴 700까지 총 ${Math.floor(RUN_COLLAPSE_TIME / REINFORCEMENT_INTERVAL)}회`);
+    out.push(`Mobility ${m}: A 탈출 런 예산 ${num(s.median, 1)}칸 동안 증원(${REINFORCEMENT_INTERVAL}칸 주기) ${Math.floor(Math.max(0, s.median) / REINFORCEMENT_INTERVAL)}회, 붕괴 ${RUN_COLLAPSE_TIME}까지 총 ${Math.floor(RUN_COLLAPSE_TIME / REINFORCEMENT_INTERVAL)}회`);
   }
   out.push(`(전 Mobility 통합 이동 비용 중앙값 ${num(medianMove, 1)}칸)`);
   out.push('');
