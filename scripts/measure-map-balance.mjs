@@ -1,4 +1,4 @@
-// 맵 정수 시간(ADR-0075)과 1칸 이동(ADR-0084) 전환 뒤 마감 상수(붕괴 50 / A 폐쇄 30)가
+// 맵 정수 시간(ADR-0075)과 1칸 이동(ADR-0084) 전환 뒤 마감 상수(붕괴 80 / A 폐쇄 50, ADR-0085)가
 // 실제 시드에서 얼마나 빡빡한지 재는 측정 도구다. 아무 상수도 바꾸지 않고 읽기만 한다 —
 // 결과 요약은 docs/proposals/map-time-balance-measurement.md.
 //
@@ -150,7 +150,7 @@ function distOf(distances, nodeId) {
 
 // ---- 시드 하나 측정 ----
 
-/** 탈출구를 실제로 쓰려면 도착 뒤 가동 게이지(Hacking 0 -> 18칸)를 다 채워야 한다(ADR-0084). */
+/** 탈출구를 실제로 쓰려면 도착 뒤 가동 게이지(Hacking 0 -> 9칸)를 다 채워야 한다(ADR-0084·0085). */
 const EXIT_OVERHEAD = EXIT_ACTIVATE_TIME_BY_HACKING[BASE_CAPABILITY + 2];
 
 /**
@@ -430,7 +430,7 @@ export function formatReport(result) {
     )));
     out.push(`Mobility ${m}: A 탈출 런 예산 ${num(s.median, 1)}칸 동안 증원(${REINFORCEMENT_INTERVAL}칸 주기) ${Math.floor(Math.max(0, s.median) / REINFORCEMENT_INTERVAL)}회, 붕괴 ${RUN_COLLAPSE_TIME}까지 총 ${Math.floor(RUN_COLLAPSE_TIME / REINFORCEMENT_INTERVAL)}회`);
   }
-  out.push('(이동은 통로·Mobility와 무관하게 언제나 1칸이다 — 압박을 만드는 것은 작업 게이지다: 한 칸에 한 홉을 걷는 나를 위협은 순찰 5칸에 한 홉으로 따라오지만, 18칸짜리 가동 게이지 동안에는 세 홉을 좁힌다.)');
+  out.push(`(이동은 통로·Mobility와 무관하게 언제나 1칸이다 — 압박을 만드는 것은 작업 게이지다: 한 칸에 한 홉을 걷는 나를 위협은 순찰 5칸에 한 홉으로 따라오지만, ${EXIT_OVERHEAD}칸짜리 가동 게이지 동안에는 세 홉을 좁힌다.)`);
   out.push('');
 
   // 2. 계약 왕복

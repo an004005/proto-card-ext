@@ -89,7 +89,7 @@ test('reinforcement refills a killed marker at a gateway, and never exceeds the 
   const roster = base.graph.threats.filter((t) => t.sectorId === sectorId);
   assert.equal(roster.length, THREAT_COUNT_BY_SECTOR[sectorId]);
 
-  // 교대 주기(180칸)는 런의 마감(붕괴 50칸)보다 길다 — 실제로 교대가 오는 것은 경계도가
+  // 교대 주기(180칸)는 런의 마감(붕괴 80칸)보다 길다 — 실제로 교대가 오는 것은 경계도가
   // 올라 시계를 당길 때뿐이다. 여기서는 그 당겨진 시계를 직접 세워 교대 자체를 본다.
   const due = (run) => ({ ...run, reinforcements: { ...run.reinforcements, [sectorId]: { nextAt: 3, alertSeen: 0 } } });
 
