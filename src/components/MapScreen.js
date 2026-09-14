@@ -19,7 +19,7 @@ import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
   explainEffectiveStealth, detailIncludes, highGroundMobility, nodeContentsAt,
-  deviceStatus, canClimbHighGround,
+  deviceStatus, canClimbHighGround, interfaceCameraRevealHops,
 } from '../engine/runEngine.js';
 import { ladderNote, StepBadge } from './ladderDisplay.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
@@ -1634,7 +1634,7 @@ export function MapScreen() {
                         <${ActionButton}
                           run=${run} actionId="hackInterface" opts=${{ value: capabilities.hacking }}
                           label="접속 인터페이스 해킹"
-                          tip="이 노드의 접속 인터페이스를 장악하면, 이 구역에서 이미 발견한 카메라·발전기에 거리와 무관하게 원격 접속할 수 있습니다."
+                          tip=${`이 노드의 접속 인터페이스를 장악하면, 이 구역에서 이미 발견한 카메라·발전기에 거리와 무관하게 원격 접속할 수 있습니다. 인터페이스는 구역 카메라 버스이기도 해서, 장악하는 순간 여기서 ${interfaceCameraRevealHops(capabilities.hacking)}홉 안(같은 구역)의 카메라 위치가 지도에 드러납니다.`}
                           onClick=${() => runCommand({ type: 'HACK_ACCESS_INTERFACE', interfaceId: currentInterface.id })}
                         />
                       ` : null}
