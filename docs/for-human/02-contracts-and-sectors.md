@@ -53,7 +53,7 @@
 | 효과 | 값 |
 |---|---|
 | 위협 이동 간격 | 고정표로 교체 — 순찰 3 / 조사·경계·출구경계 3 / 추적 2칸 (`LOCKDOWN_THREAT_MOVE_INTERVAL`) |
-| 구역 경계 2~3의 조사 간격 | 2칸 (`LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL`) |
+| 구역 경계 2~3과 겹칠 때 | 봉쇄표와 경계도표(`SECTOR_ALERT_MOVE_INTERVAL`) 중 **작은 값**을 쓴다 |
 | 각 구역 다음 증원 | `min(기존, 확보 시점 + 90)` (`REINFORCEMENT_LOCKDOWN_INTERVAL` = 90) |
 | 상황 보정 | 맵 어디서나 Stealth −1 (`STEALTH_CONTEXT_LOCKDOWN`) |
 | 출구 폐쇄 시각 | **건드리지 않는다** |
@@ -125,7 +125,7 @@
 ### 관문과 특수 엣지
 
 - 구역과 구역은 **관문 노드**로만 이어진다. 구역마다 관문이 둘이라 관문 엣지가 브릿지(끊기면 단절되는 유일한 길)가 되지 않는다.
-- 통로 시간 비용은 기하 거리에서 한 번 정수화한다: `clamp(round(거리 × EDGE_TIME_PER_LENGTH_UNIT), EDGE_TIME_MIN, EDGE_TIME_MAX)` = `clamp(round(거리 × 0.1), 2, 13)`. 기준점 `STANDARD_EDGE_TIME_COST` = 5.
+- 통로에는 고유한 시간 비용이 없다(ADR-0084) — 어느 통로든 1칸이고, 기하 거리는 화면상의 배치로만 남는다. 거리 지표(출구 A의 "가장 먼 노드" 판정 포함)는 전부 홉수로 잰다.
 - 특수 엣지 개수: 구역 내부 `SPECIAL_EDGES_PER_SECTOR_MIN~MAX` = 4~6개, 링 인접 구역 쌍마다 `CROSS_SECTOR_SPECIAL_EDGES_MIN~MAX` = 2~3개, 비인접 구역을 잇는 원거리 지름길이 그래프 전체에 `LONG_RANGE_SPECIAL_EDGES_MIN~MAX` = 2~3개.
 - 성격 가중치(`SPECIAL_EDGE_CATEGORY_WEIGHTS`): 일방통행 3 / 차단 6 / 고지대 3. 차단 엣지에만 `SPECIAL_EDGE_SECOND_TAG_CHANCE` = 40% 확률로 전자 자물쇠가 덧붙는다. 자세한 규칙은 [07](./07-field-equipment-and-devices.md).
 - 특수 엣지 배치 시 한 노드의 차수 상한은 `BASE_EDGE_DEGREE_HARD_CAP` = 4(기저 그래프에는 적용되지 않는다).
@@ -134,7 +134,7 @@
 
 | 출구 | 위치 규칙 | 공개 | 영구 폐쇄 |
 |---|---|---|---|
-| A(표준) | 시작 구역도 **계약 목표 구역도 아닌** 구역에서, 시작점으로부터 걸어서 **가장 먼** 노드 | 런 시작부터 지도에 보인다 | `EXIT_A_DISABLED_AT` = 300칸 |
+| A(표준) | 시작 구역도 **계약 목표 구역도 아닌** 구역에서, 시작점으로부터 걸어서 **가장 먼**(홉수 기준) 노드 | 런 시작부터 지도에 보인다 | `EXIT_A_DISABLED_AT` = 30칸 |
 | 열쇠 | A와 **다른 구역**이면 어디든(목표 구역도 가능), 그 안에서 무작위 | 열쇠를 확보해야 보인다 | 없음 |
 
 - 거리는 특수 엣지까지 얹은 **완성 그래프**에서, Capability 0이 아무것도 열지 않고 지날 수 있는 간선만 써서 잰다(잠긴 통로와 고지대는 길로 치지 않고, 일방통행은 생성 방향만).

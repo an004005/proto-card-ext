@@ -12,8 +12,8 @@
 |---|---|---|---|
 | 지각 | `perception` | 정보의 깊이, 흔적 정리, 카메라 저격 | (시간만) |
 | 은신 | `stealth` | 조우 판정, 이동 흔적, 카메라 발각 | 흔적 · 경계도 |
-| 해킹 | `hacking` | 전자 자물쇠, 카메라, 출구 개방 대기, 통제실 | 경계도 |
-| 기동 | `mobility` | 이동 시간, 고지대, 이탈 | HP |
+| 해킹 | `hacking` | 전자 자물쇠, 카메라, 탈출구 가동 게이지, 통제실 | 경계도 |
+| 기동 | `mobility` | 고지대, 전투 이탈, 회수 계약 | HP |
 | 파괴 | `force` | 물리 자물쇠, 파괴, 전원 차단 | 소음 · 내구도 |
 | 기만 | `deception` | 조우 속이기, 가짜 소음, 가짜 목표 송출 | 효과 지속 |
 
@@ -131,7 +131,7 @@
 
 ### 이분 게이트는 남아 있지 않다
 
-예전에 요구치 미달을 잠김으로 처리하던 고지대(Mobility 3), 조우 속이기(Deception 2), 가짜 소음(Deception 1)이 전부 층계로 들어왔다. 다음 표들은 게이트가 아니라 **정보의 깊이·사거리·대기 시간만 조절**하므로 그대로 둔다: `CAMERA_HACK_RANGE_BY_HACKING`, `EXIT_OPEN_WAIT_BY_HACKING`, `PERCEPTION_INFO_TABLE`, `MOBILITY_MOVE_TIME_DELTA`, `INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING`, `FAKE_NOISE_RANGE_BY_DECEPTION`. 카메라 발각선(Stealth 3)도 행동이 아니라 수동 감지 판정이라 층계 밖이다.
+예전에 요구치 미달을 잠김으로 처리하던 고지대(Mobility 3), 조우 속이기(Deception 2), 가짜 소음(Deception 1)이 전부 층계로 들어왔다. 다음 표들은 게이트가 아니라 **정보의 깊이·사거리·게이지 길이만 조절**하므로 그대로 둔다: `CAMERA_HACK_RANGE_BY_HACKING`, `EXIT_ACTIVATE_TIME_BY_HACKING`, `PERCEPTION_INFO_TABLE`, `INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING`, `FAKE_NOISE_RANGE_BY_DECEPTION`. 카메라 발각선(Stealth 3)도 행동이 아니라 수동 감지 판정이라 층계 밖이다.
 
 ### 고지대 통과 (`HIGH_GROUND_MOBILITY_REQUIREMENT` = 3)
 
@@ -143,7 +143,7 @@
 | 1 | 위태 | HP −8 |
 | 0 이하 | 불가 | 넘지 못한다 |
 
-이동 시간은 평소의 Mobility 칸 가감 그대로이고 층계 시간 가감을 얹지 않는다. 지도 툴팁이 `고지대 — Mobility 3 기준, 현재 부족분 N: HP −X`로 미리 적는다.
+시간은 다른 이동과 같은 1칸이고 층계 시간 가감을 얹지 않는다 — Mobility는 이동 시간을 바꾸지 않는다(ADR-0084). 지도 툴팁이 `고지대 — Mobility 3 기준, 현재 부족분 N: HP −X`로 미리 적는다.
 
 ### 조우 속이기 (`ENCOUNTER_DECEIVE_REQUIREMENT` = 2)
 

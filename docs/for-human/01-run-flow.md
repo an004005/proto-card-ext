@@ -50,7 +50,7 @@
 
 | 분류 | 커맨드 | 비용 |
 |---|---|---|
-| 이동 | `MOVE_TO_NODE` | 통로 비용 ± Mobility |
+| 이동 | `MOVE_TO_NODE` | 1칸 (통로·Mobility 무관) |
 | 정보 | `BASIC_RECON` | 4칸 |
 | 대기 | `WAIT` / `WAIT_BATCH` | 1칸 / 최대 5칸 |
 | 파밍 | `USE_OPPORTUNITY`, `SELECT_FARM_REWARD` | 5 / 10 / 13칸 |
@@ -60,10 +60,10 @@
 | 조우 | `ENCOUNTER_AMBUSH`, `ENCOUNTER_IGNORE`, `ENCOUNTER_EVADE`, `ENCOUNTER_DECEIVE`, `ENCOUNTER_FIGHT` | 0 / 0 / 1 / 0 / 0 또는 3칸 |
 | 장비 | `EQUIP_ITEM`, `UNEQUIP_ITEM`(맵에서) | 건당 `MAP_EQUIP_TIME_COST` = 3칸 |
 | 소모품 | `USE_MAP_CONSUMABLE` | `MAP_CONSUMABLE_TIME_COST` = 2칸 |
-| 탈출 | `REQUEST_EXTRACTION` | 3칸 + 개방 대기 |
+| 탈출 | `REQUEST_EXTRACTION` | 탈출구 가동 18~8칸(Hacking) |
 | 과부화 | `TOGGLE_OVERLOAD` | 0칸 |
 
-시간이 드는 행동은 전부 **예약 → 칸별 진행 → 완료 시각에 한 번에 확정**이다. 자세한 처리 순서는 [03 맵 시간과 마감](./03-map-time-and-deadlines.md).
+이동을 뺀 모든 유료 행동은 **1칸으로 가동 → 그 자리에서 대기로 게이지 채우기 → 완료 시각에 한 번에 확정**이다. 위 표의 칸 수는 전체 소요이고, 자리를 뜨면 작업을 포기한다. 자세한 처리 순서는 [03 맵 시간과 마감](./03-map-time-and-deadlines.md).
 
 ### 5단계 — 전투와 보상
 
@@ -75,7 +75,7 @@
 ### 6단계 — 탈출과 정산
 
 - 탈출 판정은 **유료 행동이 끝나는 칸**에 한 번 한다(`isAtOpenExit`, `src/engine/runEngine.js`). 열린 출구 위에 있으면 같은 칸의 도착 조우보다 탈출이 우선한다.
-- 탈출하면 `extractionComplete`, HP 0 또는 시각 `RUN_COLLAPSE_TIME` = 490 도달이면 `gameOver`.
+- 탈출하면 `extractionComplete`, HP 0 또는 시각 `RUN_COLLAPSE_TIME` = 50 도달이면 `gameOver`.
 - 회수 점수 = 인벤토리에 든 아이템의 `value` 합 + 계약 결과(`computeInventoryScore` + `computeContractOutcome`).
   - 계약 완료: `completionRewardValue`를 더한다(회수 계약은 물건 자체의 값으로 이미 반영되므로 0).
   - 미완수: `penaltyValue`를 뺀다. 미완수 탈출도 생존으로는 성공이다.
