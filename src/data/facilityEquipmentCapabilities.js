@@ -35,7 +35,7 @@ export const MAP_EQUIPMENT_CAPABILITIES = {
   sniper_rifle: {
     capabilityModifiers: { perception: 1, mobility: -1 },
     fieldAction: {
-      kind: 'camera_snipe', timeCost: CAMERA_SNIPE_TIME, cooldown: 15, duration: null,
+      kind: 'camera_snipe', timeCost: CAMERA_SNIPE_TIME, cooldown: 30, duration: null,
       range: CAMERA_SNIPE_RANGE, targetKind: 'electronic_device', deviceKinds: ['camera'],
     },
   },
@@ -49,19 +49,19 @@ export const MAP_EQUIPMENT_CAPABILITIES = {
   module_forcefield: {
     capabilityModifiers: { hacking: -1 },
     fieldAction: {
-      kind: 'temporary_barrier', timeCost: 5, cooldown: 15, duration: 10, range: 1, targetKind: 'edge',
+      kind: 'temporary_barrier', timeCost: 5, cooldown: 30, duration: 10, range: 1, targetKind: 'edge',
     },
   },
   module_spatial: {
     capabilityModifiers: { perception: 2 },
     fieldAction: {
-      kind: 'snapshot_scan', timeCost: 5, cooldown: 15, duration: null, range: 2, targetKind: 'node_contents',
+      kind: 'snapshot_scan', timeCost: 5, cooldown: 30, duration: null, range: 2, targetKind: 'node_contents',
     },
   },
   module_emp: {
     capabilityModifiers: { hacking: 2, deception: 1, perception: -1 },
     fieldAction: {
-      kind: 'remote_intrusion', timeCost: 5, cooldown: 15, duration: 10, range: 2, targetKind: 'electronic_device',
+      kind: 'remote_intrusion', timeCost: 5, cooldown: 30, duration: 10, range: 2, targetKind: 'electronic_device',
     },
   },
   // C4: 가속에는 소리가 따른다 — 기동 +2의 대가로 은신 -1.
