@@ -650,14 +650,24 @@ export const PERCEPTION_INFO_TABLE = [
   { level: 5, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'evidence'] },
 ];
 
-// 장치(카메라·접속 인터페이스·발전기)와 현장 기회의 **존재**는 이 표에 없다. 관측이 닿기만 하면
-// 깊이와 무관하게 관측 기록의 `contents`에 적힌다(runEngine.observedNodeContents) — 방 안에
+// 장치(카메라·접속 인터페이스·발전기)와 현장 기회의 **존재**는 이 표에 없다. **값을 치른**
+// 관측이 닿기만 하면 Perception 깊이와 무관하게 관측 기록의 `contents`에 적힌다 — 방 안에
 // 무엇이 놓여 있는지까지 Perception으로 가리면 "정찰은 무엇을 사는가"가 읽히지 않는다.
 // Perception이 가르는 것은 그 다음의 깊이뿐이다: 위협 상세, 확보 대상의 등급·역할축, 은엄폐 값.
+//
+// 다만 "값을 치른"이 조건이다. 공짜 인접 시야는 내용물을 적지 않고 위협 유무만 적는다
+// (FREE_OBSERVATION_DETAIL_LEVEL) — 내용물은 정찰·집중 투시·카메라·인터페이스가 파는 것이다.
+// 서 있는 노드만은 공짜로도 내용물이 보인다: 그 방 안에 서 있기 때문이다.
 
-// 무료 인접 관측은 Perception과 무관하게 이 깊이로 고정이다 — 유무와 규모까지. 값을 치르지 않고
-// 얻는 정보가 빌드에 따라 달라지면 "정찰을 할 것인가"라는 결정 자체가 흐려진다.
-export const FREE_OBSERVATION_DETAIL_LEVEL = 1;
+// 무료 인접 관측은 Perception과 무관하게 이 깊이로 고정이다 — **유무까지**, 그 이상은 없다.
+// 공짜 시야가 말해 주는 것은 "저기 무언가 있다" 하나뿐이고, 방 안에 무엇이 놓여 있는지(현장
+// 기회·장치)와 그 너머의 깊이는 전부 값을 치러야 산다: 정찰, 집중 투시, 해킹한 카메라,
+// 접속 인터페이스. 값을 치르지 않고 얻는 정보가 빌드에 따라 달라지면 "정찰을 할 것인가"라는
+// 결정 자체가 흐려지므로 Perception도 타지 않는다.
+//
+// 서 있는 노드는 예외다 — 발로 딛고 선 방은 다 보이므로 내용물과 출구 상태를 깊이 1로 적는다
+// (runEngine.refreshLocalObservations). 이 상수가 정하는 것은 **인접** 노드의 깊이다.
+export const FREE_OBSERVATION_DETAIL_LEVEL = 0;
 
 // 이 수치 이상이면 대기 중에도 인접 1홉의 실시간 관측이 끊기지 않는다(대기 관측 차단의 예외).
 export const PERCEPTION_WAIT_OBSERVATION_MIN = 2;

@@ -97,9 +97,13 @@ test('위협 정보는 관측 깊이만큼만 읽힌다 — 없는 항목은 nul
   assert.equal(shallow.size, null, '깊이 0은 유무만이다');
   assert.equal(shallow.mode, null);
 
+  // 공짜 인접 시야는 깊이 0이다 — 규모도 모드도 읽히지 않는다.
   const free = at(FREE_OBSERVATION_DETAIL_LEVEL);
-  assert.equal(free.size, threat.size, '무료 인접 관측은 규모까지');
-  assert.equal(free.mode, null, '모드는 Perception 1부터');
+  assert.equal(FREE_OBSERVATION_DETAIL_LEVEL, 0);
+  assert.equal(free.size, null, '무료 인접 관측은 유무까지다');
+  assert.equal(free.mode, null);
+  // 규모는 서 있는 자리(깊이 1)나 Perception 0 이상의 정찰부터 읽힌다.
+  assert.equal(at(1).size, threat.size, '규모는 깊이 1부터');
 
   assert.equal(at(2).mode, threat.mode);
   assert.equal(at(2).alert, null);
@@ -128,11 +132,29 @@ test('다음 이동까지 남은 칸은 Perception 2의 깊이로 본 위협에�
   assert.deepEqual(observableThreatMoves(shallow).map((t) => t.interval), [null]);
 });
 
-test('무료 인접 관측의 깊이는 Perception과 무관하게 고정이다', () => {
+test('무료 시야는 서 있는 자리와 옆방을 가른다 — 옆방은 유무까지, Perception을 타지 않는다', () => {
   const run = makeRun(1);
+  const adjacentIds = run.graph.edges
+    .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
+    .map((e) => (e.from === run.playerNodeId ? e.to : e.from));
+  assert.ok(adjacentIds.length > 0);
+
   for (const perception of [-2, 0, 4]) {
     const refreshed = refreshLocalObservations(run, perception);
-    assert.equal(refreshed.observations[run.playerNodeId].detailLevel, FREE_OBSERVATION_DETAIL_LEVEL);
+
+    // 서 있는 자리 — 방 안에 있으므로 내용물과 깊이 1을 얻는다.
+    const here = refreshed.observations[run.playerNodeId];
+    assert.equal(here.detailLevel, 1, '서 있는 자리는 깊이 1이다');
+    assert.ok(here.contents, '서 있는 자리의 내용물은 보인다');
+
+    // 옆방 — "무언가 있다"까지다. 내용물도 출구 상태도 적히지 않는다.
+    for (const nodeId of adjacentIds) {
+      const there = refreshed.observations[nodeId];
+      assert.equal(there.detailLevel, FREE_OBSERVATION_DETAIL_LEVEL, '옆방의 깊이는 Perception을 타지 않는다');
+      assert.equal(there.contents, undefined, '공짜 시야는 방 안을 읽지 않는다');
+      assert.equal(there.exitStatus, undefined, '출구 상태도 공짜로는 읽히지 않는다');
+      assert.equal(typeof there.hasThreat, 'boolean', '위협 유무만은 보인다');
+    }
   }
 });
 

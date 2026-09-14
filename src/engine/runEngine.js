@@ -290,15 +290,27 @@ export function refreshLocalObservations(run, effectivePerception = 0) {
     // concealment 같은 항목이 바로 다음 행동의 이 갱신에서 지워져, 정찰 산출이 0이 되고
     // 은엄폐 버튼(scouted 조건)이 영영 뜨지 않는다. 이 함수는 "시야에 든 노드의 최신
     // 위협·출구 상태"만 덮어쓰는 책임이다.
-    observations = mergeObservation(observations, nodeId, {
-      observedAt: run.time,
-      hasThreat: threatNodeIds.has(nodeId),
-      exitStatus: exit?.kind === 'standard' ? exit.status : undefined,
-      // 무료 인접 관측의 깊이는 Perception과 무관하게 고정이다 — 유무와 규모까지.
-      detailLevel: FREE_OBSERVATION_DETAIL_LEVEL,
-      // 내용물(현장 기회·장치)은 깊이와 무관하게 관측이 닿으면 기록된다.
-      contents: nodeContentsAt(run, nodeId),
-    });
+    //
+    // 서 있는 자리와 옆방은 다르다. 발로 딛고 선 노드는 방 안에 무엇이 있는지 다 보이므로
+    // 내용물과 출구 상태를 깊이 1로 적는다. 인접 노드는 **거기 무언가 있다**까지다 — 공짜
+    // 시야가 방 안까지 읽어 주면 정찰·투시·카메라가 무엇을 파는지가 읽히지 않는다.
+    if (nodeId === run.playerNodeId) {
+      observations = mergeObservation(observations, nodeId, {
+        observedAt: run.time,
+        hasThreat: threatNodeIds.has(nodeId),
+        exitStatus: exit?.kind === 'standard' ? exit.status : undefined,
+        detailLevel: 1,
+        contents: nodeContentsAt(run, nodeId),
+      });
+    } else {
+      observations = mergeObservation(observations, nodeId, {
+        observedAt: run.time,
+        hasThreat: threatNodeIds.has(nodeId),
+        // 공짜로 얻는 정보의 깊이는 Perception과 무관하게 0으로 고정이다 — 빌드에 따라
+        // 달라지면 "정찰을 할 것인가"라는 결정 자체가 흐려진다.
+        detailLevel: FREE_OBSERVATION_DETAIL_LEVEL,
+      });
+    }
   }
   return { ...run, observations };
 }
@@ -1428,7 +1440,12 @@ const TASK_COMPLETIONS = {
         const h = hops.get(node.id);
         // 스캔은 "지금 그 자리에 위협이 있는가"만 새로 안다. 정찰이 적어둔 은엄폐·확보 대상
         // 등급까지 지우면 안 되므로 병합한다(리뷰 A6).
-        if (h !== undefined && h <= range) observations = mergeObservation(observations, node.id, { observedAt: state.time, hasThreat: threatNodes.has(node.id) });
+        // 값을 치른 관측이므로 내용물도 적는다 — 내용물 없이 남는 관측은 공짜 인접 시야뿐이다.
+        if (h !== undefined && h <= range) {
+          observations = mergeObservation(observations, node.id, {
+            observedAt: state.time, hasThreat: threatNodes.has(node.id), contents: nodeContentsAt(state, node.id),
+          });
+        }
       }
       next = { ...next, observations };
     } else if (kind === 'remote_intrusion') {
