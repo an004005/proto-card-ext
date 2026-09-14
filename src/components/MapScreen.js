@@ -14,7 +14,7 @@ import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
 import { mapViewSignal, mapDebugRevealSignal, DEFAULT_MAP_VIEW } from '../state/mapViewState.js';
 import { computeCapabilities, listFieldActiveEquipment } from '../engine/capabilityEngine.js';
-import { bfsHopDistances } from '../engine/graphUtils.js';
+import { bfsHopDistances, bfsHopDistancesOverArcs, isEdgeUnlocked } from '../engine/graphUtils.js';
 import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
@@ -29,6 +29,7 @@ import { getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
   SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR,
   CONTRACT_DETONATE_MIN_HOPS, HIGH_GROUND_MOBILITY_REQUIREMENT,
+  CAMERA_SNIPE_NOISE, CAMERA_SNIPE_AMMO_COST,
 } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
 import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE, CAPABILITY_KOREAN } from '../data/capabilityDisplay.js';
@@ -54,7 +55,7 @@ import {
   PRIZE_OPTION_COUNT, CAMERA_HACK_DURATION, WAIT_BATCH_MAX_TICKS,
 } from '../data/facilityLayout.js';
 
-const FIELD_ACTION_LABELS = { snapshot_scan: '집중 투시', temporary_barrier: '임시 장벽', remote_intrusion: '원격 침투' };
+const FIELD_ACTION_LABELS = { snapshot_scan: '집중 투시', temporary_barrier: '임시 장벽', remote_intrusion: '원격 침투', camera_snipe: '카메라 저격' };
 
 /** 특수 엣지 feature의 표시 이름. `blocked`/`electronic` 같은 코드 키가 그대로 화면에 나오면
  * 플레이어는 그 통로를 무엇으로 여는지 읽을 수 없다. */
@@ -178,6 +179,8 @@ function countedNames(names) {
 }
 
 const FIELD_TARGET_LABELS = { edge: '엣지(통로) 지정', node_contents: '주변 노드 파악', electronic_device: '전자 장치 지정' };
+/** camera_snipe처럼 deviceKinds로 좁힌 행동은 무엇을 겨누는지 그대로 적는다. */
+const FIELD_DEVICE_LABELS = { camera: '카메라 지정', accessInterface: '접속 인터페이스 지정' };
 
 /**
  * 고지대 통로 한 줄 — 이 통로가 지금 내 Mobility로 공짜인지, HP 몇을 받는지, 아예 못 넘는지.
@@ -430,6 +433,23 @@ function nodeBodyShape(type, x, y, attrs) {
 function candidateNodesInRange(graph, fromId, range) {
   const hops = bfsHopDistances(graph.edges, fromId);
   return graph.nodes.filter((n) => { const h = hops.get(n.id); return h !== undefined && h > 0 && h <= range; });
+}
+
+/**
+ * camera_snipe 대상 후보: 시야(잠긴 통로가 끊고 일방통행은 생성 방향만) 안의, 아직 부수지 않은
+ * 카메라. 엔진의 판정(runEngine.lineOfSightHops)과 같은 기준이어야 버튼이 거짓말을 하지 않는다.
+ */
+function candidateCamerasInSight(run, range) {
+  const arcs = [];
+  for (const edge of run.graph.edges) {
+    if (!isEdgeUnlocked(edge, run.openedEdgeIds)) continue;
+    arcs.push({ from: edge.from, to: edge.to });
+    if (!edge.features.includes('oneWay')) arcs.push({ from: edge.to, to: edge.from });
+  }
+  const hops = bfsHopDistancesOverArcs(arcs, run.playerNodeId);
+  return run.graph.cameras
+    .filter((camera) => !(run.disabledCameraIds || []).includes(camera.id))
+    .filter((camera) => { const h = hops.get(camera.nodeId); return h !== undefined && h <= range; });
 }
 
 /** temporary_barrier 대상 후보: 두 끝점 중 하나라도 사거리 내에 있는 엣지. */
@@ -2043,10 +2063,12 @@ export function MapScreen() {
                         };
                         return html`
                           <${ActionButton}
-                            key=${eq.instanceId} run=${run} actionId="fieldEquipment" opts=${{ contract: fa }}
+                            key=${eq.instanceId} run=${run}
+                            actionId=${fa.kind === 'camera_snipe' ? 'cameraSnipe' : 'fieldEquipment'}
+                            opts=${fa.kind === 'camera_snipe' ? { value: capabilities.perception } : { contract: fa }}
                             disabled=${disabled}
                             label=${`${label} 사용${needsTarget ? '…' : ''}`}
-                            tip=${`${EQUIPMENT_DEFS[eq.equipmentId]?.name || eq.equipmentId} 능동 효과. ${FIELD_TARGET_LABELS[fa.targetKind] || fa.targetKind}. 재사용 대기 ${fa.cooldown}칸${fa.duration ? `, 지속 ${fa.duration}칸` : ''}.${fa.targetKind === 'edge' ? ' 지도에서 강조된 엣지를 직접 클릭해 지정할 수 있습니다.' : ''}`}
+                            tip=${`${EQUIPMENT_DEFS[eq.equipmentId]?.name || eq.equipmentId} 능동 효과. ${(fa.deviceKinds || []).map((k) => FIELD_DEVICE_LABELS[k]).filter(Boolean).join('·') || FIELD_TARGET_LABELS[fa.targetKind] || fa.targetKind}. 재사용 대기 ${fa.cooldown}칸${fa.duration ? `, 지속 ${fa.duration}칸` : ''}.${fa.kind === 'camera_snipe' ? ` 시야 ${fa.range}홉 안의 카메라를 영구히 부숩니다 — 총성(소음 ${CAMERA_SNIPE_NOISE})은 지금 서 있는 자리에서 나고 파편(강한 흔적)은 카메라 자리에 남으며, 예비탄 ${CAMERA_SNIPE_AMMO_COST}발을 씁니다.` : ''}${fa.targetKind === 'edge' ? ' 지도에서 강조된 엣지를 직접 클릭해 지정할 수 있습니다.' : ''}`}
                             disabledNote=${onCooldown ? `재사용 대기 중 — ${leftTicksText(run.fieldCooldowns[eq.instanceId] || 0, run.time)}.` : ''}
                             onClick=${handleClick}
                           />
@@ -2070,13 +2092,22 @@ export function MapScreen() {
                   ${fieldPicker ? html`
                     <div style=${{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', border: '1px solid var(--color-divider)', padding: 'var(--space-2)', fontSize: '11px' }}>
                       <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong>${fieldPicker.contract.fieldAction.targetKind === 'edge'
+                        <strong>${fieldPicker.contract.fieldAction.kind === 'camera_snipe'
+                          ? `대상 카메라 선택 (시야 ${fieldPicker.contract.fieldAction.range}홉 — 잠긴 통로 너머는 보이지 않습니다)`
+                          : fieldPicker.contract.fieldAction.targetKind === 'edge'
                           ? `대상 엣지 선택 (사거리 ${fieldPicker.contract.fieldAction.range}) — 지도의 강조된 선 클릭`
                           : `대상 노드 선택 (사거리 ${fieldPicker.contract.fieldAction.range})`}</strong>
                         <button class="btn btn-secondary" style=${{ fontSize: '10px', padding: '2px 7px' }} onClick=${() => setFieldPicker(null)}>취소</button>
                       </div>
                       <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                        ${fieldPicker.contract.fieldAction.targetKind === 'edge'
+                        ${fieldPicker.contract.fieldAction.kind === 'camera_snipe'
+                          ? candidateCamerasInSight(run, fieldPicker.contract.fieldAction.range).map((camera) => html`
+                            <button key=${camera.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
+                              onClick=${() => runCommand({ type: 'USE_FIELD_EQUIPMENT', instanceId: fieldPicker.instanceId, targetId: camera.id })}>
+                              ${whereIs(camera.nodeId)} — ${DEVICE_STATUS_LABELS.camera[deviceStatus(run, { ...camera, kind: 'camera' })]}
+                            </button>
+                          `)
+                          : fieldPicker.contract.fieldAction.targetKind === 'edge'
                           ? candidateEdgesInRange(run.graph, run.playerNodeId, fieldPicker.contract.fieldAction.range).map((edge) => html`
                             <button key=${edge.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
                               onClick=${() => runCommand({ type: 'USE_FIELD_EQUIPMENT', instanceId: fieldPicker.instanceId, targetId: edge.id })}>

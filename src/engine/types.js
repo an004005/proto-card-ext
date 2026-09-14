@@ -340,6 +340,9 @@
  * @property {number} pendingHpLoss Capability 층계(D8)가 물린 HP 대가 중 아직 playerState에
  *   반영되지 않은 몫. HP는 facilityRunState 바깥이라 여기 쌓아두고 facilityReducer가 정산한다.
  * @property {number} pendingDurabilityLoss 같은 이유로 쌓아두는 장비 내구도 대가.
+ * @property {number} [pendingAmmoSpend] 같은 청구서 경로의 탄약 — 카메라 저격이 완료 시각에 쌓고,
+ *   커맨드 래퍼(facilityReducer.settleCapabilityDues)가 인벤토리에서 뺀다. 맵에는 '장전된 탄'이 없어
+ *   예비탄에서 바로 나간다(전투의 loaded는 전투 시작 때 인벤토리 탄약으로 만들어진다).
  *   3개(§5단계, D11). 고르기 전에는 아무것도 인벤토리에 들어오지 않는다.
  * @property {PendingTask|null} pendingTask 예약해 둔 현장 작업. 시작 시점에는 아무 효과도 없고,
  *   `completesAt` 칸 경계에서 종류별 완료 적용이 한 번에 확정된다.

@@ -56,6 +56,34 @@ export function bfsHopDistances(edges, fromId) {
 }
 
 /**
+ * 방향 호 목록 위의 BFS 홉수. bfsHopDistances와 달리 호가 방향을 가지므로, 일방통행을 역방향으로
+ * 세지 않는 판정(카메라 저격의 시야)이 쓴다.
+ * @param {{from: string, to: string}[]} arcs
+ * @param {string} fromId
+ * @returns {Map<string, number>} nodeId -> hop count
+ */
+export function bfsHopDistancesOverArcs(arcs, fromId) {
+  /** @type {Map<string, string[]>} */
+  const adjacency = new Map();
+  for (const arc of arcs) {
+    if (!adjacency.has(arc.from)) adjacency.set(arc.from, []);
+    /** @type {string[]} */ (adjacency.get(arc.from)).push(arc.to);
+  }
+  const distances = new Map([[fromId, 0]]);
+  const queue = [fromId];
+  while (queue.length > 0) {
+    const current = /** @type {string} */ (queue.shift());
+    const currentDistance = /** @type {number} */ (distances.get(current));
+    for (const neighbor of adjacency.get(current) || []) {
+      if (distances.has(neighbor)) continue;
+      distances.set(neighbor, currentDistance + 1);
+      queue.push(neighbor);
+    }
+  }
+  return distances;
+}
+
+/**
  * Capability 0이 아무것도 열지 않고 실제로 걸어갈 수 있는 간선만으로 잰 가중 최단거리. 판정은
  * runEngine.isEdgeTraversable(개방 없음, 유효 Mobility 0)과 같다 — 잠긴 통로(차단·전자)와
  * 고지대(유효 Mobility 3 필요)는 없는 길로 치고, 일방통행은 생성 방향으로만 지난다. 방향에 따라

@@ -19,6 +19,7 @@ import {
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   CAMERA_HACK_TIME, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
+  CAMERA_SNIPE_TIME, CAMERA_SNIPE_NOISE, CAMERA_SNIPE_REQUIREMENT,
   GENERATOR_HACK_TIME, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
   CONTROL_ROOM_HACK_TIME,
   CONTRACT_ACQUIRE_TIME, CONTRACT_DESTROY_TIME,
@@ -192,6 +193,15 @@ export const ACTION_SPECS = {
   hackInterface: { label: '접속 인터페이스 해킹', capability: 'hacking', base: () => ({ time: CAMERA_HACK_TIME }) },
   hackCamera: { label: '카메라 해킹', capability: 'hacking', base: () => ({ time: CAMERA_HACK_TIME }) },
   destroyCamera: { label: '카메라 파괴', capability: 'force', base: () => ({ time: CAMERA_FORCE_TIME, noise: CAMERA_FORCE_NOISE }) },
+  // 카메라 저격 — Perception은 자기 통화가 없어 시간으로만 받는다. 흔적 정리와 달리 수치별
+  // 기준표가 없으므로 표준 층계 가감(strained +2 / severe +4)을 그대로 쓴다. 요구치 2라
+  // Perception -1 이하가 불가 구간이다.
+  cameraSnipe: {
+    label: '카메라 저격',
+    capability: 'perception',
+    required: () => CAMERA_SNIPE_REQUIREMENT,
+    base: () => ({ time: CAMERA_SNIPE_TIME, noise: CAMERA_SNIPE_NOISE }),
+  },
   disableGeneratorHack: { label: '발전기 해킹 무력화', capability: 'hacking', base: () => ({ time: GENERATOR_HACK_TIME }) },
   disableGeneratorForce: { label: '발전기 파괴', capability: 'force', base: () => ({ time: GENERATOR_FORCE_TIME, noise: GENERATOR_FORCE_NOISE }) },
   controlRoom: { label: '통제실 장악', capability: 'hacking', base: () => ({ time: CONTROL_ROOM_HACK_TIME }) },

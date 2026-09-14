@@ -112,7 +112,6 @@ test('axisOfEquipment가 실제 장비 데이터를 순합 기준으로 분류�
   // 한쪽을 주고 한쪽을 뺏는 장비(순합 0)는 경로의 대가를 줄이지 못하므로 전투 축이다.
   assert.equal(axisOfEquipment('shotgun'), 'combat');          // force +1 / stealth -1
   assert.equal(axisOfEquipment('rocket_launcher'), 'combat');  // force +1 / stealth -1
-  assert.equal(axisOfEquipment('sniper_rifle'), 'combat');     // perception +1 / mobility -1
   assert.equal(axisOfEquipment('heavy_top'), 'combat');
   assert.equal(axisOfEquipment('heavy_bottom'), 'combat');
   assert.equal(axisOfEquipment('rifle'), 'combat');            // 수정치 없음
@@ -124,6 +123,8 @@ test('axisOfEquipment가 실제 장비 데이터를 순합 기준으로 분류�
   assert.equal(axisOfEquipment('implant2'), 'infiltration');          // perception +1
   // 순합은 -1이지만 현장 도구를 주므로 침투 축이다.
   assert.equal(axisOfEquipment('module_forcefield'), 'infiltration');
+  // 저격총도 같다 — 순합 0(perception +1 / mobility -1)이지만 카메라 저격이라는 현장 행동을 준다.
+  assert.equal(axisOfEquipment('sniper_rifle'), 'infiltration');
   // ⑦ 지도는 Capability 수치도 현장 행동도 주지 않지만 맵 정보를 준다 — 표의 mapInfoEffect가
   // 그 사실을 밝히므로 규칙만으로 침투 축이 된다(예외 목록이라는 두 번째 진실 없이, 리뷰 A8).
   assert.equal(axisOfEquipment('implant7'), 'infiltration');

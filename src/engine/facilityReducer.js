@@ -18,7 +18,7 @@ import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngin
 import { applyDurabilityDecay, MAX_DURABILITY } from './equipmentEngine.js';
 import { rollLootDurability } from './rewardEngine.js';
 import { rollSupplyLoot } from './fieldLoot.js';
-import { addItem, createItem, addAmmo, removeItem } from './inventoryEngine.js';
+import { addItem, createItem, addAmmo, removeItem, getUsableAmmo, spendAmmo } from './inventoryEngine.js';
 import { startCombat } from './combatReducer.js';
 import { equipItem, unequipItem, unequipImplant, unequipConsumable } from './inventoryReducer.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
@@ -114,10 +114,15 @@ function isBlockedByEncounter(snapshot) {
 function settleCapabilityDues(run, playerState) {
   const hpLoss = run.pendingHpLoss || 0;
   const durabilityLoss = run.pendingDurabilityLoss || 0;
-  if (!hpLoss && !durabilityLoss) return { run, playerState };
+  const ammoSpend = run.pendingAmmoSpend || 0;
+  if (!hpLoss && !durabilityLoss && !ammoSpend) return { run, playerState };
 
   let next = playerState;
   if (hpLoss) next = { ...next, hp: Math.max(0, next.hp - hpLoss) };
+  // 맵에는 '장전된 탄'이 없다 — 전투의 loaded는 전투 시작 때 인벤토리 탄약으로 만들어지는
+  // 값이므로, 맵 행동(카메라 저격)은 예비탄에서 바로 뺀다. 시작 시점에 탄이 있는지는
+  // useFieldEquipment가 이미 확인했다.
+  if (ammoSpend) next = { ...next, inventory: spendAmmo(next.inventory, Math.min(ammoSpend, getUsableAmmo(next.inventory))) };
   if (durabilityLoss) {
     const tool = next.loadout.weapons?.[0] || next.loadout.top || next.loadout.bottom || next.loadout.modules?.[0];
     // 깎을 장비가 하나도 없으면 그냥 넘어간다 — 맨손으로 뜯었으면 부러질 연장도 없다.
@@ -130,7 +135,7 @@ function settleCapabilityDues(run, playerState) {
       next = { ...next, loadout: decayed.loadout, inventory };
     }
   }
-  return { run: { ...run, pendingHpLoss: 0, pendingDurabilityLoss: 0 }, playerState: next };
+  return { run: { ...run, pendingHpLoss: 0, pendingDurabilityLoss: 0, pendingAmmoSpend: 0 }, playerState: next };
 }
 
 /**
@@ -576,7 +581,12 @@ export function useFieldEquipmentCommand(snapshot, instanceId, targetId) {
   const active = listFieldActiveEquipment(snapshot.playerState.loadout);
   const entry = active.find((e) => e.instanceId === instanceId);
   if (!entry) return snapshot;
-  return withFacilityRunState(snapshot, (run) => useFieldEquipment(run, instanceId, entry.contract.fieldAction, targetId));
+  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const usableAmmo = getUsableAmmo(snapshot.playerState.inventory);
+  return withFacilityRunState(snapshot, (run) => useFieldEquipment(
+    run, instanceId, entry.contract.fieldAction, targetId,
+    { effectivePerception: capabilities.perception, usableAmmo },
+  ));
 }
 
 // ---- §신규 조우 시스템: 판정 결과에 대한 플레이어 선택 ----

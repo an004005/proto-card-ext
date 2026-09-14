@@ -12,7 +12,7 @@
 
 import { createRngState, pick } from './rng.js';
 import { RuleViolation } from './errors.js';
-import { bfsHopDistances, buildAdjacency, isEdgeUnlocked } from './graphUtils.js';
+import { bfsHopDistances, bfsHopDistancesOverArcs, buildAdjacency, isEdgeUnlocked } from './graphUtils.js';
 import { effectiveForRequirement } from './capabilityEngine.js';
 import { capabilityStep, resolveCapabilityCost } from './capabilityCosts.js';
 import { requireActionCost, forecastAction, actionTimeCost, moveTimeCost } from './actionCosts.js';
@@ -29,6 +29,7 @@ import {
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   CAMERA_STEALTH_THRESHOLD, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME,
   CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
+  CAMERA_SNIPE_AMMO_COST,
   MOBILITY_MOVE_TIME_DELTA, MOVE_MIN_TIME,
   GENERATOR_HACK_TIME, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
   CONCEALMENT_ACTION_TIME_COST, HALL_STEALTH_PENALTY, CONTROL_ROOM_HACK_TIME,
@@ -1408,6 +1409,26 @@ const TASK_COMPLETIONS = {
       next = reportFalseTarget(next, targetId, 2, duration ?? 200, next.time);
     } else if (kind === 'temporary_barrier') {
       next = { ...next, activeBarriers: [...next.activeBarriers, { edgeId: targetId, expiresAt: state.time + (duration ?? 0) }] };
+    } else if (kind === 'camera_snipe') {
+      // 파괴는 영구적이다 — Force 파괴(destroyCamera)와 같은 목록에 넣는다.
+      const cameraId = /** @type {string} */ (task.params.cameraId);
+      const cameraNodeId = /** @type {string} */ (task.params.cameraNodeId);
+      const ids = next.disabledCameraIds || [];
+      if (!ids.includes(cameraId)) next = { ...next, disabledCameraIds: [...ids, cameraId] };
+      // 파편은 **카메라 자리**에 남는다(강한 흔적). 총성은 쏜 자리에서 나므로(task.cost.noise,
+      // applyTaskCost가 task.nodeId에 낸다) 소음과 흔적이 서로 다른 노드를 가리킨다 — 그것이
+      // 이 행동의 값이다: 조사하러 오는 곳과 증거가 있는 곳이 갈린다.
+      next = {
+        ...next,
+        evidence: [...next.evidence, {
+          id: idForNewEntry(next, next.evidence, 'evidence'),
+          nodeId: cameraNodeId,
+          tier: /** @type {2} */ (2),
+          createdBySectorId: sectorOfNode(cameraNodeId),
+        }],
+      };
+      // 탄약은 커맨드 래퍼가 playerState.inventory에서 정산한다(HP·내구도와 같은 청구서 경로).
+      next = { ...next, pendingAmmoSpend: (next.pendingAmmoSpend || 0) + CAMERA_SNIPE_AMMO_COST };
     }
     return { ...next, fieldCooldowns: { ...next.fieldCooldowns, [instanceId]: state.time + cooldown } };
   },
@@ -1989,6 +2010,26 @@ export function cameraHackRange(effectiveHacking) {
   return CAMERA_HACK_RANGE_BY_HACKING[Math.max(-2, Math.min(4, effectiveHacking)) + 2];
 }
 
+/**
+ * 카메라 저격의 "시야" — 현재 노드에서 실제로 총알이 지나갈 수 있는 통로만 따라 센 홉수다.
+ * 해킹 사거리(canReachHackingTarget)가 무향 그래프를 그대로 쓰는 것과 다르다: 총알은 신호와
+ * 달리 문을 돌아가지 못하므로, 아직 열지 않은 잠긴 통로(차단·전자)는 시야를 끊고 일방통행은
+ * 생성 방향으로만 지난다. 이미 연 통로는 열린 문이므로 시야가 통한다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} fromNodeId
+ * @returns {Map<string, number>}
+ */
+function lineOfSightHops(state, fromNodeId) {
+  /** @type {{from: string, to: string}[]} */
+  const arcs = [];
+  for (const edge of state.graph.edges) {
+    if (!isEdgeUnlocked(edge, state.openedEdgeIds)) continue;
+    arcs.push({ from: edge.from, to: edge.to });
+    if (!edge.features.includes('oneWay')) arcs.push({ from: edge.to, to: edge.from });
+  }
+  return bfsHopDistancesOverArcs(arcs, fromNodeId);
+}
+
 /** Whether a hacking target is reachable directly, or through the hacked interface at this node. */
 function canReachHackingTarget(state, targetNodeId, effectiveHacking) {
   if (capabilityStep(effectiveHacking) === 'impossible') return false;
@@ -2353,10 +2394,13 @@ export function selectFarmReward(state, optionIndex) {
  * @param {import('./types.js').FacilityRunState} state
  * @param {string} instanceId 장비 인스턴스 id — 쿨다운 키.
  * @param {import('../data/facilityEquipmentCapabilities.js').MapEquipmentContract['fieldAction']} contract
- * @param {string} [targetId] snapshot_scan은 불필요, remote_intrusion은 대상 노드, temporary_barrier는 대상 엣지.
+ * @param {string} [targetId] snapshot_scan은 불필요, remote_intrusion은 대상 노드,
+ *   temporary_barrier는 대상 엣지, camera_snipe는 대상 카메라 id.
+ * @param {{effectivePerception?: number, usableAmmo?: number}} [opts] 카메라 저격처럼 플레이어 쪽
+ *   자원(Perception 층계·탄약)을 보는 행동이 쓰는 값. 커맨드 래퍼가 채운다.
  * @returns {import('./types.js').FacilityRunState}
  */
-export function useFieldEquipment(state, instanceId, contract, targetId) {
+export function useFieldEquipment(state, instanceId, contract, targetId, opts = {}) {
   if (state.phase !== 'active') throw new RuleViolation('run already ended');
   if (!state.playerNodeId) throw new RuleViolation('player is not at a node');
   if (!contract) throw new RuleViolation(`${instanceId} has no active field effect`);
@@ -2365,6 +2409,28 @@ export function useFieldEquipment(state, instanceId, contract, targetId) {
 
   // 대상·사거리는 **시작 전에** 확정한다(불가 요청은 0칸). 실제 효과와 쿨다운은 전부
   // 완료 시각에 생긴다 — 중단되면 아무것도 남지 않고 쿨다운도 돌지 않는다.
+  if (contract.kind === 'camera_snipe') {
+    if (!targetId) throw new RuleViolation('camera_snipe requires a target camera');
+    const camera = state.graph.cameras.find((entry) => entry.id === targetId);
+    if (!camera) throw new RuleViolation(`unknown camera ${targetId}`);
+    if ((state.disabledCameraIds || []).includes(camera.id)) throw new RuleViolation(`camera ${camera.id} is already destroyed`);
+    const hop = lineOfSightHops(state, state.playerNodeId).get(camera.nodeId);
+    if (hop === undefined || hop > contract.range) throw new RuleViolation(`camera ${camera.id} is out of line of sight for camera_snipe`);
+    if (opts.usableAmmo !== undefined && opts.usableAmmo < CAMERA_SNIPE_AMMO_COST) {
+      throw new RuleViolation('camera_snipe needs a round to fire');
+    }
+    // 층계 판정과 시간·소음은 cameraSnipe 사양이 낸다 — 불가(Perception -1 이하)는 여기서 던진다.
+    const cost = requireActionCost('cameraSnipe', { value: opts.effectivePerception ?? 0 });
+    return scheduleTask(state, {
+      kind: 'fieldEquipment',
+      timeCost: cost.timeCost,
+      cost,
+      params: {
+        instanceId, kind: contract.kind, range: contract.range, duration: contract.duration,
+        cooldown: contract.cooldown, targetId, cameraId: camera.id, cameraNodeId: camera.nodeId,
+      },
+    });
+  }
   if (contract.kind === 'remote_intrusion') {
     if (!targetId) throw new RuleViolation('remote_intrusion requires a target node');
     if (!state.graph.nodes.some((n) => n.id === targetId)) throw new RuleViolation(`unknown node ${targetId}`);

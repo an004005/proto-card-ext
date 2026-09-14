@@ -305,6 +305,23 @@ export const CAMERA_HACK_DURATION = 15;
 export const CAMERA_HACK_RANGE_BY_HACKING = [0, 0, 0, 1, 2, 3, 4];
 export const CAMERA_FORCE_TIME = 5;
 export const CAMERA_FORCE_NOISE = 2;
+
+// ---- 카메라 저격 (저격총의 현장 행동) ----
+// 원거리·비해킹 빌드에게 카메라를 끄는 수단을 준다. 해킹은 사거리 안에서 잠깐 무력화할 뿐이고
+// Force 파괴는 카메라가 보는 자리에 들어가야 하므로, 저격총(perception +1 / mobility −1)을 든
+// 빌드는 카메라 앞에서 선택지가 없었다.
+//
+// 통화는 Perception이다. Force가 아닌 이유는 둘이다 — Force는 이미 "가서 부순다"의 통화이고,
+// 원거리 파괴의 병목은 힘이 아니라 조준이다. 그리고 Perception이 정보 수단에만 머물면
+// Perception 특화 장비가 능동 행동을 하나도 갖지 못한다.
+export const CAMERA_SNIPE_REQUIREMENT = 2;
+export const CAMERA_SNIPE_TIME = 4;
+/** 총성은 **내 노드**에서 난다 — 위협이 조사하러 오는 곳은 카메라가 아니라 쏜 자리다. */
+export const CAMERA_SNIPE_NOISE = 2;
+/** 사거리는 통로 홉수다. 시야가 없으면 못 쏜다 — 잠긴 통로 너머와 일방통행의 역방향은 불가. */
+export const CAMERA_SNIPE_RANGE = 2;
+/** 장전된 탄은 전투 안에만 있는 개념이라(combatEngine.createCombat), 맵에서는 인벤토리의 예비탄 1발을 쓴다. */
+export const CAMERA_SNIPE_AMMO_COST = 1;
 export const GENERATOR_SECTOR_IDS = ['power', 'labs'];
 export const GENERATOR_HACK_TIME = 5;
 export const GENERATOR_FORCE_TIME = 5;
