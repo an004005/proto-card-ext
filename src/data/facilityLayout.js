@@ -596,16 +596,21 @@ export const APPROACH_MIN_TIME = 1;
 // ---- 기본 맵 행동 (§6.2) ----
 
 export const BASIC_RECON_TIME = 4;
-// 기본 정찰의 표준 홉 범위 — 현재 노드 + 1홉 + 2홉. 무료 인접 실시간 관측(1홉)보다 한 홉 더
-// 보는 것이 정찰이 시간을 쓰는 이유다. 실제 사거리는 Perception이 정한다(PERCEPTION_INFO_TABLE);
-// 이 상수는 Perception 0~2의 값이자 호출부가 수치를 모를 때의 기본값이다.
-export const BASIC_RECON_HOP_RANGE = 2;
+// 기본 정찰의 표준 홉 범위 — 현재 노드 + 1홉. 무료 인접 실시간 관측도 1홉이므로, Perception
+// 0~2에서 정찰이 사는 것은 **사거리가 아니라 깊이**다: 무료 관측이 "무언가 있다"까지라면 정찰은
+// 그 자리의 내용물과 위협 상세를 읽는다. 사거리를 더 사려면 Perception 3 이상이어야 한다
+// (PERCEPTION_INFO_TABLE에서 2홉). 이 상수는 Perception 0~2의 값이자 호출부가 수치를 모를 때의
+// 기본값이다.
+export const BASIC_RECON_HOP_RANGE = 1;
 
 // ---- 정보의 깊이 (ADR-0079 계열, Perception) ----
 //
-// 정찰 비용(4칸)과 표준 사거리(2홉)는 Perception과 무관하게 고정이다. Perception이 정하는 것은
-// 정찰과 무료 인접 관측이 **무엇을** 보여주는가다. 그래서 Perception은 진행을 막지 않고
-// (ADR-0055) 같은 4칸으로 더 깊은 정보를 산다.
+// 정찰 비용(4칸)은 Perception과 무관하게 고정이고, 사거리는 Perception 0~2에서 1홉,
+// 3 이상에서 2홉이다. Perception이 주로 정하는 것은 정찰과 무료 인접 관측이 **무엇을**
+// 보여주는가다. 그래서 Perception은 진행을 막지 않고(ADR-0055) 같은 4칸으로 더 깊은 정보를 산다.
+//
+// Perception 0~2의 사거리 1홉은 무료 인접 관측과 같은 범위다 — 그 구간에서 정찰이 사는 것은
+// 깊이뿐이고, 사거리는 Perception 3부터 늘어난다.
 //
 // index = clamp(실효 Perception, -2, 4) + 2. `level`은 관측 기록에 그대로 박혀(`detailLevel`)
 // UI가 그보다 깊은 것을 렌더하지 못하게 한다 — 나중에 Perception을 올려도 과거 관측이 소급해
@@ -626,15 +631,15 @@ export const PERCEPTION_INFO_TABLE = [
   // -1
   { level: 0, reconHops: 1, threat: ['presence'], extra: [] },
   // 0
-  { level: 1, reconHops: 2, threat: ['presence', 'size'], extra: ['prizeGrade'] },
+  { level: 1, reconHops: 1, threat: ['presence', 'size'], extra: ['prizeGrade'] },
   // 1
-  { level: 2, reconHops: 2, threat: ['presence', 'size', 'mode'], extra: ['prizeGrade', 'prizeAxis'] },
+  { level: 2, reconHops: 1, threat: ['presence', 'size', 'mode'], extra: ['prizeGrade', 'prizeAxis'] },
   // 2
-  { level: 3, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
+  { level: 3, reconHops: 1, threat: ['presence', 'size', 'mode', 'alert', 'nextMove'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
   // 3
-  { level: 4, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
+  { level: 4, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
   // 4
-  { level: 5, reconHops: 3, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'evidence'] },
+  { level: 5, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'evidence'] },
 ];
 
 // 장치(카메라·접속 인터페이스·발전기)와 현장 기회의 **존재**는 이 표에 없다. 관측이 닿기만 하면

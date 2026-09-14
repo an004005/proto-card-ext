@@ -21,15 +21,17 @@ function scout(run, perception) {
   return advanceTime(basicRecon({ ...run, threats: {} }, perception), run.time + BASIC_RECON_TIME);
 }
 
-test('정찰 사거리는 Perception이 정한다 — −1 이하 1홉, 0~2는 2홉, 3 이상은 3홉', () => {
+test('정찰 사거리는 Perception이 정한다 — 2 이하 1홉, 3 이상 2홉', () => {
+  // Perception 2까지는 무료 인접 관측과 같은 1홉이다 — 그 구간에서 정찰이 사는 것은 깊이뿐이고,
+  // 사거리는 Perception 3부터 늘어난다.
   assert.equal(perceptionInfo(-2).reconHops, 1);
   assert.equal(perceptionInfo(-1).reconHops, 1);
-  assert.equal(perceptionInfo(0).reconHops, 2);
-  assert.equal(perceptionInfo(2).reconHops, 2);
-  assert.equal(perceptionInfo(3).reconHops, 3);
-  assert.equal(perceptionInfo(4).reconHops, 3);
+  assert.equal(perceptionInfo(0).reconHops, 1);
+  assert.equal(perceptionInfo(2).reconHops, 1);
+  assert.equal(perceptionInfo(3).reconHops, 2);
+  assert.equal(perceptionInfo(4).reconHops, 2);
   // 표 밖의 값은 양끝으로 자른다.
-  assert.equal(perceptionInfo(9).reconHops, 3);
+  assert.equal(perceptionInfo(9).reconHops, 2);
   assert.equal(perceptionInfo(-9).reconHops, 1);
 });
 
@@ -164,23 +166,26 @@ test('Perception 2 이상이면 대기 중에도 인접 1홉 실시간 관측이
 });
 
 test('정찰은 Perception과 무관하게 노드의 내용물을 기록한다 — 보급품·확보 대상·장치', () => {
+  // Perception 3의 2홉 사거리로 본다 — 1홉 안은 무료 인접 관측이 이미 닿아 "정찰이 새로 적었다"를
+  // 보여주지 못한다.
+  const perception = 3;
   const run = makeRun(1);
   const hops = bfsHopDistances(run.graph.edges, run.playerNodeId);
-  const inRange = (nodeId) => (hops.get(nodeId) ?? Infinity) <= perceptionInfo(0).reconHops;
+  const reconHops = perceptionInfo(perception).reconHops;
+  const inRange = (nodeId) => (hops.get(nodeId) ?? Infinity) <= reconHops;
 
   const supply = run.graph.opportunities.find((o) => o.grade !== 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
   const prize = run.graph.opportunities.find((o) => o.grade === 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
   const camera = run.graph.cameras.find((c) => inRange(c.nodeId));
-  assert.ok(supply && prize && camera, '시드 1의 2홉 안에 보급품·확보 대상·카메라가 하나씩은 있어야 이 검사가 성립한다');
+  assert.ok(supply && prize && camera, `시드 1의 ${reconHops}홉 안에 보급품·확보 대상·카메라가 하나씩은 있어야 이 검사가 성립한다`);
 
   // 정찰 전에는 아무것도 없다 — 인접 무료 관측이 닿는 자리는 빼고 본다.
-  const far = [supply, prize, camera].filter((entry) => (hops.get(entry.nodeId) ?? 0) === 2);
+  const far = [supply, prize, camera].filter((entry) => (hops.get(entry.nodeId) ?? 0) === reconHops);
   for (const entry of far) {
     assert.equal(run.observations[entry.nodeId]?.contents, undefined, '정찰 전에 내용물이 이미 적혀 있다');
   }
 
-  // Perception 0(가장 얕은 정찰)으로도 내용물은 전부 적힌다 — Perception이 가르는 것은 깊이뿐이다.
-  const scouted = scout(run, 0);
+  const scouted = scout(run, perception);
   assert.ok(
     scouted.observations[supply.nodeId].contents.opportunities.some((o) => o.id === supply.id && o.usesRemaining === supply.usesRemaining),
     '보급품이 남은 횟수까지 기록돼야 한다',
