@@ -430,7 +430,7 @@ export function formatReport(result) {
   out.push('');
 
   // 4. 행동 예산
-  out.push('## 4. 행동 예산 — A 탈출 런(여유 = 430 − 시작->A 거리 − 부대비용)을 대표 행동으로 나눈 값');
+  out.push(`## 4. 행동 예산 — A 탈출 런(여유 = ${EXIT_A_DISABLED_AT} − 시작->A 거리 − 부대비용)을 대표 행동으로 나눈 값`);
   const doorForce = forecastAction('openEdge', { edge: { timeCost: 0, requiredCapability: 1 }, capabilityKind: 'force', value: 0 }).timeCost;
   const doorHack = forecastAction('openEdge', { edge: { timeCost: 0, requiredCapability: 1 }, capabilityKind: 'hacking', value: 0 }).timeCost;
   // 수습 행동(시체 처리·흔적 정리)도 같은 줄에 둔다 — 다른 행동 대비 얼마나 비싼지가 보이지
