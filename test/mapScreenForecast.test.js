@@ -293,7 +293,7 @@ test('상단 카운터는 붕괴와 출구 폐쇄까지 남은 칸을 세고, �
   const run = quietRun(3);
   const countdowns = runCountdowns(run);
   assert.equal(countdowns.collapseIn, RUN_COLLAPSE_TIME - run.time);
-  assert.deepEqual(countdowns.exits.map((e) => e.exitId), ['A', 'B']);
+  assert.deepEqual(countdowns.exits.map((e) => e.exitId), ['A']);
   assert.ok(countdowns.exits.every((e) => !e.closed));
   assert.equal(countdowns.exits[0].text, `폐쇄까지 ${countdowns.exits[0].inTicks}칸`);
 

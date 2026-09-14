@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { generateFacilityGraph, sectorRingPairs } from '../src/engine/facilityGraph.js';
 import { countEdgeDisjointPaths, reachableSet, baselineWalkDistances, baselineWalkArcs } from '../src/engine/graphUtils.js';
 import {
-  ALL_SECTOR_IDS, SECTOR_LAYOUTS, totalNodesFor, THREAT_COUNT_BY_SECTOR, EXIT_AB_MIN_DISTANCE,
+  ALL_SECTOR_IDS, SECTOR_LAYOUTS, totalNodesFor, THREAT_COUNT_BY_SECTOR,
   GENERATOR_SECTOR_IDS,
   ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR, TOWER_ELEVATOR_REQUIREMENT, NODE_MIN_SEPARATION,
   SECTOR_NODE_RADIUS,
@@ -99,26 +99,19 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
   }
 });
 
-/** ADR-0076 판정과 같은 기준의 A–B 거리 — 두 방향 중 짧은 쪽. */
-function abDistance(graph) {
-  const byId = Object.fromEntries(graph.exits.map((e) => [e.exitId, e.nodeId]));
-  return Math.min(
-    baselineWalkDistances(graph.edges, byId.A).get(byId.B) ?? Infinity,
-    baselineWalkDistances(graph.edges, byId.B).get(byId.A) ?? Infinity,
-  );
-}
-
-// #3 세 탈출구는 서로 다른 구역, 시작 구역 제외, 2개 edge-disjoint 경로. fallback 사용률도 확인.
-test('exit placement uses three distinct non-start sectors with 2 edge-disjoint paths', () => {
+// #3 두 탈출구(표준 A + 열쇠)는 서로 다른 구역, 시작 구역 제외, 2개 edge-disjoint 경로.
+// fallback 사용률도 확인.
+test('exit placement uses two distinct non-start sectors with 2 edge-disjoint paths', () => {
   let fallbackCount = 0;
   const sampleSize = 300;
   for (let seed = 0; seed < sampleSize; seed++) {
     const { graph, usedFallback } = generateFacilityGraph(seed);
     if (usedFallback) fallbackCount += 1;
 
-    assert.equal(graph.exits.length, 3, `seed ${seed}: exit count`);
+    assert.equal(graph.exits.length, 2, `seed ${seed}: exit count`);
+    assert.deepEqual(graph.exits.map((e) => e.exitId), ['A', 'key'], `seed ${seed}: 표준 출구는 A 하나다(ADR-0083)`);
     const bySectorSet = new Set(graph.exits.map((e) => e.sectorId));
-    assert.equal(bySectorSet.size, 3, `seed ${seed}: exits must be in 3 distinct sectors`);
+    assert.equal(bySectorSet.size, 2, `seed ${seed}: exits must be in 2 distinct sectors`);
     for (const exit of graph.exits) {
       assert.notEqual(exit.sectorId, 'entrance', `seed ${seed}: exit ${exit.exitId} in the start sector`);
       assert.equal(
@@ -138,16 +131,31 @@ test('exit placement uses three distinct non-start sectors with 2 edge-disjoint 
   assert.ok(fallbackRate < 0.05, `fallback used too often in sample: ${fallbackCount}/${sampleSize}`);
 });
 
-// ADR-0076: 출구 배치의 유일한 거리 규칙 — 완성 그래프(특수 엣지 포함)에서 A와 B가 최소 거리만큼
-// 떨어져 있다. 상한 안에 못 찾은 시드는 relaxed로 표시되고 그때만 이 규칙에서 빠진다.
-test('exits A and B are at least EXIT_AB_MIN_DISTANCE apart on the finished graph', () => {
+// ADR-0083: 출구 A는 시작 구역도 계약 목표 구역도 아닌 구역에서 **시작점으로부터 가장 먼**
+// 노드다. 완성 그래프(특수 엣지 포함)에서, Capability 0이 아무것도 열지 않고 걸을 수 있는
+// 간선만으로 잰다.
+test('exit A is the farthest walkable node from the start among eligible sectors', () => {
   for (let seed = 1; seed <= 30; seed++) {
-    const { graph } = generateFacilityGraph(seed);
-    const measured = abDistance(graph);
-    assert.equal(graph.exitPlacement.abDistance, measured, `seed ${seed}: 기록된 A–B 거리와 실측이 다르다`);
-    assert.equal(graph.exitPlacement.relaxed, measured < EXIT_AB_MIN_DISTANCE, `seed ${seed}: relaxed 표시`);
-    if (!graph.exitPlacement.relaxed) {
-      assert.ok(measured >= EXIT_AB_MIN_DISTANCE, `seed ${seed}: A–B 거리 ${measured} < ${EXIT_AB_MIN_DISTANCE}`);
+    for (const contractSectorId of [undefined, 'labs', 'entrance']) {
+      const { graph } = generateFacilityGraph(seed, undefined, contractSectorId);
+      const exitA = graph.exits.find((e) => e.exitId === 'A');
+      const fromStart = baselineWalkDistances(graph.edges, graph.startNodeId);
+      const measured = fromStart.get(exitA.nodeId) ?? Infinity;
+      assert.equal(graph.exitPlacement.exitAWalkDistance, measured, `seed ${seed}: 기록된 A 거리와 실측이 다르다`);
+      assert.notEqual(exitA.sectorId, 'entrance', `seed ${seed}: A가 시작 구역에 놓였다`);
+      if (contractSectorId && contractSectorId !== 'entrance' && graph.sectorIds.includes(contractSectorId)) {
+        assert.notEqual(exitA.sectorId, contractSectorId, `seed ${seed}: A가 계약 목표 구역에 놓였다`);
+      }
+      // 자격 있는 구역의 어느 노드도 A보다 멀지 않다(2-edge-disjoint 조건을 만족하는 노드 중에서).
+      for (const node of graph.nodes) {
+        if (node.sectorId === 'entrance' || node.sectorId === exitA.sectorId) continue;
+        if (contractSectorId && node.sectorId === contractSectorId) continue;
+        if (!graph.sectorIds.includes(node.sectorId)) continue;
+        const d = fromStart.get(node.id) ?? Infinity;
+        if (!Number.isFinite(d) || d <= measured) continue;
+        const paths = countEdgeDisjointPaths(baselineWalkArcs(graph.edges), graph.startNodeId, node.id, 2, { directed: true });
+        assert.ok(paths < 2, `seed ${seed}: ${node.id}(${d})가 A(${measured})보다 먼데 퇴로도 둘이다`);
+      }
     }
   }
 });
@@ -361,12 +369,13 @@ test('the landmark always sits on one of the archetype-fixed candidate rooms', (
         assert.ok(node.y < cy, `seed ${seed}: ${landmark.sectorId} landmark is not near the top of the tower`);
       } else if (layout.archetype === 'radial') {
         // 중심부: 회랑이 모이는 허브에 붙은 방이다. 정규화와 밀어내기로 좌표가 밀리므로 순위로
-        // 본다 — 바깥 고리에는 절대 놓이지 않는다는 것이 확인하려는 성질이다.
+        // 본다 — 바깥 고리에는 절대 놓이지 않는다는 것이 확인하려는 성질이다. 밀어내기가 안쪽
+        // 절반의 경계에 걸친 방을 한 칸 바깥으로 밀어내는 시드가 있어 경계 노드 하나까지 인정한다.
         const cx = sectorNodes.reduce((sum, n) => sum + n.x, 0) / sectorNodes.length;
         const ranked = sectorNodes
           .map((n) => ({ id: n.id, d: Math.hypot(n.x - cx, n.y - cy) }))
           .sort((a, b) => a.d - b.d)
-          .slice(0, Math.ceil(sectorNodes.length / 2))
+          .slice(0, Math.ceil(sectorNodes.length / 2) + 1)
           .map((c) => c.id);
         assert.ok(ranked.includes(node.id), `seed ${seed}: ${landmark.sectorId} landmark is not in the hub`);
       }

@@ -1,4 +1,4 @@
-// 맵 정수 시간(ADR-0075) 전환 뒤 마감 상수(붕괴 700 / A 폐쇄 430 / B 폐쇄 670 / 봉쇄 유예 125)가
+// 맵 정수 시간(ADR-0075) 전환 뒤 마감 상수(붕괴 490 / A 폐쇄 300)가
 // 실제 시드에서 얼마나 빡빡한지 재는 측정 도구다. 아무 상수도 바꾸지 않고 읽기만 한다 —
 // 결과 요약은 docs/proposals/map-time-balance-measurement.md.
 //
@@ -14,11 +14,11 @@ import process from 'node:process';
 import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import { moveTimeCost, forecastAction, actionTimeCost } from '../src/engine/actionCosts.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
-import { lockdownClosesExitB, canClimbHighGround } from '../src/engine/runEngine.js';
+import { canClimbHighGround } from '../src/engine/runEngine.js';
 import {
-  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, LOCKDOWN_EXIT_CLOSE_WINDOW,
+  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WAIT_BY_HACKING, EXIT_OPEN_WINDOW,
-  EDGE_TIME_MIN, EDGE_TIME_MAX, EXIT_AB_MIN_DISTANCE, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
+  EDGE_TIME_MIN, EDGE_TIME_MAX, BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME,
   CORPSE_DISPOSAL_TIME,
   COMBAT_ROUND_TIME_COST, THREAT_MOVE_INTERVAL, REINFORCEMENT_INTERVAL,
   FORCE_TIER1_TIME, HACKING_TIER1_TIME,
@@ -33,7 +33,7 @@ const BASE_CAPABILITY = 0;
 /** 시작 시점에 플레이어가 아는 정보인가 — 표에 그대로 찍는다. */
 const KNOWN_AT_START = {
   objective: true,   // 계약 목표부 랜드마크는 수락 시 공개된다(createRunState revealLandmarkSectorIds).
-  exits: true,       // A·B는 런 시작부터 지도에 보인다(ADR-0025). 열쇠 출구만 비공개다.
+  exits: true,       // A는 런 시작부터 지도에 보인다(ADR-0025). 열쇠 출구만 비공개다.
   keyExit: false,    // 열쇠 출구는 열쇠를 확보해야 지도에 나타난다.
   edgeCosts: false,  // 통로 비용은 그 통로를 볼 때까지 모른다.
   threats: false,
@@ -240,7 +240,7 @@ export function measureSeed(seed) {
     const legacy = dijkstra(buildLegacyArcs(graph, mobility), graph.startNodeId);
 
     const exits = {};
-    for (const exitId of ['A', 'key', 'B']) {
+    for (const exitId of ['A', 'key']) {
       const nodeId = exitNodeIds[exitId];
       exits[exitId] = {
         nodeId,
@@ -256,13 +256,9 @@ export function measureSeed(seed) {
     const slack = {
       exitA: EXIT_A_DISABLED_AT - exits.A.walk,
       exitAOpen: EXIT_A_DISABLED_AT - exits.A.open,
-      exitB: EXIT_B_DISABLED_AT - exits.B.walk,
-      exitBOpen: EXIT_B_DISABLED_AT - exits.B.open,
       collapseViaA: RUN_COLLAPSE_TIME - (exits.A.walk + EXIT_OVERHEAD),
-      collapseViaB: RUN_COLLAPSE_TIME - (exits.B.walk + EXIT_OVERHEAD),
       // 옛 체계에서 같은 목적지까지의 여유(칸 환산) — 반올림 편향 비교용.
       legacyExitA: EXIT_A_DISABLED_AT - exits.A.legacyTicks,
-      legacyExitB: EXIT_B_DISABLED_AT - exits.B.legacyTicks,
     };
 
     // 계약별 왕복: 시작 -> 목표부 -> 가장 가까운 사용 가능 출구.
@@ -286,22 +282,15 @@ export function measureSeed(seed) {
       const fromLandmark = new Map(detourLandmarks.map((nodeId) => [nodeId, dijkstra(walkArcs, nodeId)]));
       const completionCost = contractCompletionActionCost(def.type);
       const legs = {};
-      for (const exitId of ['A', 'key', 'B']) {
+      for (const exitId of ['A', 'key']) {
         const direct = distOf(fromObjective, exitNodeIds[exitId]);
         const leg = detourLandmarks.length === 0
           ? direct
           : Math.min(...detourLandmarks.map((nodeId) => distOf(fromObjective, nodeId) + distOf(fromLandmark.get(nodeId), exitNodeIds[exitId])));
         const total = acquiredAt + leg + completionCost;
-        let deadline = Infinity;
-        if (exitId === 'A') deadline = EXIT_A_DISABLED_AT;
-        // 목표 확보 순간 봉쇄가 켜지고 B는 그 시각 + 125와 670 중 이른 쪽에 닫힌다.
-        // 정보 계약만 예외로 B의 원래 폐쇄 시각(670)을 그대로 쓴다 — 엔진과 같은 판정
-        // (runEngine.js lockdownClosesExitB)을 쓴다.
-        if (exitId === 'B') {
-          deadline = lockdownClosesExitB(def.type)
-            ? Math.min(EXIT_B_DISABLED_AT, acquiredAt + LOCKDOWN_EXIT_CLOSE_WINDOW)
-            : EXIT_B_DISABLED_AT;
-        }
+        // 봉쇄는 출구 폐쇄 시각을 앞당기지 않는다(ADR-0083) — 표준 출구 A는 언제나 자기
+        // 폐쇄 시각이 마감이고, 열쇠 출구에는 마감이 없다.
+        const deadline = exitId === 'A' ? EXIT_A_DISABLED_AT : Infinity;
         legs[exitId] = {
           leg,
           total,
@@ -310,7 +299,7 @@ export function measureSeed(seed) {
           usable: total < deadline && total + EXIT_OVERHEAD < RUN_COLLAPSE_TIME,
         };
       }
-      const usable = ['A', 'B'].filter((id) => legs[id].usable);
+      const usable = ['A'].filter((id) => legs[id].usable);
       const best = usable.length === 0 ? null : usable.reduce((a, b) => (legs[a].total <= legs[b].total ? a : b));
       contracts[def.id] = {
         type: def.type, sectorId: def.sectorId, objectiveNodeId,
@@ -318,26 +307,13 @@ export function measureSeed(seed) {
         bestExit: best,
         bestTotal: best ? legs[best].total : Infinity,
         bestSlack: best ? legs[best].slack : -Infinity,
-        // B 마감 안에 B까지 갈 수 있는가. 회수·파괴는 봉쇄 유예 125가 무는 값이고,
-        // 정보 계약은 봉쇄가 B를 앞당기지 않으므로 670 마감이 그대로 기준이다.
-        bLockdownReachable: lockdownClosesExitB(def.type)
-          ? legs.B.leg <= LOCKDOWN_EXIT_CLOSE_WINDOW
-          : legs.B.total < EXIT_B_DISABLED_AT,
       };
     }
 
     const moveCosts = [];
     for (const arcList of walkArcs.values()) for (const arc of arcList) moveCosts.push(arc.cost);
 
-    // 생성이 보장하는 유일한 출구 규칙(ADR-0076): 완성 그래프에서 A와 B가
-    // EXIT_AB_MIN_DISTANCE 이상 떨어져 있다. 판정은 Mobility 0 · 개방 없이가 기준이므로
-    // 여기서도 그 Mobility의 실제 왕복 거리를 함께 본다.
-    const abWalk = Math.min(
-      distOf(dijkstra(walkArcs, exitNodeIds.A), exitNodeIds.B),
-      distOf(dijkstra(walkArcs, exitNodeIds.B), exitNodeIds.A),
-    );
-
-    byMobility[mobility] = { exits, slack, contracts, abWalk, moveCostStats: stats(moveCosts) };
+    byMobility[mobility] = { exits, slack, contracts, moveCostStats: stats(moveCosts) };
   }
 
   return {
@@ -358,8 +334,7 @@ export function measure(seeds) {
     generatedAt: new Date().toISOString(),
     seeds,
     constants: {
-      RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, LOCKDOWN_EXIT_CLOSE_WINDOW,
-      EXIT_AB_MIN_DISTANCE,
+      RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
       EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, exitOverheadAtHacking0: EXIT_OVERHEAD,
     },
     knownAtStart: KNOWN_AT_START,
@@ -394,7 +369,7 @@ export function formatReport(result) {
 
   out.push('맵 정수 시간 밸런스 측정 (ADR-0075)');
   out.push(`시드 ${seeds[0]}..${seeds[seeds.length - 1]} (${seeds.length}개) · 기본 로드아웃(전 Capability 0)`);
-  out.push(`마감: 붕괴 ${RUN_COLLAPSE_TIME} / A 폐쇄 ${EXIT_A_DISABLED_AT} / B 폐쇄 ${EXIT_B_DISABLED_AT} / 봉쇄 유예 ${LOCKDOWN_EXIT_CLOSE_WINDOW}`);
+  out.push(`마감: 붕괴 ${RUN_COLLAPSE_TIME} / A 폐쇄 ${EXIT_A_DISABLED_AT} (봉쇄는 출구를 앞당겨 닫지 않는다, ADR-0083)`);
   out.push(`탈출 부대비용: 요청 ${EXIT_REQUEST_TIME} + 개방 대기 ${EXIT_OPEN_WAIT_BY_HACKING[2]}(Hacking 0) = ${EXIT_OVERHEAD}칸`);
   out.push('모든 거리는 사후 최단(전지 시점)이다 — 실제 탐색 비용은 포함하지 않는다.');
   out.push('');
@@ -416,11 +391,11 @@ export function formatReport(result) {
   out.push('');
 
   // 1. 시작점에서 각 출구까지
-  out.push('## 2. 시작점 -> 출구 최단 가중거리(칸) [A·B 위치는 시작 시점 공개, 열쇠는 비공개]');
+  out.push('## 2. 시작점 -> 출구 최단 가중거리(칸) [A 위치는 시작 시점 공개, 열쇠는 비공개]');
   const distWidths = [8, 6, 22, 22, 10];
   out.push(row(['Mobility', '출구', '개방 없이 최소/중앙/최대', '문 개방 허용(Cap 0)', '도달불가'], distWidths));
   for (const m of MOBILITY_VALUES) {
-    for (const exitId of ['A', 'key', 'B']) {
+    for (const exitId of ['A', 'key']) {
       const walk = stats(pick((r) => r.byMobility[m].exits[exitId].walk));
       const open = stats(pick((r) => r.byMobility[m].exits[exitId].open));
       out.push(row([
@@ -431,29 +406,9 @@ export function formatReport(result) {
       ], distWidths));
     }
   }
-  out.push('출구 위치는 무작위다(ADR-0076) — 시작점 기준 거리 범위도 A<열쇠<B 순서도 없다. A·B는 보이므로 이 편차가 곧 보이는 판 난이도다.');
+  out.push('출구 A는 시작 구역도 계약 목표 구역도 아닌 구역에서 시작점으로부터 가장 먼 노드다(ADR-0083). 열쇠 출구만 무작위이고 비공개다.');
   out.push('');
 
-  // 2. A–B 거리 — 생성이 보장하는 유일한 출구 규칙
-  out.push(`## 2-1. 출구 A–B 거리(칸) — 최소 ${EXIT_AB_MIN_DISTANCE} 보장 (ADR-0076)`);
-  const abWidths = [22, 22, 12];
-  out.push(row(['기준', '최소/중앙/최대', '최소값 미만 시드'], abWidths));
-  const placed = stats(pick((r) => r.exitPlacement.abDistance));
-  out.push(row([
-    '배치 판정(Cap 0, 개방 없이)',
-    `${num(placed.min)} / ${num(placed.median, 1)} / ${num(placed.max)}`,
-    rs.filter((r) => r.exitPlacement.abDistance < EXIT_AB_MIN_DISTANCE).length,
-  ], abWidths));
-  for (const m of MOBILITY_VALUES) {
-    const ab = stats(pick((r) => r.byMobility[m].abWalk));
-    out.push(row([
-      `실제 통행(Mobility ${m})`,
-      `${num(ab.min)} / ${num(ab.median, 1)} / ${num(ab.max)}`,
-      rs.filter((r) => r.byMobility[m].abWalk < EXIT_AB_MIN_DISTANCE).length,
-    ], abWidths));
-  }
-  const relaxed = rs.filter((r) => r.exitPlacement.relaxed);
-  out.push(`재배치 상한을 넘겨 완화(relaxed)된 시드: ${relaxed.length}/${rs.length}${relaxed.length > 0 ? ` (${relaxed.map((r) => r.seed).join(', ')})` : ''}`);
   out.push(`fallback 토폴로지를 쓴 시드: ${rs.filter((r) => r.usedFallback).length}/${rs.length}`);
   out.push('');
 
@@ -462,10 +417,8 @@ export function formatReport(result) {
   const slackWidths = [8, 18, 22, 10];
   out.push(row(['Mobility', '마감', '최소/중앙/최대', '음수 시드 비율'], slackWidths));
   const slackRows = [
-    ['A 폐쇄 430', (r, m) => r.byMobility[m].slack.exitA],
-    ['B 폐쇄 670', (r, m) => r.byMobility[m].slack.exitB],
-    ['붕괴 700(A경유+부대)', (r, m) => r.byMobility[m].slack.collapseViaA],
-    ['붕괴 700(B경유+부대)', (r, m) => r.byMobility[m].slack.collapseViaB],
+    [`A 폐쇄 ${EXIT_A_DISABLED_AT}`, (r, m) => r.byMobility[m].slack.exitA],
+    [`붕괴 ${RUN_COLLAPSE_TIME}(A경유+부대)`, (r, m) => r.byMobility[m].slack.collapseViaA],
   ];
   for (const m of MOBILITY_VALUES) {
     for (const [label, fn] of slackRows) {
@@ -530,10 +483,10 @@ export function formatReport(result) {
 
   // 2. 계약 왕복
   out.push('## 6. 계약 왕복 — 시작 -> 목표부 -> 가장 가까운 사용 가능 출구 [목표부 위치는 시작 시점 공개]');
-  const cWidths = [26, 8, 10, 8, 12, 10, 16, 12, 12];
+  const cWidths = [26, 8, 10, 8, 12, 12, 16, 12];
   for (const m of MOBILITY_VALUES) {
     out.push(`Mobility ${m}`);
-    out.push(row(['계약', '유형', '->목표부', '행동', '확보시각', 'B다리', '최선 합계(중앙)', '최선 출구', 'B 마감내'], cWidths));
+    out.push(row(['계약', '유형', '->목표부', '행동', '확보시각', 'A다리', '최선 합계(중앙)', '최선 출구'], cWidths));
     for (const def of CONTRACT_DEFS) {
       // 계약마다 "그 목표부 구역이 뽑힌 시드"만 모아 잰다 — 구역 추첨 때문에 계약별 표본 수가
       // 다르므로 몇 개 시드로 낸 값인지도 같이 적는다.
@@ -542,7 +495,7 @@ export function formatReport(result) {
       const seedPick = (fn) => present.map(fn);
       const toObj = stats(seedPick((r) => r.byMobility[m].contracts[def.id].toObjective));
       const acq = stats(seedPick((r) => r.byMobility[m].contracts[def.id].acquiredAt));
-      const bLeg = stats(seedPick((r) => r.byMobility[m].contracts[def.id].legs.B.leg));
+      const aLeg = stats(seedPick((r) => r.byMobility[m].contracts[def.id].legs.A.leg));
       const total = stats(seedPick((r) => r.byMobility[m].contracts[def.id].bestTotal));
       const bestCounts = {};
       for (const r of present) {
@@ -550,13 +503,11 @@ export function formatReport(result) {
         const key = best || '없음';
         bestCounts[key] = (bestCounts[key] || 0) + 1;
       }
-      const bOk = present.filter((r) => r.byMobility[m].contracts[def.id].bLockdownReachable).length;
       out.push(row([
         `${def.name} (${present.length}시드)`, def.type, num(toObj.median, 1),
         present[0].byMobility[m].contracts[def.id].actionCost,
-        num(acq.median, 1), num(bLeg.median, 1), num(total.median, 1),
+        num(acq.median, 1), num(aLeg.median, 1), num(total.median, 1),
         Object.entries(bestCounts).map(([k, v]) => `${k}:${v}`).join(' '),
-        `${bOk}/${present.length}`,
       ], cWidths));
     }
     out.push('');
@@ -567,7 +518,7 @@ export function formatReport(result) {
   const legacyWidths = [8, 6, 22, 22, 20];
   out.push(row(['Mobility', '출구', '현재(칸) 최소/중앙/최대', '옛 환산(칸)', '차이 중앙(현재−옛)'], legacyWidths));
   for (const m of MOBILITY_VALUES) {
-    for (const exitId of ['A', 'key', 'B']) {
+    for (const exitId of ['A', 'key']) {
       const now = stats(pick((r) => r.byMobility[m].exits[exitId].walk));
       const old = stats(pick((r) => r.byMobility[m].exits[exitId].legacyTicks));
       const diff = stats(pick((r) => r.byMobility[m].exits[exitId].walk - r.byMobility[m].exits[exitId].legacyTicks));

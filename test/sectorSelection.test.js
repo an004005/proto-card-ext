@@ -1,5 +1,6 @@
-// 구역 추첨(ADR-0081) — 한 런은 여덟 구역 정의 중 넷만 쓴다. 여기서 보는 것은 그 추첨의
-// 규칙(시작 구역 고정·개수·링 순서)과, 그 규칙이 계약 제안과 그래프 생성까지 실제로 닿는가다.
+// 구역 추첨(ADR-0081·ADR-0083) — 한 런은 여덟 구역 정의 중 넷만 쓴다. 추첨은 계약 수락 뒤에
+// 돌고 수락한 계약의 목표 구역을 반드시 포함한다. 여기서 보는 것은 그 추첨의 규칙(시작 구역
+// 고정·계약 구역 보장·개수·링 순서)과, 그 규칙이 그래프 생성까지 실제로 닿는가다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -8,8 +9,9 @@ import {
 import { createRngState } from '../src/engine/rng.js';
 import {
   ALL_SECTOR_IDS, RUN_SECTOR_COUNT, START_SECTOR_ID, DEEPEST_SECTOR_ID,
-  EXIT_AB_MIN_DISTANCE, totalNodesFor,
+  totalNodesFor,
 } from '../src/data/facilityLayout.js';
+import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { offerContracts } from '../src/engine/contractReducer.js';
 import { gameReducer } from '../src/engine/gameReducer.js';
 
@@ -76,23 +78,38 @@ test('인접은 4칸 링이다 — 이웃 둘, 맞은편 하나는 이웃이 아
   }
 });
 
-test('계약 제안은 뽑힌 구역 안에서만 나오고, 어떤 조합에서도 최소 한 장은 있다', () => {
+test('계약 제안은 더 이상 구역으로 좁혀지지 않는다 — 언제나 유형별 한 장씩 세 장이다', () => {
   for (const seed of SEEDS) {
-    const { sectorIds, rngState } = selectRunSectorIds(createRngState(seed));
-    const { contracts } = offerContracts(rngState, sectorIds);
-    assert.ok(contracts.length >= 1, `시드 ${seed}: 제안이 없다`);
-    assert.ok(contracts.length <= 3, `시드 ${seed}: 유형별 한 장을 넘겼다`);
-    for (const c of contracts) {
-      assert.ok(sectorIds.includes(c.sectorId), `시드 ${seed}: ${c.id}의 구역 ${c.sectorId}은 이 런에 없다`);
+    const { contracts } = offerContracts(createRngState(seed));
+    assert.equal(contracts.length, 3, `시드 ${seed}: 제안은 세 장이다`);
+    assert.deepEqual(contracts.map((c) => c.type), ['retrieval', 'destroy', 'intel']);
+  }
+});
+
+test('수락한 계약의 목표 구역은 반드시 뽑히고, 시작 구역 계약도 4구역을 만든다', () => {
+  for (const seed of SEEDS) {
+    for (const def of CONTRACT_DEFS) {
+      const { sectorIds } = selectRunSectorIds(createRngState(seed), def.sectorId);
+      assert.equal(sectorIds.length, RUN_SECTOR_COUNT, `시드 ${seed}/${def.id}: 구역 수`);
+      assert.equal(new Set(sectorIds).size, RUN_SECTOR_COUNT, `시드 ${seed}/${def.id}: 중복 없음`);
+      assert.equal(sectorIds[0], START_SECTOR_ID);
+      assert.ok(sectorIds.includes(def.sectorId), `시드 ${seed}/${def.id}: 목표 구역이 빠졌다`);
+      // 링 2번은 power가 뽑혔으면 power, 아니면 목표 구역(시작 구역 계약은 예외).
+      if (sectorIds.includes(DEEPEST_SECTOR_ID)) {
+        assert.equal(sectorIds[2], DEEPEST_SECTOR_ID);
+      } else if (def.sectorId !== START_SECTOR_ID) {
+        assert.equal(sectorIds[2], def.sectorId, `시드 ${seed}/${def.id}: 목표는 가장 깊은 자리에 놓인다`);
+      }
     }
   }
 });
 
-test('NEW_RUN이 뽑은 구역을 CONFIRM_LOADOUT이 그대로 짓는다', () => {
+test('ACCEPT_CONTRACT가 뽑은 구역을 CONFIRM_LOADOUT이 그대로 짓는다', () => {
   for (const seed of [0, 1, 2, 3, 7, 11, 42]) {
     let s = gameReducer(null, { type: 'NEW_RUN', seed });
-    assert.deepEqual(s.runSectorIds, selectRunSectorIds(createRngState(seed)).sectorIds);
+    assert.equal(s.runSectorIds, null, '제안 시점에는 구역이 아직 없다');
     s = gameReducer(s, { type: 'ACCEPT_CONTRACT', contractId: s.offeredContracts[0].id });
+    assert.ok(s.runSectorIds.includes(s.activeContract.sectorId));
     s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
     const graph = s.facilityRunState.graph;
     assert.deepEqual(graph.sectorIds, s.runSectorIds, `시드 ${seed}: 화면이 고른 구역과 지어진 구역이 같아야 한다`);
@@ -105,21 +122,20 @@ test('NEW_RUN이 뽑은 구역을 CONFIRM_LOADOUT이 그대로 짓는다', () =>
 });
 
 test('네 구역짜리 그래프는 어떤 시드에서도 fallback 없이 생성된다', () => {
-  let relaxed = 0;
   for (const seed of SEEDS) {
     const { graph, usedFallback } = generateFacilityGraph(seed);
     assert.equal(usedFallback, false, `시드 ${seed}: fallback 토폴로지로 떨어졌다`);
     assert.equal(graph.sectorIds.length, RUN_SECTOR_COUNT);
     assert.equal(graph.nodes.length, totalNodesFor(graph.sectorIds), `시드 ${seed}: 노드 수`);
     assert.equal(graph.landmarks.length, RUN_SECTOR_COUNT);
-    // 탈출구 셋은 시작 구역을 뺀 세 구역에 하나씩 — 네 구역 링에서는 이것이 유일한 배치다.
-    assert.deepEqual(
-      new Set(graph.exits.map((e) => e.sectorId)),
-      new Set(graph.sectorIds.filter((id) => id !== START_SECTOR_ID)),
-      `시드 ${seed}: 탈출구 구역`,
-    );
-    if (graph.exitPlacement.relaxed) relaxed += 1;
+    // 탈출구는 표준 A와 열쇠 둘뿐이고(ADR-0083) 서로 다른, 시작 구역이 아닌 구역에 놓인다.
+    assert.deepEqual(graph.exits.map((e) => e.exitId), ['A', 'key'], `시드 ${seed}: 출구 목록`);
+    const exitSectors = graph.exits.map((e) => e.sectorId);
+    assert.equal(new Set(exitSectors).size, 2, `시드 ${seed}: 두 출구는 다른 구역에 있다`);
+    for (const sectorId of exitSectors) {
+      assert.notEqual(sectorId, START_SECTOR_ID, `시드 ${seed}: 시작 구역에는 출구가 없다`);
+      assert.ok(graph.sectorIds.includes(sectorId));
+    }
+    assert.ok(Number.isFinite(graph.exitPlacement.exitAWalkDistance), `시드 ${seed}: A 거리 기록`);
   }
-  // 완화(relaxed)는 예외로 남아야 한다 — 기본이 되면 A–B 최소 거리는 보장이 아니다.
-  assert.ok(relaxed < SEEDS.length * 0.15, `A–B ${EXIT_AB_MIN_DISTANCE} 미만으로 완화된 시드가 너무 많다 (${relaxed}/${SEEDS.length})`);
 });

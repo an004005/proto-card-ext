@@ -50,9 +50,8 @@ export const EXIT_STATUS_LABELS = {
 };
 
 /**
- * 상단 카운터 — 붕괴까지, 그리고 표준 출구 A/B의 지금 상태와 그 상태가 끝나기까지 남은 칸.
- * 봉쇄가 켜지면 출구 B의 `disabledAt`이 이미 앞당겨져 있으므로 여기서 따로 계산하지 않는다
- * (한쪽만 고치면 카운터와 실제 폐쇄 시각이 갈라진다).
+ * 상단 카운터 — 붕괴까지, 그리고 유일한 표준 출구 A의 지금 상태와 그 상태가 끝나기까지 남은 칸.
+ * 봉쇄는 출구 폐쇄 시각을 건드리지 않으므로(ADR-0083) 여기서 따로 계산할 것도 없다.
  *
  * 폐쇄 시각을 넘겼다고 곧바로 "폐쇄됨"이 아니다(ADR-0054) — 폐쇄 뒤에 금지되는 것은 **새 요청**
  * 뿐이고, 이미 시작된 개방 대기와 열려 있는 창은 끝까지 간다. 그래서 실제로 못 쓰게 된 출구
@@ -62,7 +61,7 @@ export const EXIT_STATUS_LABELS = {
  * @returns {{collapseIn: number, exits: {exitId: string, closed: boolean, inTicks: number, status: string, stateTicks: number|null, text: string}[]}}
  */
 export function runCountdowns(run) {
-  const exits = /** @type {const} */ (['A', 'B']).map((exitId) => {
+  const exits = /** @type {const} */ (['A']).map((exitId) => {
     const exit = /** @type {import('./types.js').StandardExitRuntimeState|undefined} */ (run.exits[exitId]);
     const disabledAt = exit ? exit.disabledAt : RUN_COLLAPSE_TIME;
     const inTicks = Math.max(0, disabledAt - run.time);
@@ -261,7 +260,7 @@ export function upcomingEvents(run, horizon = TIMELINE_HORIZON, opts = {}) {
 
   push(RUN_COLLAPSE_TIME, '시설 붕괴', 'collapse', true);
 
-  for (const exitId of /** @type {const} */ (['A', 'B'])) {
+  for (const exitId of /** @type {const} */ (['A'])) {
     const exit = /** @type {import('./types.js').StandardExitRuntimeState|undefined} */ (run.exits[exitId]);
     if (!exit || exit.kind !== 'standard') continue;
     // 폐쇄 시각은 "그 뒤로 새 요청을 못 받는다"는 뜻이다(ADR-0054). 이미 요청·개방·열림으로

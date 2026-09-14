@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: amended by ADR-0083
 ---
 
 # 한 런은 여덟 구역 중 넷만 쓰고, 그 넷은 시드로 뽑는다

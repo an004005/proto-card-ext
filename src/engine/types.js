@@ -108,17 +108,16 @@
 
 /**
  * @typedef {Object} ExitPlacement
- * @property {'A'|'B'|'key'} exitId
+ * @property {'A'|'key'} exitId
  * @property {string} nodeId
  * @property {FacilitySectorId} sectorId
  */
 
 /**
- * @typedef {Object} ExitPlacementMeta 출구 배치가 어떻게 정해졌는지 (ADR-0076).
- * @property {number} abDistance 완성 그래프에서 A와 B 사이 거리(칸) — Capability 0이 아무것도 열지
- *   않고 걸을 수 있는 간선만, 두 방향 중 짧은 쪽.
- * @property {boolean} relaxed 재배치 상한 안에서 EXIT_AB_MIN_DISTANCE를 못 지켜 가장 먼 후보 쌍으로
- *   물러난 시드인가.
+ * @typedef {Object} ExitPlacementMeta 출구 배치가 어떻게 정해졌는지 (ADR-0076·ADR-0083).
+ * @property {number} exitAWalkDistance 완성 그래프에서 시작점부터 출구 A까지의 거리(칸) —
+ *   Capability 0이 아무것도 열지 않고 걸을 수 있는 간선만. A는 시작 구역도 계약 목표 구역도 아닌
+ *   구역에서 이 거리가 가장 먼 노드다.
  */
 
 /**
@@ -217,7 +216,7 @@
 
 /**
  * @typedef {{kind: 'player', nodeId: string}
- *   | {kind: 'exitSignal', exitId: 'A'|'B', nodeId: string, createdAt: number}
+ *   | {kind: 'exitSignal', exitId: 'A', nodeId: string, createdAt: number}
  *   | {kind: 'noise', eventId: string, nodeId: string, score: number, createdAt: number}
  *   | {kind: 'falseTarget', eventId: string, nodeId: string, score: number, createdAt: number}
  *   | {kind: 'patrol', nodeId: string}} ThreatTarget
@@ -251,7 +250,7 @@
 /**
  * @typedef {Object} StandardExitRuntimeState
  * @property {'standard'} kind
- * @property {'A'|'B'} exitId
+ * @property {'A'} exitId
  * @property {string} nodeId
  * @property {'closed'|'requesting'|'opening'|'open'|'disabled'} status
  * @property {number} disabledAt
@@ -319,7 +318,7 @@
  *   돌아간다. 화면의 fresh/stale 판정과 refreshLocalObservations가 같이 읽는다.
  * @property {{cameraId: string, nodeId: string, detectedAt: number}|null} lastCameraDetection
  * @property {{kind: 'farm', nodeId: string, opportunityId: string, status: 'completed'|'ambushed', completedAt: number, loot?: {kind: string, equipmentId?: string, defId?: string, value?: number, amount?: number}|null}|null} lastActionResult
- * @property {Record<'A'|'B'|'key', ExitRuntimeState>} exits
+ * @property {Record<'A'|'key', ExitRuntimeState>} exits
  * @property {Record<string, ThreatRuntimeState>} threats
  * @property {NoiseEvent[]} noiseEvents
  * @property {FalseTarget[]} falseTargets
@@ -332,7 +331,7 @@
  * @property {string[]} deceivedThreatIds 조우 속이기(D)를 이미 한 번 쓴 위협. 위협당 한 번뿐이다.
  * @property {boolean} keyDiscovered 열쇠 대상 현장 기회를 파밍해 열쇠 탈출구 위치를 알아냈는지(§5.1.1). 한번 참이 되면 되돌아가지 않는다.
  * @property {ContractRuntimeState|null} contract 수락된 계약의 진행 상태(§3단계, D3·D4·D21).
- * @property {{startedAt: number}|null} lockdown 계약 목표 확보 순간 켜지는 봉쇄(D22) — 위협 이동이 빨라지고 출구 B가 조기 폐쇄된다.
+ * @property {{startedAt: number}|null} lockdown 계약 목표 확보 순간 켜지는 봉쇄(D22) — 위협 이동과 증원이 빨라진다. 출구는 앞당겨 닫히지 않는다(ADR-0083).
  * @property {Corpse[]} corpses 전투에서 이긴 노드에 남은 시체(§4단계, D13). 위협이 밟으면 신고된다.
  * @property {Record<string, {nextAt: number, alertSeen: 0|1|2|3}>} reinforcements 구역별 다음 증원 예정
  *   시각과 마지막으로 관찰한 경계 레벨(D14) — 경계가 오르면 다음 교대를 앞당긴다.
@@ -674,10 +673,11 @@
  * @property {?CombatSummary} combatSummary post-combat durability report, shown once on the
  *   reward screen then cleared by CONFIRM_REWARDS
  * @property {RngState} rngState
- * @property {FacilitySectorId[]} [runSectorIds] NEW_RUN이 시드로 뽑아 둔 이 런의 구역(링 순서,
- *   ADR-0081). 계약 제안을 좁히고, CONFIRM_LOADOUT이 그대로 generateFacilityGraph에 넘긴다.
+ * @property {FacilitySectorId[]|null} [runSectorIds] 이 런의 구역(링 순서, ADR-0081·ADR-0083).
+ *   NEW_RUN 시점에는 null이고 ACCEPT_CONTRACT가 수락한 계약의 목표 구역을 포함해 뽑는다.
+ *   CONFIRM_LOADOUT이 그대로 generateFacilityGraph에 넘긴다.
  * @property {import('../data/contracts.js').ContractDef[]|null} offeredContracts 'contract' 화면에서
- *   고르는 중인 계약. 유형별 한 장씩이되 뽑힌 구역에 그 유형이 없으면 빠지므로 1~3장이다.
+ *   고르는 중인 계약. 여덟 구역 전부에서 유형별 한 장씩 뽑으므로 언제나 3장이다.
  *   수락 즉시 activeContract로 옮겨지고 이 필드는 비워진다.
  * @property {(import('../data/contracts.js').ContractDef & {status: 'accepted'})|null} activeContract
  *   수락됐지만 아직 confirmLoadout으로 facilityRunState.contract에 옮겨지지 않은 계약. 'contract'/'loadout'

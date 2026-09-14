@@ -1,11 +1,11 @@
 // scripts/measure-map-balance.mjs의 스모크 테스트. 측정값 자체(밸런스)는 검증하지 않는다 —
-// 표의 구조와 수치 정합성만 본다: 출구 A–B 최소 거리(ADR-0076)와 "여유 = 마감 − 거리".
+// 표의 구조와 수치 정합성만 본다: 출구 A 배치(ADR-0083)와 "여유 = 마감 − 거리".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { measure, formatReport, parseArgs, MOBILITY_VALUES } from '../scripts/measure-map-balance.mjs';
 import {
-  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, LOCKDOWN_EXIT_CLOSE_WINDOW,
-  EXIT_REQUEST_TIME, EXIT_OPEN_WAIT_BY_HACKING, EXIT_AB_MIN_DISTANCE,
+  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
+  EXIT_REQUEST_TIME, EXIT_OPEN_WAIT_BY_HACKING,
 } from '../src/data/facilityLayout.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 
@@ -29,17 +29,13 @@ test('측정 결과는 시드마다 Mobility 네 값을 모두 담는다', () =>
   }
 });
 
-test('출구 A–B 거리는 최소값 이상이거나 relaxed로 표시된다', () => {
+test('기록된 출구 A 거리는 Mobility 0 · 개방 없이 실측과 같다', () => {
   const result = measure(SEEDS);
   for (const seedResult of result.seedResults) {
-    const { abDistance, relaxed } = seedResult.exitPlacement;
-    assert.equal(typeof relaxed, 'boolean');
-    assert.ok(
-      abDistance >= EXIT_AB_MIN_DISTANCE || relaxed,
-      `시드 ${seedResult.seed}: A–B ${abDistance} < ${EXIT_AB_MIN_DISTANCE} 인데 relaxed가 아니다`,
-    );
+    const { exitAWalkDistance } = seedResult.exitPlacement;
+    assert.equal(typeof exitAWalkDistance, 'number');
     // 배치 판정은 Mobility 0 · 개방 없이 기준이므로 그 Mobility의 실측과 같아야 한다.
-    assert.equal(seedResult.byMobility[0].abWalk, abDistance, `시드 ${seedResult.seed}: 실측 A–B 거리`);
+    assert.equal(seedResult.byMobility[0].exits.A.walk, exitAWalkDistance, `시드 ${seedResult.seed}: 실측 A 거리`);
   }
 });
 
@@ -49,18 +45,16 @@ test('여유는 마감에서 최단거리를 뺀 값이다', () => {
     for (const mobility of MOBILITY_VALUES) {
       const { exits, slack } = seedResult.byMobility[mobility];
       assert.equal(slack.exitA, EXIT_A_DISABLED_AT - exits.A.walk);
-      assert.equal(slack.exitB, EXIT_B_DISABLED_AT - exits.B.walk);
       assert.equal(slack.collapseViaA, RUN_COLLAPSE_TIME - exits.A.walk - EXIT_OVERHEAD);
-      assert.equal(slack.collapseViaB, RUN_COLLAPSE_TIME - exits.B.walk - EXIT_OVERHEAD);
       // 문을 열면 절대 더 멀어지지 않는다(같은 그래프에 간선만 더한 것이므로).
-      for (const exitId of ['A', 'key', 'B']) {
+      for (const exitId of ['A', 'key']) {
         assert.ok(exits[exitId].open <= exits[exitId].walk, `${exitId}: 개방 경로가 더 길 수 없다`);
       }
     }
   }
 });
 
-test('계약 왕복은 확보 시각과 봉쇄 유예를 함께 계산한다', () => {
+test('계약 왕복은 확보 시각과 완료 행동을 함께 계산한다', () => {
   const result = measure(SEEDS);
   for (const seedResult of result.seedResults) {
     for (const mobility of MOBILITY_VALUES) {
@@ -71,23 +65,16 @@ test('계약 왕복은 확보 시각과 봉쇄 유예를 함께 계산한다', (
         // 기폭 시각이 아니다(C5).
         assert.equal(entry.acquiredAt, entry.toObjective + entry.actionCost);
         assert.ok(entry.actionCost > 0);
+        // 봉쇄는 출구를 앞당겨 닫지 않는다(ADR-0083) — A는 자기 폐쇄 시각, 열쇠는 마감 없음.
         assert.equal(entry.legs.A.deadline, EXIT_A_DISABLED_AT);
-        // 정보 계약은 봉쇄가 켜져도 B를 앞당기지 않는다 — 마감이 670 그대로다.
-        assert.equal(
-          entry.legs.B.deadline,
-          def.type === 'intel' ? EXIT_B_DISABLED_AT : Math.min(EXIT_B_DISABLED_AT, entry.acquiredAt + LOCKDOWN_EXIT_CLOSE_WINDOW),
-        );
+        assert.equal(entry.legs.key.deadline, Infinity);
         // 목표부를 떠난 뒤에도 완료 행동이 남는 계약이 있다(파괴=기폭 2칸, 정보=송출 5칸).
         assert.equal(entry.completionCost > 0, def.type !== 'retrieval');
-        for (const exitId of ['A', 'B']) {
+        for (const exitId of ['A', 'key']) {
           const leg = entry.legs[exitId];
           assert.equal(leg.total, entry.acquiredAt + leg.leg + entry.completionCost);
           assert.equal(leg.slack, leg.deadline - leg.total);
         }
-        assert.equal(
-          entry.bLockdownReachable,
-          def.type === 'intel' ? entry.legs.B.total < EXIT_B_DISABLED_AT : entry.legs.B.leg <= LOCKDOWN_EXIT_CLOSE_WINDOW,
-        );
       }
     }
   }

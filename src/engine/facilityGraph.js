@@ -3,9 +3,10 @@
 // Math.random().
 //
 // A run does not use all eight sector definitions. selectRunSectorIds draws RUN_SECTOR_COUNT (4)
-// of them from the run seed — entrance always, plus three others — and every step below takes that
-// ordered list as a parameter (ADR-0081). The list is the ring order and is stored on the finished
-// graph as `graph.sectorIds`; nothing outside this module may assume which sectors a run has.
+// of them — entrance always, the accepted contract's objective sector always, plus two others
+// (ADR-0081, ADR-0083) — and every step below takes that ordered list as a parameter. The list is
+// the ring order and is stored on the finished graph as `graph.sectorIds`; nothing outside this
+// module may assume which sectors a run has.
 //
 // Topology design (floor plans on a ring). Each of the run's sectors (facilityLayout.js
 // SECTOR_LAYOUTS) gets a center on one big ring, and its interior is drawn by layoutArchetypes.js as an actual
@@ -24,8 +25,8 @@
 // Each edge's timeCost is an integer number of time 칸, derived once at generation from its actual
 // 2D length (EDGE_TIME_PER_LENGTH_UNIT, rounded and clamped to [EDGE_TIME_MIN, EDGE_TIME_MAX])
 // instead of a flat constant — shorter corridors are faster, longer ones slower. The exit
-// placement's A–B distance therefore uses Dijkstra (graphUtils.js baselineWalkDistances) rather
-// than hop-count * constant.
+// placement's "farthest from the start" therefore uses Dijkstra (graphUtils.js
+// baselineWalkDistances) rather than hop-count * constant.
 //
 // Special edges (§4.2) are additional edges layered on top of the base graph, in three flavors:
 // "within-sector" (both endpoints from one sector's pool), "cross-sector" (one endpoint from each
@@ -48,7 +49,7 @@ import {
   ALL_SECTOR_IDS, RUN_SECTOR_COUNT, START_SECTOR_ID, DEEPEST_SECTOR_ID,
   SECTOR_RING_RADIUS, SECTOR_NODE_RADIUS,
   EDGE_TIME_PER_LENGTH_UNIT, EDGE_TIME_MIN, EDGE_TIME_MAX,
-  BASE_EDGE_DEGREE_HARD_CAP, EXIT_AB_MIN_DISTANCE, EXIT_PLACEMENT_MAX_ATTEMPTS,
+  BASE_EDGE_DEGREE_HARD_CAP, EXIT_PLACEMENT_MAX_ATTEMPTS,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
   LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SPECIAL_EDGE_CATEGORY_WEIGHTS,
@@ -63,27 +64,35 @@ import {
 } from '../data/facilityLayout.js';
 
 /**
- * 이 런이 쓸 구역을 시드에서 뽑는다(ADR-0081). entrance는 항상 들어가고 — 시작점이자 격자
- * 허브라 빼면 런이 성립하지 않는다 — 나머지 일곱에서 셋을 균등하게 뽑는다.
+ * 이 런이 쓸 구역을 뽑는다(ADR-0081, ADR-0083). 추첨은 **계약을 수락한 뒤**에 돈다 — 제안은
+ * 여덟 구역 전부에서 나오고(contractReducer.offerContracts), 수락한 계약의 목표 구역이 이
+ * 추첨에 무조건 포함된다. 그래서 "가지 않을 구역의 계약"도, "제안이 한 장뿐인 조합"도 없다.
  *
- * 반환 순서가 곧 링 순서다. entrance가 0번이고, power가 뽑혔다면 2번(링에서 entrance의
- * 정반대)에 고정한다 — "가장 깊고 위험한 구역이 시작점에서 가장 멀다"는 배치 규칙을 구역이
- * 넷으로 줄어도 그대로 지키기 위해서다. 나머지는 뽑힌 순서 그대로 들어간다.
+ * 구성은 entrance(시작점이자 격자 허브 — 빼면 런이 성립하지 않는다) + 계약 목표 구역 + 나머지
+ * 구역에서 균등하게 뽑은 둘이다. 목표 구역이 entrance면(정보 계약 record_review) 이미
+ * 포함되어 있으므로 나머지 셋을 뽑는다.
  *
- * 계약 제안은 뽑힌 구역의 계약으로만 제한되는데(contractReducer.offerContracts), entrance가
- * 항상 들어가고 entrance에는 정보 계약(record_review)이 있으므로 제안이 0장이 되는 조합은
- * 없다 — 그래서 여기서 계약 유무를 따로 보정하지 않는다.
+ * 반환 순서가 곧 링 순서다. entrance가 0번이고, 2번(링에서 entrance의 정반대, 가장 깊은 자리)은
+ * 다음 우선순위로 채운다:
+ *   1. power가 뽑혔다면 power — "가장 깊고 위험한 구역이 시작점에서 가장 멀다".
+ *   2. 아니면 계약 목표 구역 — 목표가 얕은 자리에 오면 계약이 곧바로 끝나 버린다.
+ * 나머지는 뽑힌 순서 그대로 들어간다.
  * @param {import('./rng.js').RngState} rngState
+ * @param {string} [contractSectorId] 수락한 계약의 목표 구역. 생략하면 옛 방식대로 셋을 뽑는다
+ *   (측정 스크립트와 테스트가 계약 없이 한 런을 재현할 때 쓴다).
  * @returns {{sectorIds: import('./types.js').FacilitySectorId[], rngState: import('./rng.js').RngState}}
  */
-export function selectRunSectorIds(rngState) {
-  const pool = ALL_SECTOR_IDS.filter((id) => id !== START_SECTOR_ID);
+export function selectRunSectorIds(rngState, contractSectorId = undefined) {
+  const guaranteed = contractSectorId && contractSectorId !== START_SECTOR_ID ? [contractSectorId] : [];
+  const pool = ALL_SECTOR_IDS.filter((id) => id !== START_SECTOR_ID && !guaranteed.includes(id));
   const { value: shuffled, state } = shuffle(rngState, pool);
-  const drawn = shuffled.slice(0, RUN_SECTOR_COUNT - 1);
-  const rest = drawn.filter((id) => id !== DEEPEST_SECTOR_ID);
-  const sectorIds = drawn.length === rest.length
+  const drawn = [...guaranteed, ...shuffled.slice(0, RUN_SECTOR_COUNT - 1 - guaranteed.length)];
+  const deepest = drawn.includes(DEEPEST_SECTOR_ID) ? DEEPEST_SECTOR_ID
+    : (guaranteed.length > 0 ? guaranteed[0] : null);
+  const rest = drawn.filter((id) => id !== deepest);
+  const sectorIds = deepest === null
     ? [START_SECTOR_ID, ...drawn]
-    : [START_SECTOR_ID, rest[0], DEEPEST_SECTOR_ID, ...rest.slice(1)];
+    : [START_SECTOR_ID, rest[0], deepest, ...rest.slice(1)];
   return { sectorIds: /** @type {import('./types.js').FacilitySectorId[]} */ (sectorIds), rngState: state };
 }
 
@@ -283,24 +292,27 @@ function deriveGraphMeta(nodes, edges) {
 }
 
 /**
- * Step 4-5 of §4.1: place start + the three exits on the **finished** graph — special edges
- * included (ADR-0076). The three exits go to three different sectors, never to the start sector
- * (입구·관리동), and are otherwise random: there is no distance range from the start and no
- * A < 열쇠 < B ordering. The one guarantee is that A and B are at least EXIT_AB_MIN_DISTANCE apart,
- * so they are two real destinations rather than one — measured on this finished graph over the
- * edges a Capability 0 player can walk without opening anything (baselineWalkDistances), in the
- * cheaper of the two directions.
+ * Step 4-5 of §4.1: place start + the two exits on the **finished** graph — special edges
+ * included (ADR-0076의 "완성 그래프에서 판정" 부분은 유효하다). 표준 출구는 A 하나뿐이고
+ * 열쇠 출구가 유일한 대안 경로다(ADR-0083 — 출구 B는 없앴다).
  *
- * Never fails on the distance rule: after EXIT_PLACEMENT_MAX_ATTEMPTS draws it keeps the widest
- * A–B pair it saw and marks the placement `relaxed` (a seed with an unusually cramped graph still
- * produces a map). It can still return null when a sector has no exit-capable node at all, which
- * is the caller's retry signal.
+ * 출구 A의 자리는 더 이상 무작위가 아니다. 시작 구역(입구·관리동)도, **이번 계약의 목표 구역**도
+ * 아닌 구역 중에서, 시작점에서 걸어서 가장 먼 노드가 A다 — 거리는 Capability 0이 아무것도 열지
+ * 않고 지날 수 있는 간선만으로 잰다(baselineWalkDistances). 목표 구역을 빼는 이유는 "목표를
+ * 집은 자리가 곧 탈출구"인 런을 없애기 위해서다: 계약의 마지막 장은 언제나 목표부에서 다른
+ * 구역으로 건너가는 구간이어야 한다. 계약 구역이 시작 구역이면(정보 계약 record_review) 뺄
+ * 구역이 없으므로 시작 구역만 빠진다.
+ *
+ * 열쇠 출구는 A와 다른 구역이면 어디든 좋다 — 목표 구역도 허용한다. 무작위로 뽑되
+ * EXIT_PLACEMENT_MAX_ATTEMPTS번 안에 2-edge-disjoint 조건을 만족하는 노드를 찾는다.
+ * 어느 쪽도 못 놓으면 null을 돌려 호출부의 재시도 신호가 된다.
  * @param {import('./types.js').FacilityNode[]} nodes
  * @param {import('./types.js').FacilityEdge[]} edges 특수 엣지까지 얹은 완성 그래프.
  * @param {import('./rng.js').RngState} rngState
  * @param {readonly string[]} sectorIds
+ * @param {string} [contractSectorId] 이번 계약의 목표 구역. 출구 A는 여기 놓이지 않는다.
  */
-function placeStartAndExits(nodes, edges, rngState, sectorIds) {
+function placeStartAndExits(nodes, edges, rngState, sectorIds, contractSectorId = undefined) {
   const entranceNodes = nodes.filter((n) => n.sectorId === START_SECTOR_ID).map((n) => n.id);
   const { value: startNodeId, state: afterStart } = pick(rngState, entranceNodes);
   let state = afterStart;
@@ -312,13 +324,13 @@ function placeStartAndExits(nodes, edges, rngState, sectorIds) {
     (poolBySector[node.sectorId] ||= []).push(node.id);
   }
   const exitSectors = sectorIds.filter((sectorId) => (poolBySector[sectorId] || []).length > 0);
-  if (exitSectors.length < 3) return null;
+  if (exitSectors.length < 2) return null;
 
   // 방을 복도 하나에만 매단 평면도에서는 잎 노드가 많고, 잎으로 가는 길은 하나뿐이라 §4.1 step 5의
   // 2-edge-disjoint 요구를 만족하지 못한다. 후보 노드 하나당 한 번만 검사하고 캐시한다.
   // 잠긴 통로는 우회로로 치지 않는다 — 배치 원형이 구조적으로 두는 특수 엣지(탑 승강기)를 두 번째
   // 경로로 인정하면 "열지 못하면 퇴로가 없는" 탈출구가 생긴다. 같은 이유로 고지대(유효
-  // Mobility 3 필요)도 빼고 환풍구(일방통행)는 생성 방향으로만 센다 — A–B 거리를 재는
+  // Mobility 3 필요)도 빼고 환풍구(일방통행)는 생성 방향으로만 센다 — 시작점부터의 거리를 재는
   // baselineWalkDistances와 같은 기준이다(baselineWalkArcs). 무향으로 세면 되돌아올 수 없는
   // 통로가 두 번째 퇴로로 인정돼, 실제 보행 가능 간선만으로는 퇴로가 하나뿐인 출구가 나온다.
   const redundancyArcs = baselineWalkArcs(edges);
@@ -333,19 +345,7 @@ function placeStartAndExits(nodes, edges, rngState, sectorIds) {
     return ok;
   };
 
-  /** @type {Map<string, Map<string, number>>} */
-  const walkCache = new Map();
-  /** @param {string} nodeId */
-  const walkFrom = (nodeId) => {
-    let cached = walkCache.get(nodeId);
-    if (!cached) {
-      cached = baselineWalkDistances(edges, nodeId);
-      walkCache.set(nodeId, cached);
-    }
-    return cached;
-  };
-  /** 두 방향 중 짧은 쪽 — 한쪽으로만 가까우면 그 둘은 사실상 가까운 출구다. @param {string} a @param {string} b */
-  const abDistance = (a, b) => Math.min(walkFrom(a).get(b) ?? Infinity, walkFrom(b).get(a) ?? Infinity);
+  const walkFromStart = baselineWalkDistances(edges, startNodeId);
 
   /** 한 구역에서 탈출구가 될 수 있는 노드 하나. 전부 잎이면 null. @param {string} sectorId */
   const pickExitNode = (sectorId) => {
@@ -358,46 +358,58 @@ function placeStartAndExits(nodes, edges, rngState, sectorIds) {
     return null;
   };
 
-  /** @type {{a: string, key: string, b: string, sectors: string[], distance: number} | null} */
-  let best = null;
-  for (let attempt = 0; attempt < EXIT_PLACEMENT_MAX_ATTEMPTS; attempt++) {
-    const { value: order, state: afterShuffle } = shuffle(state, exitSectors);
-    state = afterShuffle;
-    const sectors = order.slice(0, 3);
-    const chosen = sectors.map(pickExitNode);
-    if (chosen.some((id) => id === null)) continue;
-    const [a, key, b] = /** @type {string[]} */ (chosen);
-    const distance = abDistance(a, b);
-    // 양방향 모두 도달 불가면 Infinity다 — 그대로 두면 "가장 먼 쌍"으로 뽑혀 서로 걸어서
-    // 오갈 수 없는 A·B가 확정되고, relaxed 판정(< 최소거리)도 통과해 버린다. 후보에서 뺀다.
-    if (!Number.isFinite(distance)) continue;
-    if (!best || distance > best.distance) best = { a, key, b, sectors, distance };
-    if (distance >= EXIT_AB_MIN_DISTANCE) break;
+  // 출구 A — 시작 구역도 목표 구역도 아닌 구역에서, 시작점에서 걸어서 가장 먼 노드. 동점은
+  // 노드 id로 가른다(시드가 같으면 언제나 같은 그래프여야 한다). 도달 불가(Infinity)는 뺀다.
+  const aSectors = exitSectors.filter((sectorId) => sectorId !== contractSectorId);
+  if (aSectors.length === 0) return null;
+  /** @type {{nodeId: string, sectorId: string, distance: number} | null} */
+  let exitA = null;
+  for (const sectorId of aSectors) {
+    for (const nodeId of poolBySector[sectorId]) {
+      const distance = walkFromStart.get(nodeId) ?? Infinity;
+      if (!Number.isFinite(distance)) continue;
+      if (exitA && !(distance > exitA.distance || (distance === exitA.distance && nodeId < exitA.nodeId))) continue;
+      if (!hasTwoPaths(nodeId)) continue;
+      exitA = { nodeId, sectorId, distance };
+    }
   }
-  if (!best) return null;
+  if (!exitA) return null;
+
+  // 열쇠 출구 — A와 다른 구역이면 목표 구역이어도 좋다.
+  const keySectors = exitSectors.filter((sectorId) => sectorId !== exitA.sectorId);
+  if (keySectors.length === 0) return null;
+  /** @type {{nodeId: string, sectorId: string} | null} */
+  let exitKey = null;
+  for (let attempt = 0; attempt < EXIT_PLACEMENT_MAX_ATTEMPTS && !exitKey; attempt++) {
+    const { value: sectorId, state: afterPick } = pick(state, keySectors);
+    state = afterPick;
+    const nodeId = pickExitNode(sectorId);
+    if (nodeId) exitKey = { nodeId, sectorId };
+  }
+  if (!exitKey) return null;
 
   /** @type {import('./types.js').ExitPlacement[]} */
   const exits = [
-    { exitId: 'A', nodeId: best.a, sectorId: /** @type {any} */ (best.sectors[0]) },
-    { exitId: 'key', nodeId: best.key, sectorId: /** @type {any} */ (best.sectors[1]) },
-    { exitId: 'B', nodeId: best.b, sectorId: /** @type {any} */ (best.sectors[2]) },
+    { exitId: 'A', nodeId: exitA.nodeId, sectorId: /** @type {any} */ (exitA.sectorId) },
+    { exitId: 'key', nodeId: exitKey.nodeId, sectorId: /** @type {any} */ (exitKey.sectorId) },
   ];
   /** @type {import('./types.js').ExitPlacementMeta} */
-  const exitPlacement = { abDistance: best.distance, relaxed: best.distance < EXIT_AB_MIN_DISTANCE };
+  const exitPlacement = { exitAWalkDistance: exitA.distance };
   return { startNodeId, exits, exitPlacement, rngState: state };
 }
 
 /**
  * §4.1 steps 1-5+8 as a single attempt. Special edges are layered on **before** the exits are
- * placed (ADR-0076) so the A–B minimum distance is judged on the graph the player actually walks;
+ * placed (ADR-0076) so the exit distance is judged on the graph the player actually walks;
  * a guarantee proven on the base graph alone did not survive the special edges.
  * Returns `{ok:false}` if this rngState's graph can't satisfy the connectivity/path requirements —
  * caller retries with the returned rngState.
  * @param {import('./rng.js').RngState} rngState
  * @param {readonly string[]} sectorIds
+ * @param {string} [contractSectorId]
  * @returns {{ok: false, rngState: import('./rng.js').RngState} | {ok: true, topology: Topology, rngState: import('./rng.js').RngState}}
  */
-function tryBuildTopology(rngState, sectorIds) {
+function tryBuildTopology(rngState, sectorIds, contractSectorId = undefined) {
   const base = buildBaseGraph(rngState, sectorIds);
 
   // Step 7: every node reachable — the floor plans plus gateway edges are *usually* enough to fully
@@ -414,7 +426,7 @@ function tryBuildTopology(rngState, sectorIds) {
   );
   const edges = [...base.edges, ...special.specialEdges];
 
-  const placement = placeStartAndExits(base.nodes, edges, special.rngState, sectorIds);
+  const placement = placeStartAndExits(base.nodes, edges, special.rngState, sectorIds, contractSectorId);
   if (!placement) return { ok: false, rngState: special.rngState };
 
   return {
@@ -436,13 +448,14 @@ function tryBuildTopology(rngState, sectorIds) {
 // 구역 조합마다 fallback 도면이 다르므로 조합을 키로 캐싱한다.
 /** @type {Map<string, Topology>} */
 const cachedFallbackTopologies = new Map();
-/** @param {readonly string[]} sectorIds */
-function getFallbackTopology(sectorIds) {
-  const key = sectorIds.join('|');
+/** @param {readonly string[]} sectorIds @param {string} [contractSectorId] */
+function getFallbackTopology(sectorIds, contractSectorId = undefined) {
+  // 출구 A의 자리가 계약 구역에 따라 달라지므로 캐시 키에도 계약 구역이 들어간다.
+  const key = [...sectorIds, contractSectorId ?? '-'].join('|');
   const cached = cachedFallbackTopologies.get(key);
   if (cached) return cached;
   for (let seed = 0; seed < FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT; seed++) {
-    const result = tryBuildTopology(createRngState(seed), sectorIds);
+    const result = tryBuildTopology(createRngState(seed), sectorIds, contractSectorId);
     if (result.ok) {
       cachedFallbackTopologies.set(key, result.topology);
       return result.topology;
@@ -871,22 +884,23 @@ function placeContent(topology, rngState) {
  * @param {number} seed
  * @param {readonly string[]} [sectorIds] 이 런의 구역(링 순서). 생략하면 같은 시드에서
  *   selectRunSectorIds로 뽑는다 — 측정 스크립트와 테스트가 시드 하나만으로 한 런을 그대로
- *   재현할 수 있게 하려는 것이다. 실제 플레이 경로는 NEW_RUN이 뽑아 스냅샷에 담아 둔 목록을 넘긴다.
+ *   재현할 수 있게 하려는 것이다. 실제 플레이 경로는 ACCEPT_CONTRACT가 뽑아 스냅샷에 담아 둔 목록을 넘긴다.
+ * @param {string} [contractSectorId] 수락한 계약의 목표 구역 — 출구 A가 여기 놓이지 않게 한다(ADR-0083).
  * @returns {{graph: import('./types.js').FacilityGraph, rngState: import('./rng.js').RngState, usedFallback: boolean}}
  */
-export function generateFacilityGraph(seed, sectorIds = undefined) {
-  const runSectorIds = sectorIds || selectRunSectorIds(createRngState(seed)).sectorIds;
+export function generateFacilityGraph(seed, sectorIds = undefined, contractSectorId = undefined) {
+  const runSectorIds = sectorIds || selectRunSectorIds(createRngState(seed), contractSectorId).sectorIds;
   let rngState = createRngState(seed);
   /** @type {Topology | null} */
   let topology = null;
   let usedFallback = false;
   for (let attempt = 0; attempt < GENERATION_MAX_ATTEMPTS; attempt++) {
-    const result = tryBuildTopology(rngState, runSectorIds);
+    const result = tryBuildTopology(rngState, runSectorIds, contractSectorId);
     rngState = result.rngState;
     if (result.ok) { topology = result.topology; break; }
   }
   if (!topology) {
-    topology = getFallbackTopology(runSectorIds);
+    topology = getFallbackTopology(runSectorIds, contractSectorId);
     usedFallback = true;
   }
 

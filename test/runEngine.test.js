@@ -13,10 +13,10 @@ import {
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import {
-  EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
+  EXIT_A_DISABLED_AT, EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW,
   EXIT_OPEN_WAIT_BY_HACKING, RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
   BASIC_RECON_TIME, SUPPLY_FARM_TIME, PRIZE_FARM_TIME, CONCEALMENT_ACTION_TIME_COST, CONTROL_ROOM_HACK_TIME,
-  TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_EXIT_CLOSE_WINDOW,
+  TOWER_ELEVATOR_REQUIREMENT, HALL_STEALTH_PENALTY, LOCKDOWN_THREAT_MOVE_INTERVAL,
   REINFORCEMENT_INTERVAL, CORPSE_DISPOSAL_TIME, CAMERA_FORCE_NOISE,
   NOISE_DURATION, CAMERA_FORCE_TIME, GENERATOR_FORCE_TIME,
   MOVE_MIN_TIME, MOBILITY_MOVE_TIME_DELTA, CAPABILITY_STEP_TIME_DELTA, CAPABILITY_STEP_HP_COST,
@@ -109,7 +109,7 @@ test('isAtOpenExit: true only while standing on an open standard exit, or the ke
   assert.equal(state.exits.A.status, 'open');
   assert.equal(isAtOpenExit(state), true);
   // being open elsewhere doesn't count
-  assert.equal(isAtOpenExit({ ...state, playerNodeId: state.exits.B.nodeId }), false);
+  assert.equal(isAtOpenExit({ ...state, playerNodeId: state.exits.key.nodeId }), false);
 
   // key exit: discovered but not standing there -> false; standing there but not discovered -> false
   const keyState = { ...makeRun(5), playerNodeId: makeRun(5).exits.key.nodeId };
@@ -118,14 +118,13 @@ test('isAtOpenExit: true only while standing on an open standard exit, or the ke
   assert.equal(isAtOpenExit({ ...keyState, keyDiscovered: false }), false);
 });
 
-test('exit A cannot be requested once disabled, and B collapse grace ends the run at RUN_COLLAPSE_TIME', () => {
+test('exit A cannot be requested once disabled, and the run still ends at RUN_COLLAPSE_TIME', () => {
   let state = makeRun(9);
   state = advanceTime(state, EXIT_A_DISABLED_AT);
   assert.equal(state.exits.A.status, 'disabled');
   assert.throws(() => requestExtraction(state, 'A', 0));
-
-  state = advanceTime(state, EXIT_B_DISABLED_AT);
-  assert.equal(state.exits.B.status, 'disabled');
+  // 표준 출구는 A 하나뿐이다(ADR-0083) — B는 없다.
+  assert.equal(state.exits.B, undefined);
 
   state = advanceTime(state, RUN_COLLAPSE_TIME);
   assert.equal(state.phase, 'collapsed');
@@ -134,8 +133,8 @@ test('exit A cannot be requested once disabled, and B collapse grace ends the ru
 
 test('collapse at RUN_COLLAPSE_TIME takes priority even mid-request', () => {
   let state = makeRun(11);
-  state = advanceTime(state, EXIT_B_DISABLED_AT - 10); // request just before B disables
-  state = requestExtraction(state, 'B', 4); // fastest wait tier
+  state = advanceTime(state, EXIT_A_DISABLED_AT - 10); // request just before A disables
+  state = requestExtraction(state, 'A', 4); // fastest wait tier
   state = advanceTime(state, RUN_COLLAPSE_TIME + 50); // target way past collapse
   assert.equal(state.phase, 'collapsed');
   assert.equal(state.time, RUN_COLLAPSE_TIME);
@@ -748,7 +747,13 @@ test('hackControlRoom level 2 lowers this sector alert by (hacking - 1), and lev
   };
   // 예전 3단계는 맵 전체 위협을 patrol로 되돌렸다 — 그 효과가 사라졌는지도 같이 본다.
   const threats = {};
-  for (const [id, t] of Object.entries(state.threats)) threats[id] = { ...t, mode: 'pursuit', pursuitStrength: 3, lastKnownPlayerNodeId: 'somewhere' };
+  // 위협은 전부 통제실에서 멀찍이(6홉 이상) 옮겨 둔다 — 이 테스트가 보는 것은 경계도 산수인데,
+  // 해킹 4칸 사이에 적 접촉이 나면 작업이 중단되어 그 산수를 아예 못 본다.
+  const hopsFromPlayer = bfsHopDistances(graph.edges, landmark.nodeId);
+  const farNode = graph.nodes.find((n) => (hopsFromPlayer.get(n.id) ?? 0) >= 6);
+  for (const [id, t] of Object.entries(state.threats)) {
+    threats[id] = { ...t, nodeId: farNode.id, mode: 'pursuit', pursuitStrength: 3, lastKnownPlayerNodeId: farNode.id };
+  }
   state = { ...state, threats };
 
   const level2 = hackControlRoom(state, 2);
@@ -791,7 +796,7 @@ function withContract(seed, contractId) {
   return { ...createRunState(graph, used, { contract }), threats: {} };
 }
 
-test('acquireContractGoods requires being at the objective and Stealth or Mobility 1+, then sets acquired + lockdown + accelerates exit B', () => {
+test('acquireContractGoods requires being at the objective and Stealth or Mobility 1+, then sets acquired + lockdown', () => {
   const state = withContract(1, 'sample_retrieval');
   const landmark = state.graph.landmarks.find((l) => l.sectorId === state.contract.sectorId);
   assert.notEqual(landmark.nodeId, state.playerNodeId, 'fixture should not start at the objective');
@@ -811,7 +816,8 @@ test('acquireContractGoods requires being at the objective and Stealth or Mobili
   assert.equal(acquired.contract.acquiredAt, acquired.time);
   assert.ok(acquired.lockdown, 'lockdown should activate on acquisition');
   assert.equal(acquired.lockdown.startedAt, acquired.time);
-  assert.equal(acquired.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, acquired.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+  // 봉쇄는 출구 폐쇄 시각을 건드리지 않는다(ADR-0083).
+  assert.equal(acquired.exits.A.disabledAt, EXIT_A_DISABLED_AT);
 
   assert.throws(() => acquireContractGoods(acquired, 1, 1), /no retrieval contract/, 'already-acquired contract cannot be acquired again');
 });
@@ -829,8 +835,8 @@ test('파괴 계약은 설치와 기폭 두 장이다 — 설치에서 봉쇄가
   assert.equal(planted.contract.status, 'acquired');
   assert.equal(planted.contract.completedAt, null);
   assert.ok(planted.lockdown);
-  assert.equal(planted.lockdown.startedAt, planted.time, '봉쇄 유예는 설치 완료 시각부터다');
-  assert.equal(planted.exits.B.disabledAt, Math.min(EXIT_B_DISABLED_AT, planted.time + LOCKDOWN_EXIT_CLOSE_WINDOW));
+  assert.equal(planted.lockdown.startedAt, planted.time, '봉쇄는 설치 완료 시각부터다');
+  assert.equal(planted.exits.A.disabledAt, EXIT_A_DISABLED_AT, '봉쇄는 출구를 앞당겨 닫지 않는다');
 
   // 목표부에 서 있는 채로는 못 터뜨린다.
   assert.throws(() => detonateContractCharge(planted), /too close/);
@@ -891,24 +897,22 @@ test('intel contracts need a two-step acquire-then-transmit at an adjacent-secto
   assert.equal(transmitted.lockdown.startedAt, lockedAt, 'transmit must not re-trigger or move the lockdown clock');
 });
 
-// 사용자 확정: 정보 계약은 봉쇄가 켜져도 출구 B를 앞당기지 않는다. 데이터는 이미 빠져나간
-// 뒤라 문을 닫아봐야 소용이 없고, 마지막 장(이웃 구역 송출)이 B 유예 125칸에 갇히면
-// 정보 계약만 출구 선택이 사라진다. 봉쇄의 나머지 효과는 그대로 켜진다.
-test('정보 계약의 봉쇄는 출구 B 폐쇄를 앞당기지 않는다 — 회수·파괴는 앞당긴다', () => {
+// ADR-0083: 봉쇄는 어느 계약에서도 출구 폐쇄 시각을 앞당기지 않는다 — 하는 일은 위협 가속뿐이다.
+// 표준 출구가 A 하나뿐이므로 그것까지 앞당겨 닫으면 봉쇄가 곧 실패 선고가 된다.
+test('봉쇄는 출구 폐쇄를 앞당기지 않고 위협만 가속한다 — 세 계약 유형 모두', () => {
   const intelState = withContract(1, 'record_review');
   const intelLandmark = intelState.graph.landmarks.find((l) => l.sectorId === 'entrance');
   const acquired = acquireContractIntel({ ...intelState, playerNodeId: intelLandmark.nodeId }, 1);
-  assert.ok(acquired.time + LOCKDOWN_EXIT_CLOSE_WINDOW < EXIT_B_DISABLED_AT, '앞당김이 의미 있는 시각이어야 한다');
   assert.ok(acquired.lockdown, '봉쇄 자체는 켜진다');
-  assert.equal(acquired.exits.B.disabledAt, EXIT_B_DISABLED_AT, '정보 계약에서는 B의 원래 폐쇄 시각이 유지된다');
-  assert.equal(acquired.exits.A.disabledAt, EXIT_A_DISABLED_AT, 'A는 어느 계약에서도 봉쇄가 건드리지 않는다');
+  assert.equal(acquired.exits.A.disabledAt, EXIT_A_DISABLED_AT, 'A는 봉쇄가 건드리지 않는다');
+  assert.equal(acquired.exits.B, undefined, '출구 B는 더 이상 없다');
 
-  // 송출(완료)도 B를 건드리지 않는다 — 봉쇄는 확보에서 한 번만 켜진다.
+  // 송출(완료)도 출구를 건드리지 않는다 — 봉쇄는 확보에서 한 번만 켜진다.
   const neighbor = acquired.graph.landmarks.find((l) => adjacentSectorIds(acquired.graph, 'entrance').includes(l.sectorId));
   const transmitted = transmitContractIntel({ ...acquired, playerNodeId: neighbor.nodeId }, 1);
-  assert.equal(transmitted.exits.B.disabledAt, EXIT_B_DISABLED_AT);
+  assert.equal(transmitted.exits.A.disabledAt, EXIT_A_DISABLED_AT);
 
-  // 봉쇄의 나머지 효과는 정보 계약에서도 그대로 — 위협 이동이 봉쇄표로 빨라진다.
+  // 봉쇄의 실제 효과 — 위협 이동이 봉쇄표로 빨라진다.
   // 같은 상태에서 lockdown만 떼어낸 대조군과 비교해 봉쇄표가 실제로 쓰였는지 본다.
   const baseThreats = createRunState(acquired.graph, 1).threats;
   const threatId = Object.keys(baseThreats)[0];
@@ -919,21 +923,19 @@ test('정보 계약의 봉쇄는 출구 B 폐쇄를 앞당기지 않는다 — �
   assert.equal(
     lockedMoved.threats[threatId].nextMoveAt,
     (1 + LOCKDOWN_THREAT_MOVE_INTERVAL.patrol) + LOCKDOWN_THREAT_MOVE_INTERVAL.patrol,
-    '정보 계약의 봉쇄에서도 위협 이동 간격은 봉쇄표를 쓴다',
+    '봉쇄에서는 위협 이동 간격이 봉쇄표를 쓴다',
   );
 
-  // 회수·파괴는 그대로 앞당긴다.
+  // 회수·파괴도 마찬가지다.
   const retrieval = withContract(1, 'sample_retrieval');
   const labs = retrieval.graph.landmarks.find((l) => l.sectorId === retrieval.contract.sectorId);
   const goods = acquireContractGoods({ ...retrieval, playerNodeId: labs.nodeId }, 1, 0);
-  assert.equal(goods.exits.B.disabledAt, goods.time + LOCKDOWN_EXIT_CLOSE_WINDOW);
-  assert.ok(goods.exits.B.disabledAt < EXIT_B_DISABLED_AT);
+  assert.equal(goods.exits.A.disabledAt, EXIT_A_DISABLED_AT);
 
   const destroy = withContract(1, 'generator_shutdown');
   const power = destroy.graph.landmarks.find((l) => l.sectorId === destroy.contract.sectorId);
   const planted = destroyContractTarget({ ...destroy, playerNodeId: power.nodeId }, 1);
-  assert.equal(planted.exits.B.disabledAt, planted.time + LOCKDOWN_EXIT_CLOSE_WINDOW);
-  assert.ok(planted.exits.B.disabledAt < EXIT_B_DISABLED_AT);
+  assert.equal(planted.exits.A.disabledAt, EXIT_A_DISABLED_AT);
 });
 
 // D22: 신규 위협 스폰 시스템이 없어 "증원 가속"을 기존 위협 전원의 이동 간격 단축으로

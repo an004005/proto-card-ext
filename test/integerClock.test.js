@@ -85,7 +85,7 @@ test('every generated corridor cost is an integer 칸 and stays inside [EDGE_TIM
       assert.ok(Number.isInteger(edge.timeCost), `seed ${seed} ${edge.id}: ${edge.timeCost}`);
       assert.ok(edge.timeCost >= EDGE_TIME_MIN && edge.timeCost <= EDGE_TIME_MAX, `seed ${seed} ${edge.id}: ${edge.timeCost}`);
     }
-    assert.ok(Number.isInteger(graph.exitPlacement.abDistance), `seed ${seed}: A–B 거리도 정수 칸이다`);
+    assert.ok(Number.isInteger(graph.exitPlacement.exitAWalkDistance), `seed ${seed}: 시작점-출구 A 거리도 정수 칸이다`);
   }
 });
 

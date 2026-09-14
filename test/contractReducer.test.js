@@ -5,31 +5,43 @@ import { offerContracts, computeContractOutcome } from '../src/engine/contractRe
 import { createRngState } from '../src/engine/rng.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 
-import { selectRunSectorIds } from '../src/engine/facilityGraph.js';
 
-/** offerContracts는 [retrieval, destroy, intel] 순서로, 뽑힌 구역에 있는 유형만 하나씩 뽑는다. */
+/** offerContracts는 [retrieval, destroy, intel] 순서로 유형마다 한 장씩, 여덟 구역 전부에서 뽑는다. */
 function startLoadoutWithType(seed, type) {
   const offered = gameReducer(null, { type: 'NEW_RUN', seed });
   const contract = offered.offeredContracts.find((c) => c.type === type);
   return gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
 }
 
-test('offerContracts only offers contracts in the run’s own sectors, at most one per type, and is deterministic', () => {
+test('offerContracts는 여덟 구역 전부에서 유형별 한 장씩, 언제나 세 장을 결정론적으로 뽑는다', () => {
   for (let seed = 0; seed < 30; seed++) {
-    const { sectorIds } = selectRunSectorIds(createRngState(seed));
-    const a = offerContracts(createRngState(seed), sectorIds);
-    const b = offerContracts(createRngState(seed), sectorIds);
+    const a = offerContracts(createRngState(seed));
+    const b = offerContracts(createRngState(seed));
     assert.deepEqual(a.contracts, b.contracts);
-    // 갈 수 없는 구역의 계약은 제안되지 않는다 — 수락하는 순간 완수 불가능한 계약이 된다.
-    for (const c of a.contracts) {
-      assert.ok(CONTRACT_DEFS.includes(c));
-      assert.ok(sectorIds.includes(c.sectorId), `seed ${seed}: ${c.id}의 구역 ${c.sectorId}은 이 런에 없다`);
+    for (const c of a.contracts) assert.ok(CONTRACT_DEFS.includes(c));
+    // 구역 추첨이 수락 뒤로 밀렸으므로(ADR-0083) 제안은 더 이상 구역으로 좁혀지지 않는다.
+    assert.deepEqual(a.contracts.map((c) => c.type), ['retrieval', 'destroy', 'intel']);
+    assert.equal(a.contracts.length, 3, `seed ${seed}: 제안은 언제나 세 장이다`);
+  }
+});
+
+test('ACCEPT_CONTRACT가 구역을 뽑고, 수락한 계약의 목표 구역이 반드시 들어간다', () => {
+  for (let seed = 0; seed < 30; seed++) {
+    const offered = gameReducer(null, { type: 'NEW_RUN', seed });
+    assert.equal(offered.runSectorIds, null, `seed ${seed}: 제안 시점에는 구역이 아직 없다`);
+    for (const contract of offered.offeredContracts) {
+      const accepted = gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id });
+      const ids = accepted.runSectorIds;
+      assert.equal(ids.length, 4, `seed ${seed}: 구역 수`);
+      assert.equal(new Set(ids).size, 4, `seed ${seed}: 중복 없음`);
+      assert.equal(ids[0], 'entrance', `seed ${seed}: 시작 구역은 링 0번`);
+      assert.ok(ids.includes(contract.sectorId), `seed ${seed}: ${contract.id}의 목표 구역이 빠졌다`);
+      // 같은 시드·같은 계약은 같은 구역을 낸다.
+      assert.deepEqual(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id }).runSectorIds, ids);
+      // 링 2번(시작점 정반대)은 power가 있으면 power, 없으면 목표 구역이다.
+      const deep = ids.includes('power') ? 'power' : (contract.sectorId === 'entrance' ? null : contract.sectorId);
+      if (deep) assert.equal(ids[2], deep, `seed ${seed}: 링 2번 자리`);
     }
-    // 유형별 최대 하나. 구역 조합에 그 유형이 없으면 빠지므로 1~3장이다.
-    const types = a.contracts.map((c) => c.type);
-    assert.deepEqual(types, [...new Set(types)]);
-    assert.ok(a.contracts.length >= 1, `seed ${seed}: 제안이 한 장도 없다`);
-    assert.ok(a.contracts.length <= 3);
   }
 });
 

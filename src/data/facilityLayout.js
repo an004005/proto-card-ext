@@ -155,23 +155,10 @@ export const BASE_EDGE_DEGREE_HARD_CAP = 4;
 // graph.sectorIds에서 만든다. 구역 내부 특수 엣지와는 별도로, 그 쌍들 사이에만 "구역을 넘는"
 // 특수 엣지를 놓는다(§4.2 확장).
 
-// 탈출구 A와 B 사이의 최소 거리(칸, ADR-0076). 시작점 기준 거리 범위도 A<열쇠<B 순서도 두지
-// 않는다 — 세 출구는 서로 다른 구역에, 시작 구역(입구·관리동)을 빼고 무작위로 놓이고, 이 값만
-// 완성된 그래프(특수 엣지 포함)에서 검증한다. 판정 기준은 Capability 0이 아무것도 열지 않고
-// 걸어갈 수 있는 간선뿐이며(baselineWalkDistances), 방향에 따라 값이 다르므로 두 방향 중 짧은
-// 쪽을 쓴다.
-//
-// 초기값, 플레이테스트로 조절. 한 런이 네 구역만 쓰게 되면서(ADR-0081) 링이 절반으로 줄어
-// 걸어서 잴 수 있는 최대 거리 자체가 작아졌다 — 옛 값 120은 시드의 43%에서 재배치 상한
-// (EXIT_PLACEMENT_MAX_ATTEMPTS) 안에 **도달 자체가 불가능**해 relaxed가 예외가 아니라 기본이
-// 되어 버렸다(실측: 200시드의 최대 도달 A–B 중앙값 124, 하위 25%는 109). 90칸은 그 분포에서
-// 시드의 93%가 넘기는 값이라 "보장"이라는 말이 다시 성립한다. 동시에 A 폐쇄 300의 30%,
-// 봉쇄 유예 LOCKDOWN_EXIT_CLOSE_WINDOW(125)보다 짧으므로 "목표 확보 뒤 A 대신 B로 갈아탈 수
-// 있다"는 원래의 뜻도 그대로다.
-export const EXIT_AB_MIN_DISTANCE = 90;
-
-// 위 조건을 만족하는 조합을 찾는 재배치 시도 횟수. 넘기면 그 시드에서 가장 먼 후보 쌍을
-// 택하고(생성 실패로 치지 않는다) graph.exitPlacement.relaxed 로 표시한다.
+// 열쇠 출구 자리를 찾는 재시도 횟수(ADR-0083). 표준 출구 A는 "자격 있는 구역에서 시작점에서
+// 가장 먼 노드"로 결정론적으로 정해지므로 재시도가 필요 없고, 열쇠 출구만 무작위 구역에서
+// 2-edge-disjoint 조건을 만족하는 노드를 이만큼 시도해 찾는다. 다 실패하면 그 시드의 그래프
+// 생성을 통째로 다시 돌린다(GENERATION_MAX_ATTEMPTS).
 export const EXIT_PLACEMENT_MAX_ATTEMPTS = 24;
 
 // 구역 "내부" 특수 엣지 (기존과 동일한 배치 방식 — 같은 구역 노드 풀에서만 고름).
@@ -298,10 +285,10 @@ export const CONTRACT_DETONATE_TIME = 2;
 /** 기폭 지점이 목표부에서 떨어져 있어야 하는 최소 홉수. */
 export const CONTRACT_DETONATE_MIN_HOPS = 2;
 
-// 봉쇄(D22) — 계약 목표를 확보한 순간부터 켜진다. 위협 이동 간격을 전역으로 줄이고(작을수록
-// 빠르다), 두 표준 출구 중 더 먼 B의 비활성 시각을 앞당긴다 — 어느 쪽이 닫힐지 예측 가능해야
-// 플레이어가 대비할 수 있으므로 무작위나 조건부가 아니라 항상 B로 고정한다.
-export const LOCKDOWN_EXIT_CLOSE_WINDOW = 125;
+// 봉쇄(D22) — 계약 목표를 확보한 순간부터 켜진다. 하는 일은 **위협 가속뿐**이다(ADR-0083):
+// 위협 이동 간격을 전역으로 줄이고(LOCKDOWN_THREAT_MOVE_INTERVAL), 각 구역의 다음 증원을
+// 당기고(REINFORCEMENT_LOCKDOWN_INTERVAL), 상황 보정 Stealth −1을 건다. 출구 폐쇄 시각은
+// 건드리지 않는다 — 표준 출구가 A 하나뿐이라 그것까지 앞당겨 닫으면 봉쇄가 곧 실패 선고가 된다.
 
 // Cameras and access interfaces are rolled independently, so either device can exist alone or
 // both can share a node. Generation guarantees at least one of each per sector.
@@ -364,9 +351,8 @@ export const FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT = 256;
 // 작업 수가 줄지, 각 작업의 값이 바뀌지는 않는다.
 export const RUN_COLLAPSE_TIME = 490; // §2.3 t>=RUN_COLLAPSE_TIME 붕괴, 다른 모든 사건보다 우선.
 
-// 같은 70% 축소. 430 → 300(십의 자리로 떨어지는 값), 670 → 470.
+// 같은 70% 축소(430 → 300, 십의 자리로 떨어지는 값). 표준 출구는 A 하나뿐이다(ADR-0083).
 export const EXIT_A_DISABLED_AT = 300;
-export const EXIT_B_DISABLED_AT = 470;
 export const EXIT_REQUEST_TIME = 3;
 export const EXIT_OPEN_WINDOW = 5;
 

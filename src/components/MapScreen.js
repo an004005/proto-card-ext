@@ -18,7 +18,7 @@ import { bfsHopDistances } from '../engine/graphUtils.js';
 import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
-  explainEffectiveStealth, detailIncludes, lockdownClosesExitB, highGroundMobility, nodeContentsAt,
+  explainEffectiveStealth, detailIncludes, highGroundMobility, nodeContentsAt,
   deviceStatus, canClimbHighGround,
 } from '../engine/runEngine.js';
 import { ladderNote, StepBadge } from './ladderDisplay.js';
@@ -28,7 +28,7 @@ import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION, ALERT_GAUGE_CAPACITY, ALERT_PRESS
 import { getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
   SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR,
-  LOCKDOWN_EXIT_CLOSE_WINDOW, CONTRACT_DETONATE_MIN_HOPS, HIGH_GROUND_MOBILITY_REQUIREMENT,
+  CONTRACT_DETONATE_MIN_HOPS, HIGH_GROUND_MOBILITY_REQUIREMENT,
 } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
 import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE, CAPABILITY_KOREAN } from '../data/capabilityDisplay.js';
@@ -1038,7 +1038,7 @@ export function MapScreen() {
           ${run.contract ? html`
             <span style=${{ fontSize: '11px', color: run.contract.status === 'completed' ? 'var(--color-accent-700)' : 'var(--color-neutral-600)' }}>
               계약 「${run.contract.name}」 — ${{ accepted: '진행 중', acquired: '확보됨', completed: '완료' }[run.contract.status]}
-              ${run.lockdown ? html`<strong style=${{ color: 'var(--color-negative, #dd2b0f)' }}> · 봉쇄 중(위협 가속${lockdownClosesExitB(run.contract.type) ? ', 출구 B 조기 폐쇄' : ', 출구 B 앞당김 없음'})</strong>` : null}
+              ${run.lockdown ? html`<strong style=${{ color: 'var(--color-negative, #dd2b0f)' }}> · 봉쇄 중(위협 가속 — 출구 폐쇄 시각은 그대로)</strong>` : null}
             </span>
           ` : null}
         </div>
@@ -1449,7 +1449,7 @@ export function MapScreen() {
               <//>
             ` : null}
             <div style=${{ display: 'flex', gap: '6px', marginTop: '10px', flexWrap: 'wrap' }}>
-              ${['A', 'B'].map((exitId) => html`
+              ${['A'].map((exitId) => html`
                 <${Tooltip} key=${exitId} align="left" content=${`표준 탈출구 ${exitId}. ${EXIT_STATUS_DESCRIPTIONS[run.exits[exitId].status]}`}>
                   <span class="tag tag-outline" style=${{ fontSize: '11px' }}>${exitId} <strong>${exitStatusLabel(run.exits[exitId])}</strong></span>
                 <//>
@@ -1761,7 +1761,7 @@ export function MapScreen() {
                       button = html`<${ActionButton}
                         run=${run} actionId="contractDestroy" opts=${{ value: capabilities.force }} disabled=${!atObjective}
                         label="폭약 설치"
-                        tip=${`목표부에 폭약을 답니다. 설치하는 순간 봉쇄가 켜지고(출구 B 폐쇄까지 ${LOCKDOWN_EXIT_CLOSE_WINDOW}칸), 계약은 목표부에서 ${CONTRACT_DETONATE_MIN_HOPS}홉 이상 떨어진 자리에서 기폭해야 완료됩니다.`}
+                        tip=${`목표부에 폭약을 답니다. 설치하는 순간 봉쇄가 켜지고(위협 가속), 계약은 목표부에서 ${CONTRACT_DETONATE_MIN_HOPS}홉 이상 떨어진 자리에서 기폭해야 완료됩니다.`}
                         onClick=${() => runCommand({ type: 'DESTROY_CONTRACT_TARGET' })}
                       />`;
                     } else if (contract.type === 'destroy' && contract.status === 'acquired') {
@@ -1782,7 +1782,7 @@ export function MapScreen() {
                       button = html`<${ActionButton}
                         run=${run} actionId="contractIntel" opts=${{ value: capabilities.hacking }} disabled=${!atObjective}
                         label="데이터 확보"
-                        tip="목표부에서 데이터를 땁니다. 이것만으로는 완료가 아니며, 이후 목표부 구역에 인접한 구역의 랜드마크에서 송출해야 합니다. 확보하는 순간 봉쇄가 켜지지만, 정보 계약에서는 출구 B가 앞당겨지지 않습니다."
+                        tip="목표부에서 데이터를 땁니다. 이것만으로는 완료가 아니며, 이후 목표부 구역에 인접한 구역의 랜드마크에서 송출해야 합니다. 확보하는 순간 봉쇄가 켜져 위협이 빨라집니다."
                         onClick=${() => runCommand({ type: 'ACQUIRE_CONTRACT_INTEL' })}
                       />`;
                     } else if (contract.type === 'intel' && contract.status === 'acquired') {

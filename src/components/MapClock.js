@@ -43,7 +43,7 @@ export function nearestDeadline(countdowns) {
  */
 export function MapClock({ run, countdowns = runCountdowns(run), compact = false }) {
   const nearest = nearestDeadline(countdowns);
-  const tip = `현재 시각 ${run.time} / ${RUN_COLLAPSE_TIME}칸. ${RUN_COLLAPSE_TIME}칸에 도달하면 즉시 런이 종료됩니다(탈출 실패). 출구 A·B는 각자 정해진 시각 뒤로 새 개방 요청을 받지 않습니다 — 이미 시작된 대기와 열린 창은 끝까지 갑니다. 봉쇄가 켜지면 출구 B의 그 시각이 앞당겨집니다.`;
+  const tip = `현재 시각 ${run.time} / ${RUN_COLLAPSE_TIME}칸. ${RUN_COLLAPSE_TIME}칸에 도달하면 즉시 런이 종료됩니다(탈출 실패). 표준 출구 A는 정해진 시각 뒤로 새 개방 요청을 받지 않습니다 — 이미 시작된 대기와 열린 창은 끝까지 갑니다. 봉쇄는 이 시각을 앞당기지 않습니다.`;
   return html`
     <${Tooltip} width=${300} content=${tip}>
       <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', padding: compact ? 0 : '0 var(--space-3)', borderRight: compact ? undefined : '1px solid var(--color-divider)', fontSize: '13px' }}>

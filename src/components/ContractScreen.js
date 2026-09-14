@@ -1,8 +1,7 @@
 import { html } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { SECTOR_NAMES, LANDMARKS_BY_SECTOR, RUN_COLLAPSE_TIME, LOCKDOWN_EXIT_CLOSE_WINDOW } from '../data/facilityLayout.js';
-import { lockdownClosesExitB } from '../engine/runEngine.js';
+import { SECTOR_NAMES, LANDMARKS_BY_SECTOR, RUN_COLLAPSE_TIME } from '../data/facilityLayout.js';
 
 const TYPE_LABEL = { retrieval: '회수', destroy: '파괴', intel: '정보' };
 const TYPE_COMPLETION = {
@@ -32,11 +31,9 @@ function ContractCard({ contract }) {
         <span>위약(미완수 시): -${contract.penaltyValue}cr</span>
         <span style=${{ opacity: 0.7 }}>${TYPE_COMPLETION[contract.type]}</span>
         ${/* 계약 화면에서 미리 알아야 할 시간은 둘뿐이다 — 시설이 언제 무너지는가, 그리고
-            목표를 집는 순간 출구 B가 얼마나 앞당겨지는가. 정보 계약은 봉쇄가 B를 앞당기지
-            않으므로(runEngine.js lockdownClosesExitB) 여기서도 그렇게 적는다. */ null}
-        <span style=${{ opacity: 0.7 }}>${lockdownClosesExitB(contract.type)
-          ? `확보 즉시 봉쇄 — 출구 B가 +${LOCKDOWN_EXIT_CLOSE_WINDOW}칸으로 앞당겨집니다`
-          : '확보 즉시 봉쇄 — 위협 가속·증원 단축. 출구 B 앞당김 없음'}</span>
+            목표를 집는 순간 무엇이 달라지는가. 봉쇄는 출구를 앞당겨 닫지 않는다(ADR-0083). */ null}
+        <span style=${{ opacity: 0.7 }}>확보 즉시 봉쇄 — 위협 가속·증원 단축. 출구 폐쇄 시각은 그대로</span>
+        <span style=${{ opacity: 0.7 }}>수락하면 이 구역이 반드시 포함된 네 구역으로 시설이 만들어집니다</span>
         <span style=${{ opacity: 0.7 }}>시설 붕괴 ${RUN_COLLAPSE_TIME}칸</span>
       </div>
       <button

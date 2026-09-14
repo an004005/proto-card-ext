@@ -319,7 +319,7 @@ export function waitCommand(snapshot, ticks = 1) {
  */
 function exitStatusesOf(run) {
   if (!run) return '';
-  return /** @type {const} */ (['A', 'B'])
+  return /** @type {const} */ (['A'])
     .map((id) => /** @type {import('./types.js').StandardExitRuntimeState|undefined} */ (run.exits[id])?.status)
     .join('|');
 }
@@ -336,7 +336,7 @@ export function moveToNode(snapshot, nodeId) {
 
 /**
  * @param {GameSnapshot} snapshot
- * @param {'A'|'B'} exitId
+ * @param {'A'} exitId
  * @returns {GameSnapshot}
  */
 export function requestExtractionCommand(snapshot, exitId) {

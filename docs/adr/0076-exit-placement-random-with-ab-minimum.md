@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0081
+status: superseded by ADR-0083
 ---
 
 # 출구는 무작위로 놓고 A와 B 사이 거리만 보장한다

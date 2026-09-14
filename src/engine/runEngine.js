@@ -20,7 +20,7 @@ import { pickThreatEncounter } from '../data/dropTables.js';
 import { rollFieldLootOptions } from './fieldLoot.js';
 import { MONSTER_DEFINITIONS } from '../data/monsters.js';
 import {
-  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT, EXIT_B_DISABLED_AT,
+  RUN_COLLAPSE_TIME, EXIT_A_DISABLED_AT,
   EXIT_REQUEST_TIME, EXIT_OPEN_WINDOW, EXIT_OPEN_WAIT_BY_HACKING, NOISE_DURATION,
   INVESTIGATION_MEMORY_DURATION, THREAT_MOVE_INTERVAL, SECTOR_ALERT_INVESTIGATE_INTERVAL,
   SECTOR_ALERT_MIN_ENEMY_ALERT, NOISE_HOP_RANGE, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE,
@@ -36,7 +36,7 @@ import {
   ENCOUNTER_DECEIVE_REQUIREMENT, ENCOUNTER_DECEIVE_STEP_PENALTY, HIGH_GROUND_MOBILITY_REQUIREMENT,
   PURSUIT_DECAY_TICKS, INVESTIGATE_DECAY_TICKS, PURSUIT_DECAY_ALERT,
   CONTRACT_ACQUIRE_TIME, CONTRACT_DESTROY_TIME,
-  CONTRACT_TRANSMIT_TIME, LOCKDOWN_EXIT_CLOSE_WINDOW,
+  CONTRACT_TRANSMIT_TIME,
   LOCKDOWN_THREAT_MOVE_INTERVAL, LOCKDOWN_SECTOR_ALERT_INVESTIGATE_INTERVAL,
   CORPSE_DISPOSAL_TIME, DISCOVERY_NOISE_INTENSITY,
   EVIDENCE_TIER_RAISING_ALERT, REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
@@ -81,7 +81,7 @@ export function createRunState(graph, seed, runConfig = {}) {
         exitId: placement.exitId,
         nodeId: placement.nodeId,
         status: 'closed',
-        disabledAt: placement.exitId === 'A' ? EXIT_A_DISABLED_AT : EXIT_B_DISABLED_AT,
+        disabledAt: EXIT_A_DISABLED_AT,
         interactionEndsAt: null,
         opensAt: null,
         openEndsAt: null,
@@ -474,7 +474,7 @@ export function prizeGradeKnown(run, opportunityId, nodeId) {
 export function isAtOpenExit(state) {
   if (!state.playerNodeId) return false;
   if (state.keyDiscovered && state.exits.key.nodeId === state.playerNodeId) return true;
-  return /** @type {const} */ (['A', 'B']).some((exitId) => {
+  return /** @type {const} */ (['A']).some((exitId) => {
     const exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (state.exits[exitId]);
     return exit.status === 'open' && exit.nodeId === state.playerNodeId;
   });
@@ -484,7 +484,7 @@ export function isAtOpenExit(state) {
  * §CONTEXT.md 탈출구 요청. Throws on an invalid request (spec has no "soft fail" for this — the
  * UI only offers the button when eligible, so an ineligible call here is a caller bug).
  * @param {import('./types.js').FacilityRunState} state
- * @param {'A'|'B'} exitId
+ * @param {'A'} exitId
  * @param {number} effectiveHacking -2..4
  * @returns {import('./types.js').FacilityRunState}
  */
@@ -502,7 +502,7 @@ export function requestExtraction(state, exitId, effectiveHacking) {
     exits: {
       ...state.exits,
       [exitId]: {
-        ...exit, status: 'requesting', interactionEndsAt, opensAt, requestId, signalStartedAt: state.time,
+        ...exit, status: /** @type {const} */ ('requesting'), interactionEndsAt, opensAt, requestId, signalStartedAt: state.time,
       },
     },
   };
@@ -745,9 +745,9 @@ function selectThreatTarget(state, threat) {
   const hopsFromThreat = bfsHopDistances(edgesForThreatMovement(state), threat.nodeId);
   const audibleHops = bfsHopDistances(state.graph.edges, threat.nodeId);
 
-  /** @type {{exitId: 'A'|'B', nodeId: string, createdAt: number, hops: number}[]} */
+  /** @type {{exitId: 'A', nodeId: string, createdAt: number, hops: number}[]} */
   const activeSignals = [];
-  for (const exitId of /** @type {const} */ (['A', 'B'])) {
+  for (const exitId of /** @type {const} */ (['A'])) {
     const exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (state.exits[exitId]);
     if (!exit.signalStartedAt || !['requesting', 'opening', 'open'].includes(exit.status)) continue;
     const hops = hopsFromThreat.get(exit.nodeId);
@@ -1182,7 +1182,7 @@ function worldTick(state, tickTime) {
  */
 function applyExpiryBoundary(state, t) {
   let exits = state.exits;
-  for (const exitId of /** @type {const} */ (['A', 'B'])) {
+  for (const exitId of /** @type {const} */ (['A'])) {
     let exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (exits[exitId]);
     if (exit.status === 'open' && exit.openEndsAt !== null && t >= exit.openEndsAt) {
       exit = {
@@ -1434,7 +1434,7 @@ const TASK_COMPLETIONS = {
  */
 const TASK_ABORTS = {
   requestExtraction(state, task) {
-    const exitId = /** @type {'A'|'B'} */ (task.params.exitId);
+    const exitId = /** @type {'A'} */ (task.params.exitId);
     const exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (state.exits[exitId]);
     if (!exit || exit.status !== 'requesting') return state;
     return {
@@ -1606,7 +1606,7 @@ function applyCompletionBoundary(state, t) {
   let current = { ...state, time: t };
   if (current.pendingTask && current.pendingTask.completesAt <= t) current = completeTask(current, t);
   let exits = current.exits;
-  for (const exitId of /** @type {const} */ (['A', 'B'])) {
+  for (const exitId of /** @type {const} */ (['A'])) {
     let exit = /** @type {import('./types.js').StandardExitRuntimeState} */ (exits[exitId]);
     if (exit.status === 'requesting' && exit.interactionEndsAt !== null && t >= exit.interactionEndsAt) {
       exit = { ...exit, status: 'opening' };
@@ -2100,33 +2100,19 @@ export function disposeCorpse(state) {
   return scheduleTask(state, { kind: 'corpse', timeCost: actionTimeCost('corpse'), params: { corpseId: corpse.id } });
 }
 
-/** 봉쇄가 출구 B의 폐쇄 시각을 앞당기는가 — 정보 계약만 예외다. 회수·파괴는 목표를 확보한
- * 순간부터 시설이 물건을 잠그지만, 정보는 이미 빠져나간 뒤라 문을 닫아봐야 소용이 없다.
- * 그래서 정보 계약은 봉쇄의 나머지(위협 이동 가속·증원 단축·Stealth 보정)만 받는다.
- * 화면 문구와 밸런스 스크립트도 같은 판정을 쓰도록 여기 한 자리에만 둔다.
- * @param {import('../data/contracts.js').ContractType | undefined} contractType
- * @returns {boolean} */
-export function lockdownClosesExitB(contractType) {
-  return contractType !== 'intel';
-}
-
 /**
  * 봉쇄(D22)를 켠다. 계약 목표를 확보한 세 액션(회수 확보·파괴·정보 확보)이 공유한다. 이미
  * 봉쇄 중이면 아무것도 하지 않는다 — 정보 계약은 확보에서 한 번 켜진 뒤 송출까지 그대로
  * 유지되어야 하므로 재기동하지 않는다.
  *
- * 출구 B 조기 폐쇄만은 계약 유형을 본다(lockdownClosesExitB) — 정보 계약에서는 B의 원래
- * 폐쇄 시각을 그대로 둔다.
+ * 봉쇄는 **출구를 앞당겨 닫지 않는다**(ADR-0083). 하는 일은 위협 가속뿐이다 — 위협 이동 간격이
+ * 봉쇄 고정표로 줄고, 각 구역의 다음 증원이 당겨지고, 상황 보정 Stealth −1이 걸린다. 표준
+ * 출구는 A 하나뿐이라 그것까지 앞당겨 닫으면 "봉쇄=실패"가 되어 선택이 사라진다.
  * @param {import('./types.js').FacilityRunState} run
  * @returns {import('./types.js').FacilityRunState}
  */
 function activateLockdown(run) {
   if (run.lockdown) return run;
-  const exits = { ...run.exits };
-  const exitB = /** @type {import('./types.js').StandardExitRuntimeState | undefined} */ (exits.B);
-  if (exitB && exitB.kind === 'standard' && lockdownClosesExitB(run.contract?.type)) {
-    exits.B = { ...exitB, disabledAt: Math.min(exitB.disabledAt, run.time + LOCKDOWN_EXIT_CLOSE_WINDOW) };
-  }
   // 봉쇄에 들어가는 순간 각 구역의 다음 교대를 min(기존, 현재+45)으로 당긴다 — 이미 90칸
   // 주기의 끝자락에 있던 구역이 봉쇄 때문에 오히려 늦게 채워지는 일이 없게 한다.
   const reinforcements = { ...run.reinforcements };
@@ -2134,7 +2120,7 @@ function activateLockdown(run) {
     const clock = reinforcements[sectorId];
     reinforcements[sectorId] = { ...clock, nextAt: Math.min(clock.nextAt, run.time + REINFORCEMENT_LOCKDOWN_INTERVAL) };
   }
-  return { ...run, lockdown: { startedAt: run.time }, exits: /** @type {any} */ (exits), reinforcements };
+  return { ...run, lockdown: { startedAt: run.time }, reinforcements };
 }
 
 /** @param {import('./types.js').FacilityRunState} run @returns {import('../data/contracts.js').ContractDef | undefined} */

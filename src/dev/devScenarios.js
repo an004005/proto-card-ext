@@ -8,8 +8,7 @@
 // 화면 우하단 데브맵 선택기(DevScenarioPicker.js)의 소스다.
 
 import { startCombat } from '../engine/combatReducer.js';
-import { POWER_CUT_DURATION, LOCKDOWN_EXIT_CLOSE_WINDOW } from '../data/facilityLayout.js';
-import { lockdownClosesExitB } from '../engine/runEngine.js';
+import { POWER_CUT_DURATION } from '../data/facilityLayout.js';
 
 /**
  * 데브맵 목록. 단계별로 묶어 두어 "이 단계에서 무엇을 봐야 하는가"가 목록 자체에 남게 한다.
@@ -30,7 +29,7 @@ export const DEV_SCENARIO_GROUPS = [
     items: [
       { name: 'landmark', label: '구역 통제실 위', watch: '통제실 해킹 패널과 해킹 수치별 누적 언락 표가 보이는가.' },
       { name: 'contract-objective', label: '계약 목표부 위', watch: '계약 유형에 맞는 확보/파괴/송출 버튼과 완료 조건 설명이 보이는가.' },
-      { name: 'lockdown', label: '봉쇄 발동 중', watch: '상단에 봉쇄 표시가 뜨고, 출구 B 조기 폐쇄가 반영되는가.' },
+      { name: 'lockdown', label: '봉쇄 발동 중', watch: '상단에 봉쇄 표시가 뜨고, 위협 가속만 걸리며 출구 폐쇄 시각은 그대로인가.' },
     ],
   },
   {
@@ -159,7 +158,7 @@ function withContractObjective(snapshot, run) {
   return { ...snapshot, facilityRunState: moveTo(run, landmark.nodeId) };
 }
 
-/** 계약 목표를 확보한 직후 — 봉쇄가 켜진 상태. 출구 B 앞당김은 회수·파괴 계약에서만 걸린다. */
+/** 계약 목표를 확보한 직후 — 봉쇄가 켜진 상태. 봉쇄는 위협만 가속하고 출구는 건드리지 않는다(ADR-0083). */
 function withLockdown(snapshot, run) {
   const contract = run.contract;
   const withObjective = withContractObjective(snapshot, run).facilityRunState;
@@ -169,9 +168,6 @@ function withLockdown(snapshot, run) {
       ...withObjective,
       contract: contract ? { ...contract, status: 'acquired', acquiredAt: withObjective.time } : contract,
       lockdown: { startedAt: withObjective.time },
-      exits: lockdownClosesExitB(contract?.type)
-        ? { ...withObjective.exits, B: { ...withObjective.exits.B, disabledAt: withObjective.time + LOCKDOWN_EXIT_CLOSE_WINDOW } }
-        : withObjective.exits,
     },
   };
 }

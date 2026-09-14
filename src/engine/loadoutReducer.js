@@ -2,7 +2,7 @@
 // 묶음. inventoryReducer.js(장착 로직 재사용)와 runEngine.js(refreshLocalObservations)에만
 // 의존한다 — facilityReducer.js/combatReducer.js/rewardReducer.js와는 무관하다(순환 없음).
 import { createRngState, pick } from './rng.js';
-import { generateFacilityGraph, selectRunSectorIds } from './facilityGraph.js';
+import { generateFacilityGraph } from './facilityGraph.js';
 import { createRunState, refreshLocalObservations } from './runEngine.js';
 import { offerContracts } from './contractReducer.js';
 import { computeCapabilities } from './capabilityEngine.js';
@@ -72,10 +72,10 @@ function buildStartingWarehouse(loadout) {
 /** @param {number} seed @returns {GameSnapshot} */
 export function newRun(seed) {
   const loadout = defaultLoadout();
-  // 구역 추첨이 계약 제안보다 **먼저**다(ADR-0081) — 제안은 이 런이 실제로 생성할 구역의
-  // 계약으로만 좁혀지므로, 어느 구역을 갈지가 먼저 정해져 있어야 한다.
-  const selected = selectRunSectorIds(createRngState(seed));
-  const offered = offerContracts(selected.rngState, selected.sectorIds);
+  // 제안은 여덟 구역 전부에서 유형별 한 장씩 나온다(ADR-0083). 구역 추첨은 여기가 아니라
+  // ACCEPT_CONTRACT에서 돈다 — 수락한 계약의 목표 구역이 반드시 포함되어야 하기 때문이다.
+  // 그래서 runSectorIds는 이 시점에 아직 null이다.
+  const offered = offerContracts(createRngState(seed));
   return {
     currentScreen: 'contract',
     playerState: {
@@ -90,7 +90,7 @@ export function newRun(seed) {
     pendingReward: null,
     combatSummary: null,
     rngState: offered.rngState,
-    runSectorIds: selected.sectorIds,
+    runSectorIds: null,
     offeredContracts: offered.contracts,
     activeContract: null,
   };
@@ -135,8 +135,8 @@ export function confirmLoadout(snapshot) {
   const inventory = { ...snapshot.playerState.inventory, capacity };
   const playerState = { ...snapshot.playerState, hp: maxHp, maxHp, inventory };
   const seed = snapshot.rngState;
-  const { graph, rngState } = generateFacilityGraph(seed, snapshot.runSectorIds);
   const contract = snapshot.activeContract;
+  const { graph, rngState } = generateFacilityGraph(seed, snapshot.runSectorIds ?? undefined, contract?.sectorId);
   const facilityRunState = refreshLocalObservations(createRunState(graph, seed, {
     contract, revealLandmarkSectorIds: contract ? [contract.sectorId] : [],
   }), computeCapabilities(loadout).perception);
