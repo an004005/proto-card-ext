@@ -179,6 +179,8 @@ export function createRunState(graph, seed, runConfig = {}) {
     sectorAlerts,
     combatTrigger: null,
     keyDiscovered: false,
+    // 오버라이드 칩 사용 상태는 런 시작에 꺼져 있다 — 칩을 써야 켜진다(ADR-0086).
+    overrideArmed: false,
     activeConcealment: null,
     revealedPatrolRouteSectorIds: [],
     encounter: null,

@@ -18,5 +18,6 @@
 export const CONSUMABLE_DEFINITIONS = {
   bandage: { id: 'bandage', name: '붕대', cost: 1, effect: { kind: 'healPercent', amount: 0.2 }, description: '체력 20% 회복', mapTags: { noise: 0, traits: ['healing'], disengageProgress: 0 } },
   grenade: { id: 'grenade', name: '수류탄', cost: 1, effect: { kind: 'aoeDamage', amount: 10 }, description: '광역 피해 10', mapTags: { noise: 3, traits: ['explosive'], disengageProgress: 0 } },
+  overrideCell: { id: 'overrideCell', name: '오버라이드 셀', cost: 1, effect: { kind: 'addOverrideChips', amount: 2 }, description: '오버라이드 칩 2개 충전', mapTags: { noise: 0, traits: ['override'], disengageProgress: 0 } },
   flashbang: { id: 'flashbang', name: '섬광탄', cost: 1, effect: { kind: 'aoeDebuff', vulnerable: 1, weak: 1 }, description: '광역 취약·약화 1턴', mapTags: { noise: 2, traits: ['escape'], disengageProgress: 1 } },
 };

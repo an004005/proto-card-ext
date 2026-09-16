@@ -13,7 +13,7 @@ const NOT_EXECUTABLE = new Set([
 
 const VALID_TRAITS = new Set([
   'assassination', 'melee', 'firearm', 'explosive', 'hack', 'deception', 'escape',
-  'perception', 'electronic', 'healing', 'stabilize',
+  'perception', 'electronic', 'healing', 'stabilize', 'override',
 ]);
 
 function assertValidMapTags(mapTags, label) {

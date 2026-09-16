@@ -196,8 +196,8 @@ test('CONFIRM_LOADOUT computes maxHp/capacity from equipped implants, seeds star
   s = equipDefaultLoadout(s);
   s = finishTaskSnapshot(gameReducer(s, { type: 'CONFIRM_LOADOUT' }));
   assert.equal(s.currentScreen, 'map');
-  assert.equal(s.playerState.maxHp, 77);
-  assert.equal(s.playerState.hp, 77);
+  assert.equal(s.playerState.maxHp, 47); // BASE_MAX_HP 40 + 임플란트 +7
+  assert.equal(s.playerState.hp, 47);
   assert.equal(s.playerState.inventory.capacity, 15);
   // 인벤토리는 계약 선불 재화 1개만 갖고 시작한다 — 장착 안 한 farming-only 장비 18종(임플란트⑦
   // 지도가 창고 시작 풀에 추가됨), 시작 소모품 3개, 시작 탄약(16발 = 10발 스택 + 6발 스택,

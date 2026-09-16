@@ -13,8 +13,9 @@ import { html, useState, useEffect, useRef, useMemo } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
 import { mapViewSignal, mapDebugRevealSignal, DEFAULT_MAP_VIEW } from '../state/mapViewState.js';
-import { computeCapabilities, listFieldActiveEquipment } from '../engine/capabilityEngine.js';
-import { bfsHopDistances, bfsHopDistancesOverArcs, isEdgeUnlocked } from '../engine/graphUtils.js';
+import { effectiveCapabilities, computeCapabilities, listFieldActiveEquipment } from '../engine/capabilityEngine.js';
+import { bfsHopDistances, bfsHopDistancesOverArcs, isEdgeUnlocked, shortestPathOverArcs, baselineWalkArcs } from '../engine/graphUtils.js';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_PADDING, NODE_RADIUS, PASSAGE_TYPES, layoutPositions, edgePath } from './mapLayout.js';
 import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
@@ -297,67 +298,10 @@ const EXIT_STATUS_DESCRIPTIONS = {
   disabled: '더 이상 사용할 수 없는 탈출구입니다.',
 };
 
-const CANVAS_WIDTH = 1400;
-const CANVAS_HEIGHT = 1400;
-const CANVAS_PADDING = 50;
 const CANVAS_CENTER = CANVAS_WIDTH / 2;
-const NODE_RADIUS = 8;
-
-/** 그래프 노드의 절대 기하 좌표(facilityGraph.js가 생성)를 캔버스에 맞춰 스케일/이동한다. */
-function layoutPositions(graph) {
-  const xs = graph.nodes.map((n) => n.x);
-  const ys = graph.nodes.map((n) => n.y);
-  const minX = Math.min(...xs); const maxX = Math.max(...xs);
-  const minY = Math.min(...ys); const maxY = Math.max(...ys);
-  const scale = Math.min(
-    (CANVAS_WIDTH - CANVAS_PADDING * 2) / (maxX - minX || 1),
-    (CANVAS_HEIGHT - CANVAS_PADDING * 2) / (maxY - minY || 1),
-  );
-  const positions = {};
-  for (const node of graph.nodes) {
-    positions[node.id] = { x: CANVAS_PADDING + (node.x - minX) * scale, y: CANVAS_PADDING + (node.y - minY) * scale };
-  }
-  return positions;
-}
-
-/** 이 길이(캔버스 px)를 넘는 엣지는 직선 대신 곡선으로 그린다. */
-const CURVED_EDGE_MIN_LENGTH = 150;
-
-/**
- * 엣지를 그릴 경로. 짧은 엣지는 직선이지만, 구역을 가로지르거나 링을 건너뛰는 긴 엣지는
- * 곡선으로 그린다 — 직선으로 그으면 평면도 위를 그대로 관통해 어느 노드에 붙은 줄인지
- * 읽히지 않는다. 일방통행 화살표가 놓일 중점과 그 지점의 접선 각도도 함께 돌려준다.
- * @param {{x: number, y: number}} from @param {{x: number, y: number}} to
- */
-function edgePath(from, to) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const length = Math.hypot(dx, dy);
-  if (length < CURVED_EDGE_MIN_LENGTH) {
-    return {
-      d: `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
-      midX: (from.x + to.x) / 2,
-      midY: (from.y + to.y) / 2,
-      angleDeg: Math.atan2(dy, dx) * 180 / Math.PI,
-    };
-  }
-  // 2차 베지어 한 개. 제어점을 중점에서 수직으로 밀어 활처럼 휜다.
-  const bulge = Math.min(length * 0.16, 90);
-  const nx = -dy / length;
-  const ny = dx / length;
-  const cx = (from.x + to.x) / 2 + nx * bulge * 2;
-  const cy = (from.y + to.y) / 2 + ny * bulge * 2;
-  return {
-    d: `M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`,
-    // t=0.5 지점과 그 접선(베지어 미분).
-    midX: (from.x + 2 * cx + to.x) / 4,
-    midY: (from.y + 2 * cy + to.y) / 4,
-    angleDeg: Math.atan2(to.y - from.y, to.x - from.x) * 180 / Math.PI,
-  };
-}
-
-/** 지나가기 위한 노드 — 이들끼리 잇는 엣지가 그 구역 평면도의 복도 뼈대다. */
-const PASSAGE_TYPES = new Set(['corridor', 'hall', 'crawlway']);
+/** 선택 노드까지의 경로 색. 위협 표식(빨강)·관측(파랑)과 겹치지 않는 초록 — "위협 없음" 예고와
+ * 같은 계열이라 '지나갈 수 있는 길'로 읽힌다. */
+const ROUTE_COLOR = '#15803d';
 
 /** 노드 유형별 표시 이름. 도면을 읽는 언어이므로 툴팁·패널·범례가 모두 이 표를 쓴다. */
 const NODE_TYPE_LABELS = {
@@ -848,7 +792,13 @@ export function MapScreen() {
 
   if (!run) return null;
 
-  const capabilities = computeCapabilities(ps.loadout);
+  // 사용 중인 오버라이드 칩이 있으면 예고와 버튼도 상한으로 판정해야 한다 — 엔진과 화면이 다른
+  // 수치를 보면 "불가"라고 적힌 버튼이 눌리는 순간 성공한다(ADR-0086).
+  const capabilities = effectiveCapabilities(snapshot);
+  // 단, 지도에 무엇이 보이는가(관측의 신선도·인접 노드 내용)는 실제 장비의 Perception으로만
+  // 그린다. 사용이 0칸이고 취소가 환불되므로, 상한 Perception으로 그리면 "썼다가 취소"로
+  // 인접 노드의 실시간 정보를 공짜로 훔쳐볼 수 있다.
+  const viewCapabilities = computeCapabilities(ps.loadout);
   const hasMapImplant = !!getImplantEffect(ps.loadout, 'sectorLandmarkArrow');
   const landmarkArrowTarget = getSectorLandmarkArrowTarget(run, hasMapImplant);
   const fieldEquipment = listFieldActiveEquipment(ps.loadout);
@@ -950,6 +900,20 @@ export function MapScreen() {
         .map((e) => e.id),
     )
     : null;
+  // 선택 노드까지의 최단 경로. 지금 실제로 지날 수 있는 통로만 센다(잠긴 문 제외, 일방통행은
+  // 생성 방향만, 고지대는 넘을 수 있을 때만) — 통행 규칙은 graphUtils.baselineWalkArcs 한 곳에
+  // 있고 여기서는 옵션만 준다. 지도에 없는 노드(미발견 비인가 통로)를 거치는 길은 플레이어가
+  // 아직 모르는 정보라 제외한다. 훅이 아니라 순수 계산이므로 조기 반환 뒤에 있어도 안전하다.
+  const routeToSelected = (() => {
+    if (!selectedNodeId || selectedNodeId === run.playerNodeId || !chartedNodeIds.has(selectedNodeId)) return null;
+    const chartedEdges = run.graph.edges.filter((edge) => chartedNodeIds.has(edge.from) && chartedNodeIds.has(edge.to));
+    const arcs = baselineWalkArcs(chartedEdges, {
+      openedEdgeIds: run.openedEdgeIds, allowHighGround: canClimbHighGround(capabilities.mobility), withEdgeIds: true,
+    });
+    return shortestPathOverArcs(arcs, run.playerNodeId, selectedNodeId);
+  })();
+  const routeEdgeIds = routeToSelected ? new Set(routeToSelected.edgeIds) : null;
+  const routeNodeIds = routeToSelected ? new Set(routeToSelected.nodeIds) : null;
 
   /**
    * 커맨드를 보내고, 스냅샷이 그대로면 실패 사유를 말한다. "행동 실패 — 조건을 확인하세요"만
@@ -1076,7 +1040,7 @@ export function MapScreen() {
   // 패널도 호버 카드와 같은 설명을 쓴다 — 두 곳이 다른 문구를 만들면 하나가 조용히 낡는다.
   // 디버그 전체보기도 그대로 반영한다(지도만 다 보이고 패널은 안 보이면 디버그가 반쪽이다).
   const inspected = inspectedNode
-    ? describeNode(run, inspectedNode, threatsByNode, exitByNode, debugReveal, capabilities.stealth, capabilities.perception)
+    ? describeNode(run, inspectedNode, threatsByNode, exitByNode, debugReveal, viewCapabilities.stealth, viewCapabilities.perception)
     : null;
   const inspectedObservedAt = selectedNodeId && run.observations[selectedNodeId] ? run.observations[selectedNodeId].observedAt : null;
   const selectedEdge = selectedNodeId ? findTraversableEdge(run, selectedNodeId) : null;
@@ -1120,6 +1084,13 @@ export function MapScreen() {
           <div style=${{ display: 'flex', alignItems: 'center', width: '130px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
             <${OverloadToggle} active=${ps.overloadActive} compact=${true} />
           </div>
+          ${/* 칩 잔량은 HP와 같은 줄에 산다 — 지도와 전투가 같은 통을 쓰므로(ADR-0086) 행동
+                패널이 아니라 런의 상태로 읽혀야 한다. */ null}
+          <${Tooltip} width=${260} content="오버라이드 칩 잔량입니다. 지도의 긴급 권한 코드와 전투의 충격 코어가 같은 통을 씁니다.">
+            <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)', color: run.overrideArmed ? 'var(--color-accent-700)' : undefined, fontWeight: run.overrideArmed ? 800 : undefined }}>
+              <span>오버라이드 <strong>${ps.overrideChips || 0}</strong>${run.overrideArmed ? ' · 사용 중' : ''}</span>
+            </div>
+          <//>
           <${Tooltip} content=${`인벤토리 용량(${ps.inventory.capacity}칸)을 넘는 아이템은 "짐"이 되어 전투 중 과적 카드로 덱에 섞입니다. 용량 안으로 정리하세요.`}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)' }}>
               <${IconBox} /><span>인벤토리 <strong>${ps.inventory.items.length}</strong>/${ps.inventory.capacity}${burdenCount > 0 ? ` (짐 ${burdenCount})` : ''}</span>
@@ -1296,7 +1267,7 @@ export function MapScreen() {
                   // 정찰해 본 적이 있어야만(unknown이 아니어야) 드러난다 — 그 전까지는 평범한
                   // 엣지처럼 보인다. 실제로 열 수 있는지(openable)는 항상 인접 엣지에서만
                   // 계산되므로 이 게이팅과 무관하게 이미 안전하다.
-                  const revealed = debugReveal || nodeKnowledge(run, e.from, capabilities.perception) !== 'unknown' || nodeKnowledge(run, e.to, capabilities.perception) !== 'unknown';
+                  const revealed = debugReveal || nodeKnowledge(run, e.from, viewCapabilities.perception) !== 'unknown' || nodeKnowledge(run, e.to, viewCapabilities.perception) !== 'unknown';
                   const special = e.features.length > 0 && revealed;
                   const opened = run.openedEdgeIds.includes(e.id);
                   const openable = openableEdgeIds.has(e.id);
@@ -1304,6 +1275,7 @@ export function MapScreen() {
                   const barrier = activeBarriers[e.id];
                   const highGround = e.features.includes('highGround');
                   const highlighted = !!highlightedEdgeIds?.has(e.id);
+                  const onRoute = !!routeEdgeIds?.has(e.id);
                   const dashed = special && !opened;
                   const clickable = openable || !!pickable;
                   // 복도끼리 잇는 엣지는 그 구역 평면도의 뼈대다. 굵게 그려야 격자·사슬·방사·탑
@@ -1323,6 +1295,7 @@ export function MapScreen() {
                   return html`
                     <g key=${e.id}>
                       ${highlighted ? html`<path d=${pathD} fill="none" stroke="var(--color-accent-300)" stroke-width="9" pointer-events="none"></path>` : null}
+                      ${onRoute ? html`<path class="map-route-edge" d=${pathD} fill="none" stroke=${ROUTE_COLOR} stroke-width="7" stroke-linecap="round" opacity="0.85" pointer-events="none"></path>` : null}
                       <path d=${pathD} fill="none" stroke=${stroke} stroke-width=${clickable ? 4 : isSpine ? 3 : 1.2} stroke-dasharray=${barrier ? '2 3' : dashed ? '5 3' : undefined} opacity=${isSpine || clickable || special ? 1 : 0.6} pointer-events="none"></path>
                       ${oneWay ? html`<polygon points="-7,-5 7,0 -7,5" fill=${stroke} transform=${`translate(${midX},${midY}) rotate(${angleDeg})`} pointer-events="none"></polygon>` : null}
                       <path
@@ -1340,7 +1313,7 @@ export function MapScreen() {
               </g>
               ${run.graph.nodes.map((n) => {
                 if (!chartedNodeIds.has(n.id)) return null;
-                const knowledge = nodeKnowledge(run, n.id, capabilities.perception);
+                const knowledge = nodeKnowledge(run, n.id, viewCapabilities.perception);
                 const pos = positions[n.id];
                 const exit = exitByNode[n.id];
                 const live = debugReveal || knowledge === 'current' || knowledge === 'fresh';
@@ -1359,7 +1332,7 @@ export function MapScreen() {
                     ? run.graph.opportunities.find((o) => o.id === opportunity.id)?.tier
                     : scoutedGradeOf(run, n.id, opportunity.id)?.tier)
                   : null;
-                const nodeDescription = describeNode(run, n, threatsByNode, exitByNode, debugReveal, capabilities.stealth, capabilities.perception);
+                const nodeDescription = describeNode(run, n, threatsByNode, exitByNode, debugReveal, viewCapabilities.stealth, viewCapabilities.perception);
                 const isSelected = n.id === selectedNodeId || (!selectedNodeId && n.id === run.playerNodeId);
                 const activelyObserved = activeReconNodeIds.has(n.id);
                 const camera = cameraByNode[n.id];
@@ -1369,6 +1342,7 @@ export function MapScreen() {
                   <g key=${n.id}>
                     ${activelyObserved ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="rgba(14, 165, 233, 0.16)" stroke="#0ea5e9" stroke-width="3" pointer-events="none"></circle>` : null}
                     ${isSelected ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 6} fill="none" stroke="var(--color-accent)" stroke-width="2" pointer-events="none"></circle>` : null}
+                    ${routeNodeIds?.has(n.id) && n.id !== run.playerNodeId && n.id !== selectedNodeId ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 5} fill="none" stroke=${ROUTE_COLOR} stroke-width="2.5" opacity="0.85" pointer-events="none"></circle>` : null}
                     ${exit
                       ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 4} fill=${nodeFill(displayKnowledge, hasThreat, true)} stroke="var(--color-divider)" stroke-width="1.5" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none"></circle>`
                       : nodeBodyShape(n.type, pos.x, pos.y, {
@@ -1401,6 +1375,7 @@ export function MapScreen() {
                     <circle
                       ref=${(el) => { if (el) nodeRefs.current[n.id] = el; else delete nodeRefs.current[n.id]; }}
                       cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="transparent"
+                      data-node-id=${n.id}
                       style=${{ cursor: 'pointer' }}
                       onClick=${() => handleNodeSelect(n.id)}
                       onMouseEnter=${(ev) => { showNodeHover(ev, nodeDescription); setHoveredNodeId(n.id); }}
@@ -1590,6 +1565,13 @@ export function MapScreen() {
               </div>
               ${inspected.knowledge === 'stale' && inspectedObservedAt != null ? html`<div style=${{ fontSize: '10.5px', fontStyle: 'italic', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>${run.time - inspectedObservedAt}칸 전 관측 (시각 ${inspectedObservedAt}) — 그 사이 상황이 바뀌었을 수 있습니다.</div>` : null}
 
+              ${selectedNodeId && selectedNodeId !== run.playerNodeId ? html`
+                <div class="map-route-summary" style=${{ fontSize: '11px', fontWeight: 800, color: routeToSelected ? ROUTE_COLOR : 'var(--color-negative, #dc2626)', marginBottom: '8px' }}>
+                  ${routeToSelected
+                    ? `최단 경로: ${routeToSelected.edgeIds.length}칸 이동 · 지도에 표시`
+                    : '최단 경로: 지금 지날 수 있는 길이 없음(잠긴 문·일방통행 역방향·넘을 수 없는 고지대·아직 지도에 없는 노드)'}
+                </div>
+              ` : null}
               ${/* 이동 가능 여부는 "관측이 최신인가"가 아니라 "통로로 이어져 있는가"다 — 대기로
                     인접 관측이 낡아도 옆 방으로 걸어갈 수 있다. */ null}
               ${selectedNodeId && selectedNodeId !== run.playerNodeId && isTrueAdjacent(run, selectedNodeId) ? html`
@@ -1608,6 +1590,24 @@ export function MapScreen() {
               ${(!selectedNodeId || selectedNodeId === run.playerNodeId) ? html`
                 <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <${PendingTaskPanel} run=${run} runCommand=${runCommand} />
+                  <div>
+                    <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>오버라이드 칩</div>
+                    <${Tooltip} align="left" width=${280} content=${run.overrideArmed
+                      ? '사용을 취소하고 칩을 돌려받습니다.'
+                      : '긴급 권한 코드: 오버라이드 칩 하나로 다음 유료 행동 하나를 모든 Capability 4로 판정합니다(요구치 부족 없음, 사다리 대가 없음). 행동을 마치면 칩이 소모됩니다. 대기·장비 교체·소모품 사용처럼 판정이 없는 행동은 칩을 쓰지 않습니다.'}>
+                      <button
+                        class=${run.overrideArmed ? 'btn btn-primary' : 'btn btn-secondary'}
+                        style=${{ fontSize: '12px', width: '100%' }}
+                        disabled=${!run.overrideArmed && (ps.overrideChips || 0) <= 0}
+                        onClick=${() => runCommand({ type: 'USE_OVERRIDE_CHIP' })}
+                      >${run.overrideArmed ? '오버라이드 칩 사용 중 · 취소' : '오버라이드 칩 사용'} · 칩 ×${ps.overrideChips || 0}</button>
+                    <//>
+                    ${run.overrideArmed ? html`
+                      <div style=${{ marginTop: '5px', padding: '5px 7px', borderLeft: '3px solid var(--color-accent-700)', background: 'var(--color-accent-100)', fontSize: '10.5px', fontWeight: 700 }}>
+                        긴급 권한 코드 활성 — 다음 유료 행동은 모든 Capability 4로 판정
+                      </div>
+                    ` : null}
+                  </div>
                   <div>
                     <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>정찰</div>
                     <${ActionButton}

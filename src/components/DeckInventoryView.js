@@ -18,13 +18,12 @@ import { Tooltip } from './Tooltip.js';
 import { EquipmentTooltipContent } from './EquipmentTooltipContent.js';
 import { ItemTooltipContent } from './ItemTooltipContent.js';
 import { CardDetailTooltip, TYPE_INFO } from './Card.js';
-import { MAP_CONSUMABLE_TIME_COST } from '../engine/facilityReducer.js';
+import { MAP_CONSUMABLE_TIME_COST, isMapUsableConsumable } from '../engine/facilityReducer.js';
 
-/** 맵에서 즉시 사용할 수 있는 "회복류" 소모품인지 — mapTags.traits에 'healing'이 있는 것만. */
+/** 맵에서 즉시 사용할 수 있는 소모품인지 — 판정 기준은 엔진(isMapUsableConsumable)과 하나다. */
 function isHealingConsumable(item) {
   if (item.kind !== 'consumable') return false;
-  const def = CONSUMABLE_DEFINITIONS[item.defId];
-  return !!def?.mapTags.traits.includes('healing');
+  return isMapUsableConsumable(CONSUMABLE_DEFINITIONS[item.defId]);
 }
 
 // "창고 — 출격 준비"의 인벤토리 탭과 동일한 뷰 — 장비 슬롯 + 장착으로 구성된 덱을 카드 그리드로
@@ -222,7 +221,7 @@ export function DeckInventoryView({ loadout, inventory = null, warehouse = null,
   `;
 }
 
-/** 맵에서 회복류 소모품을 우클릭했을 때 뜨는 "사용" 팝업 — ConsumablePopup.dc.html 참고. */
+/** 맵에서 즉시 쓸 수 있는 소모품(회복류·오버라이드 충전류)을 우클릭했을 때 뜨는 "사용" 팝업 — ConsumablePopup.dc.html 참고. */
 function MapConsumableUsePopup({ item, onClose }) {
   const def = CONSUMABLE_DEFINITIONS[item.defId];
   return html`

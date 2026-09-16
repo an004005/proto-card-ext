@@ -51,6 +51,9 @@
  * @property {number} hp
  * @property {number} maxHp
  * @property {boolean} overloadActive 과부화 토글(ON이면 단계 1). 런 내내 유지되고 전투와 지도를 함께 오간다.
+ * @property {number} overrideChips 오버라이드 칩 잔량. 지도와 전투가 **같은** 통을 쓴다 — 어느
+ *   화면에서 쓰든 같은 수가 줄어야 "지금 쓸 것인가, 아껴 둘 것인가"가 한 번의 결정이 된다
+ *   (ADR-0086). 과부화와 마찬가지로 런 내내 유지되며 전투와 지도를 함께 오간다.
  * @property {Loadout} loadout
  * @property {Inventory} inventory 용량 제한 있음 — 런에 들고 나가는 짐, 과적(짐) 규칙 적용 대상
  * @property {Inventory} warehouse 용량 무제한(capacity: Infinity) — 홈베이스 보관함, 과적 규칙 미적용
@@ -328,6 +331,9 @@
  * @property {string[]} revealedPatrolRouteSectorIds 통제실 해킹 레벨1+로 순찰경로가 영구 공개된 구역.
  * @property {EncounterState|null} encounter 콜리전으로 열린, 아직 해소되지 않은 조우 판정.
  * @property {string[]} deceivedThreatIds 조우 속이기(D)를 이미 한 번 쓴 위협. 위협당 한 번뿐이다.
+ * @property {boolean} overrideArmed 오버라이드 칩을 사용 중인 상태. 참인 동안 맵 엔진의 모든
+ *   Capability 판정이 여섯 값을 CAPABILITY_MAX로 읽고, 시간이 흐른 첫 유료 행동이 끝나면
+ *   거짓으로 돌아간다(ADR-0086). 전투로 넘어가지 않도록 전투 진입 시에도 꺼진다.
  * @property {boolean} keyDiscovered 열쇠 대상 현장 기회를 파밍해 열쇠 탈출구 위치를 알아냈는지(§5.1.1). 한번 참이 되면 되돌아가지 않는다.
  * @property {ContractRuntimeState|null} contract 수락된 계약의 진행 상태(§3단계, D3·D4·D21).
  * @property {{startedAt: number}|null} lockdown 계약 목표 확보 순간 켜지는 봉쇄(D22) — 위협 이동과 증원이 빨라진다. 출구는 앞당겨 닫히지 않는다(ADR-0083).
@@ -484,7 +490,7 @@
  * @property {0|1} disengageProgress
  */
 
-/** @typedef {'assassination'|'melee'|'firearm'|'explosive'|'hack'|'deception'|'escape'|'perception'|'electronic'|'healing'} MapTrait */
+/** @typedef {'assassination'|'melee'|'firearm'|'explosive'|'hack'|'deception'|'escape'|'perception'|'electronic'|'healing'|'override'} MapTrait */
 
 /**
  * @typedef {Object} CardInstance

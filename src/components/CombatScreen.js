@@ -40,6 +40,7 @@ export function CombatScreen() {
   const pileCounts = pileCountsSignal.value;
   const overloadActive = overloadActiveSignal.value;
   const consumableSlots = snapshotSignal.value.playerState.loadout.consumableSlots;
+  const overrideChips = snapshotSignal.value.playerState.overrideChips || 0;
   const combatContext = snapshotSignal.value.combatContext;
   const disengage = combatContext?.disengage;
 
@@ -155,6 +156,19 @@ export function CombatScreen() {
             <//>
           `;
         })}
+        ${/* 오버라이드 칩은 소모품 슬롯이 아니라 런 전체의 통에서 나간다(ADR-0086) — 그래서
+              슬롯 목록 바깥에, 같은 줄에 둔다. */ null}
+        <${Tooltip} width=${260} content="충격 코어: 오버라이드 칩 하나로 시설 관리자 권한을 강제로 밀어넣어 적 전원의 장비·신경계를 과부하시킵니다. 살아 있는 적 전원 스턴 1(다음 행동을 건너뜀). 에너지·턴 소모 없음.">
+          <button
+            class="btn btn-secondary"
+            style=${{
+              fontSize: '11px', fontWeight: 800, padding: '4px 10px',
+              borderColor: 'var(--color-accent-700)', color: 'var(--color-accent-700)',
+            }}
+            disabled=${playbackActive || overrideChips <= 0}
+            onClick=${() => dispatch({ type: 'USE_OVERRIDE_CHIP' })}
+          >충격 코어 · 칩 ×${overrideChips}</button>
+        <//>
         ${/* 디버그: 정상 승리와 같은 처리 경로(checkWinLoss -> finalizeIfCombatEnded)를 타므로
               보상·시체·라운드 정산이 실제 승리와 동일하게 일어난다. */ null}
         <${Tooltip} width=${230} content="디버그: 살아 있는 적을 전부 쓰러뜨린 것으로 치고 정상 승리 처리(보상 생성·시체 남기기·라운드 정산)를 그대로 진행합니다.">

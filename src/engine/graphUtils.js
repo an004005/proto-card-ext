@@ -104,17 +104,24 @@ export function baselineWalkDistances(edges, fromId) {
  * 판정과 퇴로(2경로) 판정이 같은 "걸을 수 있는 길"을 쓰게 하려고 기준을 여기 한 곳에 둔다.
  * 두 판정이 갈리면 환풍구(일방통행)나 고지대가 한쪽에서만 길로 인정돼, 실제로는 되돌아올 수
  * 없는 자리가 "퇴로 2개"로 통과한다.
+ * 옵션 없이 부르면 "아무것도 열지 않고 고지대도 못 넘는" 기준(생성 단계)이다. 지도 화면처럼
+ * 지금 열린 문과 현재 Mobility를 반영해야 하는 호출부는 옵션으로 같은 함수를 쓴다 — 무엇이
+ * 지나갈 수 있는 길인지의 규칙을 두 벌 두지 않기 위해서다.
  * @param {{id: string, from: string, to: string, features: string[]}[]} edges
- * @returns {{from: string, to: string}[]}
+ * @param {{openedEdgeIds?: string[], allowHighGround?: boolean, withEdgeIds?: boolean}} [options]
+ *   openedEdgeIds: 이미 연 잠금 엣지. allowHighGround: 고지대를 넘을 수 있는가(runEngine의
+ *   canClimbHighGround 판정 결과). withEdgeIds: 호에 원래 엣지 id를 실을지(경로를 그릴 때).
+ * @returns {{from: string, to: string, edgeId?: string}[]}
  */
-export function baselineWalkArcs(edges) {
-  /** @type {{from: string, to: string}[]} */
+export function baselineWalkArcs(edges, { openedEdgeIds = [], allowHighGround = false, withEdgeIds = false } = {}) {
+  /** @type {{from: string, to: string, edgeId?: string}[]} */
   const arcs = [];
   for (const edge of edges) {
-    if (!isEdgeUnlocked(edge)) continue;
-    if (edge.features.includes('highGround')) continue;
-    arcs.push({ from: edge.from, to: edge.to });
-    if (!edge.features.includes('oneWay')) arcs.push({ from: edge.to, to: edge.from });
+    if (!isEdgeUnlocked(edge, openedEdgeIds)) continue;
+    if (edge.features.includes('highGround') && !allowHighGround) continue;
+    const tag = withEdgeIds ? { edgeId: edge.id } : {};
+    arcs.push({ from: edge.from, to: edge.to, ...tag });
+    if (!edge.features.includes('oneWay')) arcs.push({ from: edge.to, to: edge.from, ...tag });
   }
   return arcs;
 }
@@ -221,4 +228,47 @@ export function countEdgeDisjointPaths(edges, fromId, toId, maxPaths = 2, option
  */
 export function reachableSet(edges, fromId) {
   return new Set(bfsHopDistances(edges, fromId).keys());
+}
+
+/**
+ * 방향 호 목록 위의 최단 경로(BFS, 홉수 기준). 지도에서 노드를 클릭했을 때 "거기까지 어떻게
+ * 가는가"를 보여 주는 용도라, 호출부가 지금 실제로 지날 수 있는 호만 넘긴다(잠긴 문 제외,
+ * 일방통행은 생성 방향만). 도달할 수 없으면 null.
+ * @param {{from: string, to: string, edgeId?: string}[]} arcs
+ * @param {string} fromId
+ * @param {string} toId
+ * @returns {{nodeIds: string[], edgeIds: string[]} | null} nodeIds는 fromId부터 toId까지(양 끝 포함)
+ */
+export function shortestPathOverArcs(arcs, fromId, toId) {
+  if (fromId === toId) return { nodeIds: [fromId], edgeIds: [] };
+  /** @type {Map<string, {from: string, to: string, edgeId?: string}[]>} */
+  const outgoing = new Map();
+  for (const arc of arcs) {
+    if (!outgoing.has(arc.from)) outgoing.set(arc.from, []);
+    /** @type {{from: string, to: string, edgeId?: string}[]} */ (outgoing.get(arc.from)).push(arc);
+  }
+  /** @type {Map<string, {from: string, to: string, edgeId?: string} | null>} */
+  const cameFrom = new Map([[fromId, null]]);
+  const queue = [fromId];
+  while (queue.length > 0) {
+    const current = /** @type {string} */ (queue.shift());
+    if (current === toId) break;
+    for (const arc of outgoing.get(current) || []) {
+      if (cameFrom.has(arc.to)) continue;
+      cameFrom.set(arc.to, arc);
+      queue.push(arc.to);
+    }
+  }
+  if (!cameFrom.has(toId)) return null;
+  const nodeIds = [toId];
+  const edgeIds = [];
+  let cursor = toId;
+  for (;;) {
+    const arc = cameFrom.get(cursor);
+    if (!arc) break;
+    if (arc.edgeId !== undefined) edgeIds.unshift(arc.edgeId);
+    cursor = arc.from;
+    nodeIds.unshift(cursor);
+  }
+  return { nodeIds, edgeIds };
 }

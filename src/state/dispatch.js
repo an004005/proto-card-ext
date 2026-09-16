@@ -106,6 +106,10 @@ function summarize(command, before) {
     case 'DEBUG_WIN_COMBAT': return 'DEBUG_WIN_COMBAT (디버그)';
     case 'TOGGLE_OVERLOAD': return `TOGGLE_OVERLOAD ${before.playerState.overloadActive ? 'off' : 'on'}`;
     case 'USE_CONSUMABLE': return `USE_CONSUMABLE ${command.itemId}`;
+    case 'USE_OVERRIDE_CHIP':
+      return before.currentScreen === 'combat'
+        ? '오버라이드 칩 — 충격 코어(적 전원 스턴)'
+        : `오버라이드 칩 — 긴급 권한 코드 ${before.facilityRunState?.overrideArmed ? '취소' : '사용'}`;
     case 'SELECT_REWARD': return `SELECT_REWARD ${command.slotKey}:${command.optionIndex}`;
     case 'CONFIRM_REWARDS': return 'CONFIRM_REWARDS';
     case 'EQUIP_ITEM': return `EQUIP_ITEM ${command.itemId}`;

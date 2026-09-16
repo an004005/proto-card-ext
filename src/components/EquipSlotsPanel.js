@@ -4,13 +4,13 @@ import { EquipmentTooltipContent } from './EquipmentTooltipContent.js';
 import { describeCapabilityModifiers } from '../data/capabilityDisplay.js';
 import { MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import { CONSUMABLE_DEFINITIONS } from '../data/consumables.js';
+import { isMapUsableConsumable } from '../engine/facilityReducer.js';
 
-/** 퀵슬롯에 장착된 소모품이 맵에서 즉시 사용 가능한 "회복류"인지 — DeckInventoryView의
- * isHealingConsumable과 같은 기준(mapTags.traits에 'healing'), 슬롯 표시용 객체 기준으로 재확인. */
+/** 퀵슬롯에 장착된 소모품이 맵에서 즉시 사용 가능한지 — 엔진과 같은 기준(isMapUsableConsumable)을
+ * 슬롯 표시용 객체로 다시 확인한다. */
 function isHealingConsumableSlot(sl) {
   if (sl.catKey !== 'consumable' || !sl.defId) return false;
-  const def = CONSUMABLE_DEFINITIONS[sl.defId];
-  return !!def?.mapTags.traits.includes('healing');
+  return isMapUsableConsumable(CONSUMABLE_DEFINITIONS[sl.defId]);
 }
 
 // manage=true(맵 중 인벤토리 팝업)일 때만 드래그앤드롭 활성화: 장착된 슬롯을 드래그해서 시작할

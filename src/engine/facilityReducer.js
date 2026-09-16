@@ -14,7 +14,7 @@ import {
 import { WAIT_BATCH_MAX_TICKS } from '../data/facilityLayout.js';
 import { actionTimeCost } from './actionCosts.js';
 import { cleanTraces, cutPower, broadcastFalseTarget, plantFakeNoise } from './recovery.js';
-import { computeCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
+import { effectiveCapabilities, listFieldActiveEquipment } from './capabilityEngine.js';
 import { applyDurabilityDecay, MAX_DURABILITY } from './equipmentEngine.js';
 import { rollLootDurability } from './rewardEngine.js';
 import { rollSupplyLoot } from './fieldLoot.js';
@@ -55,12 +55,14 @@ function triggerCombatIfNeeded(snapshot) {
   const threat = run.threats[trigger.threatId];
   if (!threat) return snapshot;
 
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   const explained = explainEffectiveStealth(capabilities.stealth, run);
   const stealth = explained.total;
   const perception = computeThreatPerception(threat);
   const tier = computeEncounterTier(stealth, perception);
-  const clearedRun = { ...run, combatTrigger: null };
+  // 칩 사용 상태는 맵 전용이다 — 전투로 새어 나가면 "다음 유료 행동 하나"라는 약속이 깨지고, 전투가
+  // 끝난 뒤에도 켜진 채로 남는다. 전투가 열리는 이 자리에서 끈다(ADR-0086).
+  const clearedRun = { ...run, combatTrigger: null, overrideArmed: false };
   // 판정에 쓴 두 수치를 조우에 박아 둔다 — 화면이 "무엇을 보고 이 등급이 나왔는가"를 그 시각의
   // 값으로 고정해 보여줄 수 있게(리뷰 B7). 이후 은엄폐가 만료돼도 이 숫자는 움직이지 않는다.
   // 합계만 박아두면 "왜 동률인가"를 화면이 설명할 수 없다 — 상황 보정의 분해도 같이 고정한다
@@ -143,9 +145,11 @@ function settleCapabilityDues(run, playerState) {
  * 액션이 끝날 때 playerState에 정산한다 — 대가를 치르는 자리가 행동마다 흩어지지 않게.
  * @param {GameSnapshot} snapshot
  * @param {(run: import('./types.js').FacilityRunState) => import('./types.js').FacilityRunState} fn
+ * @param {{usesCapability?: boolean}} [options] usesCapability=false: 대기·장비 교체·소모품 사용처럼
+ *   Capability 판정이 없는 행동. 사용 중인 오버라이드 칩을 헛되이 소모하지 않는다(ADR-0086).
  * @returns {GameSnapshot}
  */
-function withFacilityRunState(snapshot, fn) {
+function withFacilityRunState(snapshot, fn, { usesCapability = true } = {}) {
   if (snapshot.currentScreen !== 'map' || !snapshot.facilityRunState) return snapshot;
   if (isBlockedByEncounter(snapshot)) return snapshot;
   const ps = snapshot.playerState;
@@ -156,12 +160,21 @@ function withFacilityRunState(snapshot, fn) {
   // 안 일어난다"만 남고 원인이 영영 드러나지 않으므로, 로그를 남기고 다시 던진다(리뷰 A8).
   let next;
   try {
-    next = refreshLocalObservations(fn(synced), computeCapabilities(ps.loadout).perception);
+    next = refreshLocalObservations(fn(synced), effectiveCapabilities(snapshot).perception);
   } catch (error) {
     if (error instanceof RuleViolation) return snapshot;
     console.error('[facilityReducer] 시설 액션 처리 중 예상치 못한 오류', error);
     throw error;
   }
+  // 사용 중인 칩은 "다음 판정 있는 유료 행동 하나"에 쓰인다(ADR-0086). 그 하나를 가리는 기준은
+  // 시간이 흘렀는가(또는 게이지 작업이 걸렸는가)와 그 행동이 Capability를 읽었는가다. 대기·장비
+  // 교체·소모품 사용처럼 판정이 없는 행동은 시간이 흘러도 칩을 헛되이 쓰지 않는다 — 단, 그 행동
+  // 끝에 조우가 열려 은신 판정을 상한으로 받았다면 이득이 실현된 것이므로 소모한다.
+  // RuleViolation으로 되돌아간 시도는 위 catch가 스냅샷을 그대로 돌려주므로 여기 닿지 않는다.
+  // 끄는 것은 이 함수 끝의 조우 판정(triggerCombatIfNeeded)이 지난 뒤다 — "붙잡히지 않으려고
+  // 칩을 쓰고 이동한다"가 성립하려면 그 이동의 은신 판정까지 상한으로 읽어야 한다.
+  const paid = next.time > synced.time || (next.pendingTask && !synced.pendingTask);
+  const consumesOverride = synced.overrideArmed && paid && (usesCapability || !!next.combatTrigger);
   let playerState = ps;
   ({ run: next, playerState } = settleCapabilityDues(next, playerState));
   // 게이지가 찬 작업의 **스냅샷 밖** 효과(인벤토리·장비·rng)를 여기서 적용한다(ADR-0084).
@@ -196,7 +209,18 @@ function withFacilityRunState(snapshot, fn) {
   // 열린 출구 위에서 탈출 조건이 성립하면, 같은 칸에 적이 도착했더라도 탈출이 먼저 성립한다 —
   // 문턱을 넘은 뒤에 붙잡히지는 않는다. 조우는 탈출이 성립하지 않을 때만 처리한다.
   if (extracting) return { ...result, currentScreen: 'extractionComplete' };
-  return triggerCombatIfNeeded(result);
+  return consumesOverride ? consumeOverrideArm(triggerCombatIfNeeded(result)) : triggerCombatIfNeeded(result);
+}
+
+/**
+ * 사용 중인 오버라이드 칩을 소모한다. 칩의 이득이 실현된 자리(유료 행동의 끝, 기만 회피)마다 부른다 —
+ * 흩어져 있으면 한 곳이 빠져 "공짜 사용"이 생긴다(리뷰에서 실제로 기만 회피가 그랬다).
+ * @param {GameSnapshot} snapshot @returns {GameSnapshot}
+ */
+function consumeOverrideArm(snapshot) {
+  const run = snapshot.facilityRunState;
+  if (!run || !run.overrideArmed) return snapshot;
+  return { ...snapshot, facilityRunState: { ...run, overrideArmed: false } };
 }
 
 /**
@@ -220,7 +244,7 @@ function withMapEquipTimeCost(snapshot, op, targetId) {
   // 안전하다"는 구멍도 그대로 막힌다.
   return withFacilityRunState(snapshot, (run) => scheduleTask(run, {
     kind: 'equipSwap', timeCost: actionTimeCost('equipSwap'), params: { op, targetId },
-  }));
+  }), { usesCapability: false });
 }
 
 /**
@@ -256,8 +280,21 @@ export function unequipConsumableOnMapCommand(snapshot, itemId) {
 }
 
 /**
- * §신규: 맵에서 회복류 소모품을 인벤토리/퀵슬롯 어디에 있든 즉시 사용한다(전투 중 규칙은
- * 그대로 — 퀵슬롯만, 무료). "회복류"는 `mapTags.traits`에 'healing'이 있는 소모품만.
+ * 맵에서 즉시 쓸 수 있는 소모품인지 — 전투 밖에서도 의미가 있는 효과만 허용한다. 회복류
+ * ('healing')와 오버라이드 충전류('override')가 그것이고, 나머지(폭발·섬광)는 겨눌 적이
+ * 없으므로 맵에서는 쓰이지 않는다. 화면(DeckInventoryView/EquipSlotsPanel)도 같은 기준을 본다.
+ * @param {import('../data/consumables.js').ConsumableDef|undefined} def
+ * @returns {boolean}
+ */
+export function isMapUsableConsumable(def) {
+  if (!def) return false;
+  if (def.effect.kind === 'healPercent' && def.mapTags.traits.includes('healing')) return true;
+  return def.effect.kind === 'addOverrideChips' && def.mapTags.traits.includes('override');
+}
+
+/**
+ * §신규: 맵에서 회복류·오버라이드 충전류 소모품을 인벤토리/퀵슬롯 어디에 있든 즉시 사용한다
+ * (전투 중 규칙은 그대로 — 퀵슬롯만, 무료).
  * @param {GameSnapshot} snapshot
  * @param {string} itemId
  * @returns {GameSnapshot}
@@ -269,10 +306,11 @@ function applyMapConsumable(snapshot, itemId) {
   const item = fromInventory || (slotIndex !== -1 ? ps.loadout.consumableSlots[slotIndex] : null);
   if (!item) return snapshot;
   const def = CONSUMABLE_DEFINITIONS[item.defId];
-  if (!def || def.effect.kind !== 'healPercent' || !def.mapTags.traits.includes('healing')) return snapshot;
+  if (!isMapUsableConsumable(def)) return snapshot;
 
-  const heal = Math.round(ps.maxHp * def.effect.amount);
-  const hp = Math.min(ps.maxHp, ps.hp + heal);
+  let { hp, overrideChips } = ps;
+  if (def.effect.kind === 'healPercent') hp = Math.min(ps.maxHp, hp + Math.round(ps.maxHp * def.effect.amount));
+  else overrideChips = (overrideChips || 0) + def.effect.amount;
   let inventory = ps.inventory;
   let loadout = ps.loadout;
   if (fromInventory) {
@@ -280,7 +318,33 @@ function applyMapConsumable(snapshot, itemId) {
   } else {
     loadout = { ...loadout, consumableSlots: loadout.consumableSlots.map((it, i) => (i === slotIndex ? null : it)) };
   }
-  return { ...snapshot, playerState: { ...ps, hp, inventory, loadout } };
+  return { ...snapshot, playerState: { ...ps, hp, overrideChips, inventory, loadout } };
+}
+
+/**
+ * 오버라이드 칩 사용/취소(ADR-0086). 0칸이고 조우에 막히지 않는다 — 칩을 꺼내 꽂는 것은
+ * 판단이지 행동이 아니며, 막다른 조우에서 쓸 수 없으면 "지금 밀어붙인다"라는 쓰임 자체가 없다.
+ * 사용 중에 다시 부르면 취소하고 칩을 돌려준다 — 잘못 누른 것이 런의 자원을 먹지 않게.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function toggleOverrideArmCommand(snapshot) {
+  const run = snapshot.facilityRunState;
+  if (snapshot.currentScreen !== 'map' || !run || run.phase !== 'active') return snapshot;
+  const ps = snapshot.playerState;
+  if (run.overrideArmed) {
+    return {
+      ...snapshot,
+      facilityRunState: { ...run, overrideArmed: false },
+      playerState: { ...ps, overrideChips: (ps.overrideChips || 0) + 1 },
+    };
+  }
+  if ((ps.overrideChips || 0) <= 0) return snapshot;
+  return {
+    ...snapshot,
+    facilityRunState: { ...run, overrideArmed: true },
+    playerState: { ...ps, overrideChips: ps.overrideChips - 1 },
+  };
 }
 
 /** @param {GameSnapshot} snapshot @param {string} itemId @returns {GameSnapshot} */
@@ -291,7 +355,7 @@ export function useMapConsumableCommand(snapshot, itemId) {
   // 치료도 게이지가 차야 효과가 난다 — 중단되면 소모품을 쓰지도, 회복하지도 않는다(planned §9.4).
   return withFacilityRunState(snapshot, (run) => scheduleTask(run, {
     kind: 'mapConsumable', timeCost: actionTimeCost('mapConsumable'), params: { itemId },
-  }));
+  }), { usesCapability: false });
 }
 
 /**
@@ -315,7 +379,7 @@ export function waitCommand(snapshot, ticks = 1) {
   let stopReason = null;
   for (let i = 0; i < total; i++) {
     const before = s;
-    s = withFacilityRunState(s, (run) => waitOneTick(run));
+    s = withFacilityRunState(s, (run) => waitOneTick(run), { usesCapability: false });
     if (s === before) { stopReason = 'blocked'; break; } // 조우에 막혔거나 런이 이미 끝났다
     if (s.currentScreen !== 'map') { stopReason = 'runEnded'; break; } // 붕괴·사망·탈출
     const run = s.facilityRunState;
@@ -359,7 +423,7 @@ function exitStatusesOf(run) {
  * @returns {GameSnapshot}
  */
 export function moveToNode(snapshot, nodeId) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => moveToAdjacentNode(run, nodeId, capabilities.mobility, capabilities.stealth));
 }
 
@@ -369,24 +433,24 @@ export function moveToNode(snapshot, nodeId) {
  * @returns {GameSnapshot}
  */
 export function requestExtractionCommand(snapshot, exitId) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => requestExtraction(run, exitId, capabilities.hacking));
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function basicReconCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => basicRecon(run, capabilities.perception));
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function useConcealmentCommand(snapshot) {
-  return withFacilityRunState(snapshot, (run) => useConcealment(run));
+  return withFacilityRunState(snapshot, (run) => useConcealment(run), { usesCapability: false });
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function hackControlRoomCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => hackControlRoom(run, capabilities.hacking));
 }
 
@@ -397,7 +461,7 @@ export function hackControlRoomCommand(snapshot) {
  * @returns {GameSnapshot}
  */
 export function acquireContractGoodsCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   // 물건이 인벤토리에 들어오는 것은 게이지가 찰 때다(DEFERRED_COMPLETIONS.contract) — 중단된
   // 확보는 물건을 들고 나오지 못한 것이라 아무것도 들어오지 않는다.
   return withFacilityRunState(snapshot, (run) => acquireContractGoods(run, capabilities.stealth, capabilities.mobility));
@@ -405,25 +469,25 @@ export function acquireContractGoodsCommand(snapshot) {
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function destroyContractTargetCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => destroyContractTarget(run, capabilities.force));
 }
 
 /** 설치해 둔 폭약을 터뜨린다(C5) — 목표부에서 2홉 이상 떨어진 자리에서만.
  * @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function detonateContractChargeCommand(snapshot) {
-  return withFacilityRunState(snapshot, (run) => detonateContractCharge(run));
+  return withFacilityRunState(snapshot, (run) => detonateContractCharge(run), { usesCapability: false });
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function acquireContractIntelCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => acquireContractIntel(run, capabilities.hacking));
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function transmitContractIntelCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => transmitContractIntel(run, capabilities.hacking));
 }
 
@@ -431,54 +495,54 @@ export function transmitContractIntelCommand(snapshot) {
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function disposeCorpseCommand(snapshot) {
-  return withFacilityRunState(snapshot, (run) => disposeCorpse(run));
+  return withFacilityRunState(snapshot, (run) => disposeCorpse(run), { usesCapability: false });
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function cleanTracesCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => cleanTraces(run, capabilities.perception));
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */
 export function cutPowerCommand(snapshot) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => cutPower(run, capabilities.force));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} targetNodeId @returns {GameSnapshot} */
 export function plantFakeNoiseCommand(snapshot, targetNodeId) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => plantFakeNoise(run, capabilities.deception, targetNodeId));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} targetSectorId @returns {GameSnapshot} */
 export function broadcastFalseTargetCommand(snapshot, targetSectorId) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => broadcastFalseTarget(run, capabilities.deception, targetSectorId));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} cameraId @returns {GameSnapshot} */
 export function hackCameraCommand(snapshot, cameraId) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => hackCamera(run, cameraId, capabilities.hacking));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} interfaceId @returns {GameSnapshot} */
 export function hackAccessInterfaceCommand(snapshot, interfaceId) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => hackAccessInterface(run, interfaceId, capabilities.hacking));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} cameraId @returns {GameSnapshot} */
 export function destroyCameraCommand(snapshot, cameraId) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => destroyCamera(run, cameraId, capabilities.force));
 }
 
 /** @param {GameSnapshot} snapshot @param {string} generatorId @param {'hacking'|'force'} capabilityKind */
 export function disableGeneratorCommand(snapshot, generatorId, capabilityKind) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => disableGenerator(run, generatorId, capabilityKind, capabilities[capabilityKind]));
 }
 
@@ -490,7 +554,7 @@ export function disableGeneratorCommand(snapshot, generatorId, capabilityKind) {
  * @returns {GameSnapshot}
  */
 export function openSpecialEdgeCommand(snapshot, edgeId, capabilityKind, mode) {
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => openSpecialEdge(run, edgeId, capabilityKind, capabilities[capabilityKind], mode));
 }
 
@@ -638,7 +702,7 @@ export function useFieldEquipmentCommand(snapshot, instanceId, targetId) {
   const active = listFieldActiveEquipment(snapshot.playerState.loadout);
   const entry = active.find((e) => e.instanceId === instanceId);
   if (!entry) return snapshot;
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   const usableAmmo = getUsableAmmo(snapshot.playerState.inventory);
   return withFacilityRunState(snapshot, (run) => useFieldEquipment(
     run, instanceId, entry.contract.fieldAction, targetId,
@@ -660,7 +724,8 @@ export function encounterAmbushCommand(snapshot) {
   if (!encounter || encounter.tier !== 'advantage') return snapshot;
   const threat = run.threats[encounter.threatId];
   if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
-  const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  // 칩 사용 상태는 맵 전용이다 — 전투로 들어가는 모든 문(triggerCombatIfNeeded와 여기)에서 끈다(ADR-0086).
+  const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null, overrideArmed: false } };
   return startCombat(cleared, threat.monsterIds, undefined, { nodeId: encounter.nodeId, threatId: threat.id, ambush: 'player' });
 }
 
@@ -691,7 +756,7 @@ export function encounterDeceiveCommand(snapshot) {
   if (!encounter || (encounter.tier !== 'advantage' && encounter.tier !== 'even')) return snapshot;
   const threat = run.threats[encounter.threatId];
   if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
-  const capabilities = computeCapabilities(snapshot.playerState.loadout);
+  const capabilities = effectiveCapabilities(snapshot);
   // 요구치 미달은 여기서 거르지 않는다 — 층계(D8)의 불가 판정만 막고, 그 판정은 deceiveThreat
   // 안의 사양표가 한다. 화면의 예고와 커맨드가 다른 기준을 쓰면 버튼이 조용히 아무 일도 안 한다.
   if ((run.deceivedThreatIds || []).includes(threat.id)) return snapshot;
@@ -708,7 +773,8 @@ export function encounterDeceiveCommand(snapshot) {
   const encounterAfter = result.success
     ? null
     : { ...encounter, tier: /** @type {const} */ ('disadvantage'), graceUsed: false };
-  return { ...snapshot, facilityRunState: { ...result.state, encounter: encounterAfter } };
+  // 0칸이지만 기만 판정에 사용 중인 칩의 Capability를 썼다 — 이득이 실현됐으니 칩은 여기서 나간다.
+  return consumeOverrideArm({ ...snapshot, facilityRunState: { ...result.state, encounter: encounterAfter } });
 }
 
 /**
@@ -724,7 +790,7 @@ export function encounterEvadeCommand(snapshot) {
   // 조우를 먼저 닫아야 공통 래퍼의 조우 차단('even')에 자기 자신이 막히지 않는다. 회피는
   // 1칸짜리 유료 행동이고(planned §4), 그 1칸 동안 다른 위협과 붕괴는 정상 판정된다.
   const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null } };
-  return withFacilityRunState(cleared, (r) => evadeThreat(r, encounter.threatId));
+  return withFacilityRunState(cleared, (r) => evadeThreat(r, encounter.threatId), { usesCapability: false });
 }
 
 /**
@@ -739,6 +805,7 @@ export function encounterFightCommand(snapshot) {
   if (!encounter || encounter.tier !== 'forced') return snapshot;
   const threat = run.threats[encounter.threatId];
   if (!threat) return { ...snapshot, facilityRunState: { ...run, encounter: null } };
-  const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null } };
+  // 칩 사용 상태는 맵 전용이다 — 전투로 들어가는 모든 문에서 끈다(ADR-0086).
+  const cleared = { ...snapshot, facilityRunState: { ...run, encounter: null, overrideArmed: false } };
   return startCombat(cleared, threat.monsterIds, undefined, { nodeId: encounter.nodeId, threatId: threat.id, ambush: 'enemy' });
 }

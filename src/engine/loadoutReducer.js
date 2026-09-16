@@ -18,7 +18,11 @@ import { equipItemFrom, getEquipmentCategory, SLOT_LIMITS } from './inventoryRed
 /** @typedef {import('./types.js').Loadout} Loadout */
 /** @typedef {import('./types.js').Inventory} Inventory */
 
-export const BASE_MAX_HP = 70;
+export const BASE_MAX_HP = 40;
+
+// 오버라이드 칩 시작 개수. 지도와 전투가 같은 통을 쓰므로(ADR-0086) 이 하나가 두 화면의
+// 예산 전부다 — 런당 세 번의 "지금 밀어붙인다"다(처음 안 5개에서 밸런스로 내렸다 — ADR-0086).
+export const START_OVERRIDE_CHIPS = 3;
 export const BASE_INVENTORY_CAPACITY = 10;
 export const CONSUMABLE_SLOT_COUNT = 3;
 
@@ -80,6 +84,7 @@ export function newRun(seed) {
     currentScreen: 'contract',
     playerState: {
       hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, overloadActive: false,
+      overrideChips: START_OVERRIDE_CHIPS,
       loadout,
       inventory: createInventory(BASE_INVENTORY_CAPACITY),
       warehouse: buildStartingWarehouse(loadout),

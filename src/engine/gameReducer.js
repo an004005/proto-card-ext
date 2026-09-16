@@ -19,11 +19,12 @@ import {
   acquireContractGoodsCommand, destroyContractTargetCommand, detonateContractChargeCommand,
   acquireContractIntelCommand, transmitContractIntelCommand,
   disposeCorpseCommand, cleanTracesCommand, cutPowerCommand, broadcastFalseTargetCommand, plantFakeNoiseCommand,
-  selectFarmRewardCommand, waitCommand,
+  selectFarmRewardCommand, waitCommand, toggleOverrideArmCommand,
 } from './facilityReducer.js';
 import {
   playCardCommand, endTurnCommand, useConsumable, beginDisengageCommand, cancelDisengageCommand,
   resolveDisengageCommand, toggleOverloadCommand, getDeckEntries, debugWinCombatCommand,
+  useOverrideChipInCombat,
 } from './combatReducer.js';
 import { selectReward, confirmRewards } from './rewardReducer.js';
 import {
@@ -88,6 +89,10 @@ export function gameReducer(snapshot, command) {
     // 디버그 전용(CombatScreen의 'DEBUG 즉시 승리'). 정상 승리와 같은 처리 경로를 탄다.
     case 'DEBUG_WIN_COMBAT': return debugWinCombatCommand(snapshot);
     case 'USE_CONSUMABLE': return useConsumable(snapshot, command.itemId);
+    // 오버라이드 칩은 지도와 전투가 같은 통을 쓰므로(ADR-0086) 커맨드도 하나다 — 어느 화면에
+    // 있느냐가 "긴급 권한 코드(사용 중 상태)"인지 "충격 코어(적 전원 스턴)"인지를 가른다.
+    case 'USE_OVERRIDE_CHIP':
+      return snapshot.currentScreen === 'combat' ? useOverrideChipInCombat(snapshot) : toggleOverrideArmCommand(snapshot);
     case 'BEGIN_DISENGAGE': return beginDisengageCommand(snapshot);
     case 'CANCEL_DISENGAGE': return cancelDisengageCommand(snapshot);
     case 'RESOLVE_DISENGAGE': return resolveDisengageCommand(snapshot);

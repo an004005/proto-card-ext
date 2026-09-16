@@ -292,3 +292,30 @@ test('지도 헤더의 과부화 토글은 현재 상태를 적고, 누르면 �
   assert.equal(snapshotSignal.value.playerState.overloadActive, true);
   assert.equal(snapshotSignal.value.facilityRunState.time, 0, '토글은 시계를 흘리지 않는다');
 });
+
+test('노드를 클릭하면 그곳까지의 최단 경로가 지도 위에 그려지고 칸 수가 적힌다', async () => {
+  // 출발지에서 2홉 이상 떨어진, 지도에 그려진 노드를 골라 클릭한다. 경로 표시는 지날 수 있는
+  // 통로만 세므로 실제로 도달 가능한 노드를 고른다.
+  const { graph } = generateFacilityGraph(11);
+  const run = createRunState(graph, 11);
+  const root = mountMap(run);
+  // 2홉 떨어진 노드 중 화면에 히트 영역이 있는 것을 하나 찾아 클릭한다. 클릭마다 재렌더가
+  // 일어나 tabindex가 옮겨 다니므로, 붙잡아 둔 요소가 아니라 매번 다시 조회한다.
+  const hitOf = (nodeId) => queryAll(root, (node) => node.localName === 'circle' && node.getAttribute('tabindex') != null && node.getAttribute('data-node-id') === nodeId)[0];
+  let shown = false;
+  for (const node of graph.nodes) {
+    const hit = hitOf(node.id);
+    if (!hit) continue; // 아직 지도에 없는 노드(비인가 통로)
+    fire(hit, 'click');
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    const summary = queryAll(root, (node) => node.getAttribute && node.getAttribute('class') === 'map-route-summary')[0];
+    if (!summary) continue;
+    const match = summary.textContent.match(/최단 경로: (\d+)칸/);
+    if (!match || Number(match[1]) < 2) continue;
+    const routeEdges = queryAll(root, (node) => node.localName === 'path' && node.getAttribute('class') === 'map-route-edge');
+    assert.equal(routeEdges.length, Number(match[1]), '경로 칸 수만큼 통로가 강조되어야 한다');
+    shown = true;
+    break;
+  }
+  assert.ok(shown, '2칸 이상 떨어진 노드를 골랐을 때 경로 요약과 강조 통로가 있어야 한다');
+});

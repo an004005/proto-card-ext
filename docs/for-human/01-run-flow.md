@@ -39,7 +39,7 @@
 ### 3단계 — 출격 준비(로드아웃)
 
 - 슬롯 정원(`SLOT_LIMITS`, `src/engine/inventoryReducer.js` + `CONSUMABLE_SLOT_COUNT`): 무기 2 · 상의 1 · 하의 1 · 모듈 2 · 임플란트 3 · 소모품 퀵슬롯 3.
-- 기본 최대 HP `BASE_MAX_HP` = 70, 기본 인벤토리 용량 `BASE_INVENTORY_CAPACITY` = 10칸(`src/engine/loadoutReducer.js`).
+- 기본 최대 HP `BASE_MAX_HP` = 40, 기본 인벤토리 용량 `BASE_INVENTORY_CAPACITY` = 10칸(`src/engine/loadoutReducer.js`).
 - 창고(`warehouse`)는 용량이 무제한(`Infinity`)이고 인벤토리와 별개다. 시작 탄약은 `STARTING_AMMO` = 16발이며 **창고에 있다** — 플레이어가 직접 인벤토리로 옮겨야 런에 들고 나간다. 탄약 한 더미는 `AMMO_STACK_SIZE` = 10발까지 담기므로 16발은 두 칸이다.
 - 아무것도 장착하지 않은 상태로 시작한다(`defaultLoadout`). 빈 무기 슬롯마다 `맨손공격` 3장, 빈 상의·하의 슬롯마다 `어설픈 회피` 3장이 덱에 들어간다(`EMPTY_SLOT_FILLER_COUNT` = 3, `src/engine/equipmentEngine.js`).
 - `CONFIRM_LOADOUT`이 시설 그래프를 생성하고(`generateFacilityGraph`) 맵 화면으로 넘어간다. **이 시점 이후 창고에는 손이 닿지 않는다.**

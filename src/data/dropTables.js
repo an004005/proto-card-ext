@@ -6,6 +6,7 @@ export const CONSUMABLE_DROP_WEIGHTS = [
   { value: 'bandage', weight: 0.5 },
   { value: 'flashbang', weight: 0.3 },
   { value: 'grenade', weight: 0.2 },
+  { value: 'overrideCell', weight: 0.15 },
 ];
 
 // 위협 그룹(§9) → 몬스터 매핑. ThreatRoster/ThreatRuntimeState는 sectorId+size만 갖고 실제

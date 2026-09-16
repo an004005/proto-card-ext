@@ -255,6 +255,9 @@ export function useConsumable(snapshot, itemId) {
     combat = { ...combat, player: { ...combat.player, hp: Math.min(combat.player.maxHp, combat.player.hp + heal) } };
   } else if (def.effect.kind === 'aoeDamage') {
     combat = { ...combat, enemies: combat.enemies.map((e) => (e.hp > 0 ? applyDamage(e, def.effect.amount, false) : e)) };
+  } else if (def.effect.kind === 'addOverrideChips') {
+    // 칩은 전투 상태가 아니라 런 상태에 쌓인다 — 지도와 전투가 같은 통을 쓰기 때문이다(ADR-0086).
+    snapshot = { ...snapshot, playerState: { ...snapshot.playerState, overrideChips: (snapshot.playerState.overrideChips || 0) + def.effect.amount } };
   } else if (def.effect.kind === 'aoeDebuff') {
     combat = {
       ...combat,
@@ -267,7 +270,33 @@ export function useConsumable(snapshot, itemId) {
 
   const consumableSlots = ps.loadout.consumableSlots.map((it, i) => (i === slotIndex ? null : it));
   const loadout = { ...ps.loadout, consumableSlots };
-  return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, playerState: { ...ps, loadout } });
+  // playerState는 위 효과 분기가 갈아끼웠을 수 있으므로 `ps`가 아니라 현재 스냅샷의 것을 편다.
+  return finalizeIfCombatEnded({ ...snapshot, activeCombatState: combat, playerState: { ...snapshot.playerState, loadout } });
+}
+
+/**
+ * 오버라이드 칩 — 전투에서의 쓰임(ADR-0086). 살아 있는 적 전원에게 스턴 1을 건다. 에너지도
+ * 턴도 쓰지 않는다: 칩 자체가 런 전체에서 세 번뿐인 통화라, 그 위에 전투 내 비용을 또 얹으면
+ * "언제 쓸 것인가"가 아니라 "쓸 수 있는 턴이 오는가"의 문제가 되어버린다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function useOverrideChipInCombat(snapshot) {
+  const combat = snapshot.activeCombatState;
+  if (snapshot.currentScreen !== 'combat' || !combat) return snapshot;
+  if (combat.phase === 'victory' || combat.phase === 'defeat') return snapshot;
+  const ps = snapshot.playerState;
+  if ((ps.overrideChips || 0) <= 0) return snapshot;
+
+  const stunned = {
+    ...combat,
+    enemies: combat.enemies.map((e) => (e.hp > 0 ? { ...e, statuses: applyStatus(e.statuses, 'stun', 1) } : e)),
+  };
+  return finalizeIfCombatEnded({
+    ...snapshot,
+    activeCombatState: checkWinLoss(stunned),
+    playerState: { ...ps, overrideChips: ps.overrideChips - 1 },
+  });
 }
 
 /** @param {GameSnapshot} snapshot @returns {GameSnapshot} */

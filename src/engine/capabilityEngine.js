@@ -42,6 +42,28 @@ export function computeCapabilities(loadout) {
   return totals;
 }
 
+/**
+ * 오버라이드 칩 사용 중의 Capability — 여섯 값이 전부 상한이다(ADR-0086).
+ * @returns {import('./types.js').CapabilityValues}
+ */
+export function maxCapabilities() {
+  return { perception: CAPABILITY_MAX, stealth: CAPABILITY_MAX, hacking: CAPABILITY_MAX, mobility: CAPABILITY_MAX, force: CAPABILITY_MAX, deception: CAPABILITY_MAX };
+}
+
+/**
+ * 맵이 실제로 판정에 쓰는 Capability. 사용 중인 오버라이드 칩이 있으면 장비 합 대신 상한을 돌려준다.
+ *
+ * 이 함수가 따로 있는 이유는 "모든 Capability 판정"이 정말 전부여야 하기 때문이다 —
+ * facilityReducer의 열댓 군데와 화면의 예고가 각자 computeCapabilities를 부르면 한 군데만
+ * 빠져도 사용한 칩이 조용히 아무것도 안 하는 행동이 생긴다. 읽는 자리를 하나로 모은다.
+ * @param {import('./types.js').GameSnapshot} snapshot
+ * @returns {import('./types.js').CapabilityValues}
+ */
+export function effectiveCapabilities(snapshot) {
+  if (snapshot.facilityRunState?.overrideArmed) return maxCapabilities();
+  return computeCapabilities(snapshot.playerState.loadout);
+}
+
 /** 요구치 판정에 쓰는 `max(0, value)` (구현 명세 §3.2). @param {number} value */
 export function effectiveForRequirement(value) {
   return Math.max(0, value);

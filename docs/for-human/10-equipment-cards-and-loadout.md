@@ -79,6 +79,7 @@
 | 소모품 | 효과 | 맵 소음 | 태그 |
 |---|---|---|---|
 | 붕대 | HP 20% 회복 | 0 | `healing` — 맵에서도 사용 가능(2칸) |
+| 오버라이드 셀 | 오버라이드 칩 2개 충전 | 0 | `override` — 맵에서도 사용 가능(2칸) |
 | 수류탄 | 광역 10 피해 | 3 | `explosive` |
 | 섬광탄 | 광역 취약1·약화1 | 2 | `escape`, 이탈+1 |
 
@@ -125,7 +126,7 @@
 mapTags: { noise: 0|1|2|3, traits: string[], disengageProgress: 0|1 }
 ```
 
-- `traits` 중 **현재 코드가 실제로 읽는 것은 `'healing'` 하나뿐이다.** `deception`·`hack`·`perception` 등 나머지는 분류용 메타데이터이며 어떤 규칙도 보지 않는다. 맵의 기만·해킹·정찰 행동은 카드 태그가 아니라 장비 Capability가 정한다.
+- `traits` 중 **현재 코드가 실제로 읽는 것은 `'healing'`과 `'override'` 둘뿐이다**(맵에서 즉시 쓸 수 있는 소모품 판정). `deception`·`hack`·`perception` 등 나머지는 분류용 메타데이터이며 어떤 규칙도 보지 않는다. 맵의 기만·해킹·정찰 행동은 카드 태그가 아니라 장비 Capability가 정한다.
 - 실행 불가한 짐 카드·상태이상 카드 정의는 `mapTags`를 생략할 수 있다.
 
 ### 역할축 판정 (`axisOfEquipment`, `src/engine/fieldLoot.js`)
