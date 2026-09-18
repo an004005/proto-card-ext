@@ -8,12 +8,13 @@ import { WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS } f
 import { MODULE_DEFINITIONS } from '../src/data/modules.js';
 import { IMPLANT_DEFINITIONS } from '../src/data/implants.js';
 import { CONSUMABLE_DEFINITIONS } from '../src/data/consumables.js';
+import { LOADOUT_PRESETS } from '../src/data/loadoutPresets.js';
 import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
 import { axisOfEquipment } from '../src/engine/fieldLoot.js';
 import { STATUS_LABELS, POWER_LABELS } from '../src/data/statusEffects.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import * as FACILITY from '../src/data/facilityLayout.js';
-import { BASE_MAX_HP, BASE_INVENTORY_CAPACITY, CONSUMABLE_SLOT_COUNT } from '../src/engine/loadoutReducer.js';
+import { BASE_MAX_HP, BASE_INVENTORY_CAPACITY, CONSUMABLE_SLOT_COUNT, previewPresetCapabilities } from '../src/engine/loadoutReducer.js';
 import { SLOT_LIMITS } from '../src/engine/inventoryReducer.js';
 import { AMMO_STACK_SIZE } from '../src/engine/inventoryEngine.js';
 import { MAX_DURABILITY } from '../src/engine/equipmentEngine.js';
@@ -105,6 +106,12 @@ function capability(id) {
   const axis = axisOfEquipment(id) === 'infiltration' ? '침투' : '전투';
   return { modifiers, fieldAction: koreanJson(contract.fieldAction), mapInfo: contract.mapInfoEffect ? '예' : '', axis };
 }
+
+/** 프리셋 시트가 id 대신 사람이 읽는 이름을 적기 위한 표. @type {Object.<string, string>} */
+const EQUIPMENT_AND_CONSUMABLE_NAME = Object.fromEntries(
+  [WEAPON_DEFINITIONS, ARMOR_TOP_DEFINITIONS, ARMOR_BOTTOM_DEFINITIONS, MODULE_DEFINITIONS, IMPLANT_DEFINITIONS, CONSUMABLE_DEFINITIONS]
+    .flatMap((definitions) => Object.values(definitions).map((def) => [def.id, def.name])),
+);
 
 function categoryForConstant(name) {
   if (name.includes('EXIT') || name.includes('COLLAPSE')) return '탈출';
@@ -287,6 +294,29 @@ function buildWorkbook() {
     { key: 'fieldAction', header: '능동 현장 효과', width: 50 },
     { key: 'mapInfo', header: '맵 정보 효과', width: 12 }, { key: 'axis', header: '역할축', width: 10 },
   ], implants);
+
+  const presetName = (id) => EQUIPMENT_AND_CONSUMABLE_NAME[id] ?? id;
+  const presets = LOADOUT_PRESETS.map((preset) => {
+    const capabilities = previewPresetCapabilities(preset);
+    return {
+      id: preset.id, name: preset.name, summary: preset.summary,
+      weapons: preset.weapons.map(presetName).join(', '),
+      armor: `${presetName(preset.top)} / ${presetName(preset.bottom)}`,
+      modules: preset.modules.map(presetName).join(', '),
+      implants: preset.implants.map(presetName).join(', '),
+      consumables: preset.consumables.map(presetName).join(', '),
+      capability: ['perception', 'stealth', 'hacking', 'mobility', 'force', 'deception']
+        .map((key) => `${koreanTerm(key)} ${capabilities[key] > 0 ? '+' : ''}${capabilities[key]}`).join(', '),
+    };
+  });
+  sheet(workbook, '프리셋', '출격 준비 역할군 프리셋', 'src/data/loadoutPresets.js', [
+    { key: 'id', header: '프리셋 ID', width: 14 }, { key: 'name', header: '역할군', width: 10 },
+    { key: 'summary', header: '한 줄 요약', width: 42 },
+    { key: 'weapons', header: '무기', width: 24 }, { key: 'armor', header: '상의 / 하의', width: 22 },
+    { key: 'modules', header: '모듈', width: 26 }, { key: 'implants', header: '임플란트', width: 32 },
+    { key: 'consumables', header: '퀵슬롯', width: 18 },
+    { key: 'capability', header: '장착 후 Capability', width: 60 },
+  ], presets);
 
   const monsters = Object.values(MONSTER_DEFINITIONS).map((def) => ({
     id: def.id, name: def.name, tier: koreanTerm(def.tier), hp: def.hp, machine: def.isMachine ? '예' : '아니오',

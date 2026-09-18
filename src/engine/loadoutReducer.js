@@ -11,6 +11,7 @@ import {
 } from './equipmentEngine.js';
 import { createInventory, addItem, removeItem, createItem, addAmmo } from './inventoryEngine.js';
 import { WAREHOUSE_STARTING_POOL, FARMING_ONLY_POOL, STARTING_AMMO } from '../data/loadoutPool.js';
+import { getLoadoutPreset, presetEquipmentIds } from '../data/loadoutPresets.js';
 import { equipItemFrom, getEquipmentCategory, SLOT_LIMITS } from './inventoryReducer.js';
 
 /** @typedef {import('./types.js').GameSnapshot} GameSnapshot */
@@ -152,6 +153,101 @@ export function confirmLoadout(snapshot) {
     // 계약 진행 상태는 이제 facilityRunState.contract가 유일한 소스다 — 죽은 스냅샷 필드를 남기지 않는다.
     activeContract: null,
   };
+}
+
+// ---- 역할군 프리셋 (data/loadoutPresets.js) ----
+
+/**
+ * 장착된 것을 전부 창고로 되돌린다. 해제(unequipItem)가 인벤토리로 보내는 것과 다른 점이 여기다 —
+ * 프리셋은 "지금 짠 구성을 갈아엎는" 행동이므로, 밀려난 장비가 인벤토리에 쌓여 용량을 먹으면
+ * 프리셋을 눌러 볼수록 짐이 늘어난다. 창고는 용량이 없으니 몇 번을 눌러도 상태가 같다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+function returnLoadoutToWarehouse(snapshot) {
+  const ps = snapshot.playerState;
+  const loadout = ps.loadout;
+  let warehouse = ps.warehouse;
+  // 창고로 넘어가는 물건은 창고 id를 새로 발급받는다(addItem이 넘겨받은 id를 버린다).
+  const store = (item) => { const { id, ...rest } = item; warehouse = addItem(warehouse, rest); };
+  for (const weapon of loadout.weapons) store(weapon);
+  if (loadout.top) store(loadout.top);
+  if (loadout.bottom) store(loadout.bottom);
+  for (const moduleItem of loadout.modules) store(moduleItem);
+  // 임플란트만은 로드아웃에 defId 문자열로 사는지라(§신규 인스턴스화 제외 대상) 새로 만든다.
+  for (const equipmentId of loadout.implantIds) {
+    warehouse = addItem(warehouse, createItem('equipment', { equipmentId, durability: MAX_DURABILITY }));
+  }
+  for (const slot of loadout.consumableSlots) {
+    if (slot) warehouse = addItem(warehouse, createItem('consumable', { defId: slot.defId }));
+  }
+  return { ...snapshot, playerState: { ...ps, warehouse, loadout: defaultLoadout() } };
+}
+
+/**
+ * 창고에서 이 정의의 물건을 하나 집어 장착한다. 없으면 스냅샷을 그대로 돌려준다.
+ * @param {GameSnapshot} snapshot
+ * @param {(item: import('./types.js').Item) => boolean} matches
+ * @returns {GameSnapshot}
+ */
+function equipFirstFromWarehouse(snapshot, matches) {
+  const item = snapshot.playerState.warehouse.items.find(matches);
+  if (!item) return snapshot;
+  return equipItemFrom(snapshot, 'warehouse', item.id);
+}
+
+/**
+ * 역할군 프리셋을 통째로 적용한다 — 화면은 dispatch를 한 번만 쏘고, 되돌리기도 한 칸이다.
+ *
+ * 순서는 (1) 장착된 것을 전부 창고로 되돌리고 (2) 프리셋 목록을 적힌 순서대로 장착이다. 순서가
+ * 중요한 이유는 슬롯 정원을 넘기면 equipItemFrom이 가장 오래된 것을 밀어내기 때문이다 — 먼저
+ * 비워 두면 밀려나는 일 자체가 없고, 그래서 두 번 눌러도 결과가 같다.
+ *
+ * 창고에 없는 항목은 건너뛰고 `appliedLoadoutPreset.missing`에 남긴다. 조용히 빠지면 플레이어는
+ * 프리셋이 약속한 Capability와 실제 수치가 왜 다른지 알 수 없다.
+ * @param {GameSnapshot} snapshot
+ * @param {string} presetId
+ * @returns {GameSnapshot}
+ */
+export function applyLoadoutPreset(snapshot, presetId) {
+  if (snapshot.currentScreen !== 'loadout') return snapshot;
+  const preset = getLoadoutPreset(presetId);
+  if (!preset) return snapshot;
+
+  let s = returnLoadoutToWarehouse(snapshot);
+  /** @type {string[]} */
+  const missing = [];
+
+  for (const equipmentId of presetEquipmentIds(preset)) {
+    const next = equipFirstFromWarehouse(s, (item) => item.kind === 'equipment' && item.equipmentId === equipmentId && item.durability > 0);
+    if (next === s) missing.push(equipmentId);
+    s = next;
+  }
+  for (const defId of preset.consumables) {
+    const next = equipFirstFromWarehouse(s, (item) => item.kind === 'consumable' && item.defId === defId);
+    if (next === s) missing.push(defId);
+    s = next;
+  }
+
+  return { ...s, appliedLoadoutPreset: { presetId: preset.id, missing } };
+}
+
+/**
+ * 이 프리셋을 그대로 장착했을 때의 여섯 Capability — 버튼의 미리보기가 읽는 값이다. 창고 사정을
+ * 보지 않는 "정의상의 값"이므로, 실제 적용 결과와는 빠진 항목만큼 달라질 수 있다(그래서 화면이
+ * 「창고에 없음」을 함께 적는다).
+ * @param {import('../data/loadoutPresets.js').LoadoutPreset} preset
+ * @returns {import('./types.js').CapabilityValues}
+ */
+export function previewPresetCapabilities(preset) {
+  return computeCapabilities({
+    weapons: preset.weapons.map((equipmentId) => ({ equipmentId })),
+    top: preset.top ? { equipmentId: preset.top } : null,
+    bottom: preset.bottom ? { equipmentId: preset.bottom } : null,
+    modules: preset.modules.map((equipmentId) => ({ equipmentId })),
+    implantIds: preset.implants,
+    consumableSlots: [],
+  });
 }
 
 /**

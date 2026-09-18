@@ -22,6 +22,7 @@
 | 모듈 | `src/data/modules.js` | 엑셀 `모듈` |
 | 임플란트 | `src/data/implants.js` | 엑셀 `임플란트` |
 | 장비 Capability | `src/data/facilityEquipmentCapabilities.js` | `docs/map-equipment-capability-mapping.md`, 장비별 엑셀 시트 |
+| 출격 준비 역할군 프리셋 | `src/data/loadoutPresets.js` | `docs/game-rules.md` 「런 준비」, 엑셀 `프리셋` |
 | 몬스터와 행동 | `src/data/monsters.js`, `src/engine/monsterAI.js` | 엑셀 `몬스터 스펙`, `몬스터 행동` |
 | 맵 구성과 수치 | `src/data/facilityLayout.js`, `src/engine/facilityGraph.js`, `src/engine/runEngine.js` | `docs/extraction-map-implementation-spec.md`, 엑셀 `맵 구성요소` |
 | 상태 효과 | `src/data/statusEffects.js`, `src/engine/statusEngine.js` | `docs/terminology.md`, `docs/combat-reference.md` |

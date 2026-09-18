@@ -695,6 +695,9 @@
  *   고르는 중인 계약. 여덟 구역 전부에서 유형별 한 장씩 뽑으므로 언제나 3장이고, 제안마다
  *   `sectorIds`(그 계약을 고르면 지어질 네 구역, 링 순서)가 함께 적혀 있다.
  *   수락 즉시 activeContract로 옮겨지고 이 필드는 비워진다.
+ * @property {{presetId: string, missing: string[]}|undefined} [appliedLoadoutPreset] 마지막으로
+ *   적용한 역할군 프리셋과, 창고에 없어 건너뛴 항목의 id. 출격 준비 화면이 「창고에 없음」을
+ *   적는 데만 쓰는 표시용 값이다 — 런에 들어가면 아무도 읽지 않는다.
  * @property {(OfferedContract & {status: 'accepted'})|null} activeContract
  *   수락됐지만 아직 confirmLoadout으로 facilityRunState.contract에 옮겨지지 않은 계약. 'contract'/'loadout'
  *   화면 동안만 쓰인다 — confirmLoadout 이후로는 facilityRunState.contract가 유일한 소스다.

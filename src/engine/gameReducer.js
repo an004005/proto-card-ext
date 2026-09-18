@@ -7,7 +7,7 @@
 // 행동), combatReducer.js (전투/이탈), rewardReducer.js (보상), inventoryReducer.js (장비/짐
 // 정리). Dependency direction is one-way: inventoryReducer <- rewardReducer <- combatReducer <-
 // facilityReducer, and loadoutReducer depends only on inventoryReducer + runEngine.js — no cycles.
-import { newRun, setLoadoutSlot, confirmLoadout, autoEquipLoadout } from './loadoutReducer.js';
+import { newRun, setLoadoutSlot, confirmLoadout, autoEquipLoadout, applyLoadoutPreset } from './loadoutReducer.js';
 import { acceptContractCommand } from './contractReducer.js';
 import {
   moveToNode, requestExtractionCommand, basicReconCommand, openSpecialEdgeCommand,
@@ -50,6 +50,9 @@ export function gameReducer(snapshot, command) {
     case 'SET_LOADOUT_SLOT': return setLoadoutSlot(snapshot, command.slotType, command.id);
     case 'CONFIRM_LOADOUT': return confirmLoadout(snapshot);
     case 'AUTO_EQUIP_LOADOUT': return autoEquipLoadout(snapshot);
+    // 역할군 프리셋은 리듀서 안에서 "전부 창고로 → 목록대로 장착"을 순차 적용한다 — 화면이
+    // 장착 액션을 열댓 번 쏘면 되돌리기가 그만큼 잘게 쪼개진다.
+    case 'APPLY_LOADOUT_PRESET': return applyLoadoutPreset(snapshot, command.presetId);
     case 'MOVE_TO_NODE': return moveToNode(snapshot, command.nodeId);
     case 'REQUEST_EXTRACTION': return requestExtractionCommand(snapshot, command.exitId);
     case 'BASIC_RECON': return basicReconCommand(snapshot);
