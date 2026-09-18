@@ -20,7 +20,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 발각선 | 실효 Stealth < `CAMERA_STEALTH_THRESHOLD` = 3이면 감지 |
+| 발각선 | 행동을 마치거나 떠날 때 실효 Stealth < `CAMERA_PERCEPTION` = 2이면 감지. 소음은 Stealth와 무관하게 즉시 |
 | 감지 시 | 3홉(`CAMERA_ALERT_RANGE`) 안에서 **걸어올 수 있는** 위협 전원이 추적 전환(alert 3, 추적 강도 3) + 구역 경계 압력 +6 |
 | 상황 보정 | 살아 있는 카메라가 있는 노드에 서 있으면 실효 Stealth −1 |
 | 해킹 | `CAMERA_HACK_TIME` = 5칸, 소음 0, `CAMERA_HACK_DURATION` = 15칸 동안 무력화. Hacking 1 |

@@ -286,7 +286,6 @@ export const CONTRACT_DETONATE_MIN_HOPS = 2;
 // both can share a node. Generation guarantees at least one of each per sector.
 export const CAMERA_NODE_CHANCE = 0.22;
 export const ACCESS_INTERFACE_NODE_CHANCE = 0.16;
-export const CAMERA_STEALTH_THRESHOLD = 3;
 export const CAMERA_ALERT_RANGE = 3;
 export const CAMERA_HACK_TIME = 3;
 export const CAMERA_HACK_DURATION = 15;
@@ -713,3 +712,16 @@ export const FORCE_TIER1_TIME = 3;
 export const FORCE_BASE_NOISE = 2; // §6.3 "Force 기본 소음은 2와 흔적이다."
 export const HACKING_TIER1_TIME = 2;
 export const HACKING_BASE_NOISE = 0;
+
+// ---- 카메라 발각 (ADR-0091) ----
+//
+// 카메라는 문턱이 아니라 **지켜보는 눈**이다. 지나가는 것만으로는 걸리지 않고, 그 방에서
+// 무언가를 하거나 그 방을 떠날 때 렌즈가 나를 읽는다. 소음은 다르다 — 소리를 내면 은신과
+// 무관하게 즉시 읽힌다.
+
+/**
+ * 카메라의 지각. 이 값 이상의 실효 Stealth면 카메라 앞에서 행동해도 들키지 않는다.
+ * 실효 Stealth는 `runEngine.explainEffectiveStealth`의 합계이므로 은엄폐(+1~3)와 살아 있는
+ * 카메라의 상황 보정(−1)이 모두 들어간 값이다 — 은엄폐 하나로 뒤집을 수 있는 자리에 둔다.
+ */
+export const CAMERA_PERCEPTION = 2;

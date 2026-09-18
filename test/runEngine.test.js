@@ -300,30 +300,8 @@ test('high-ground edges are a ladder, not a gate — Mobility 3 is the standard 
   }
 });
 
-test('an unhacked camera detects Stealth below 3 and directs nearby threats to the player', () => {
-  let state = makeRun(21);
-  // 위협이 경보를 듣고 실제로 달려올 수 있어야 하므로 잠기지도 막히지도 않은 보통 복도를 고르고,
-  // 그중에서도 가장 짧은 것을 쓴다 — 이동에 시간이 오래 걸리면 도착 전에 추격이 식는다.
-  const edge = state.graph.edges
-    .filter((entry) => entry.features.length === 0
-      && (entry.from === state.playerNodeId || entry.to === state.playerNodeId))
-    .sort((a, b) => a.timeCost - b.timeCost)[0];
-  assert.ok(edge, 'fixture needs a plain corridor out of the start node');
-  const destination = edge.from === state.playerNodeId ? edge.to : edge.from;
-  const threatId = Object.keys(state.threats)[0];
-  state = {
-    ...state,
-    graph: { ...state.graph, cameras: [{ id: 'camera_test', nodeId: destination }] },
-    threats: { ...state.threats, [threatId]: { ...state.threats[threatId], nodeId: state.playerNodeId, nextMoveAt: 99999 } },
-  };
-  const detected = moveToAdjacentNode(state, destination, 0, 2);
-  assert.deepEqual(detected.lastCameraDetection, { cameraId: 'camera_test', nodeId: destination, detectedAt: 0 });
-  assert.equal(detected.threats[threatId].mode, 'pursuit');
-  assert.equal(detected.threats[threatId].lastKnownPlayerNodeId, destination);
-
-  const hidden = moveToAdjacentNode({ ...state, lastCameraDetection: null }, destination, 0, 3);
-  assert.equal(hidden.lastCameraDetection, null);
-});
+// 카메라 발각은 test/cameraDetection.test.js가 본다 — 진입이 아니라 행동 뒤·출발·소음에
+// 판정하므로(ADR-0091) 이동 하나로는 다 검사할 수 없다.
 
 test('direct hacking reaches exactly Hacking-level hops, and a hacked interface unlocks its whole sector', () => {
   let state = makeRun(21);

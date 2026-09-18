@@ -20,12 +20,12 @@ import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted, perceptionInfo,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
   explainEffectiveStealth, detailIncludes, highGroundMobility, nodeContentsAt,
-  deviceStatus, canClimbHighGround, describeHunters, isHunter,
+  deviceStatus, canClimbHighGround, describeHunters, isHunter, hasLiveCameraAt, cameraSeesStealth,
 } from '../engine/runEngine.js';
 import { ladderNote, StepBadge } from './ladderDisplay.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
 import { adjacentSectorIds } from '../engine/facilityGraph.js';
-import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE } from '../data/facilityLayout.js';
+import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE, CAMERA_PERCEPTION } from '../data/facilityLayout.js';
 import { getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
   SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR,
@@ -299,6 +299,12 @@ function highGroundParts(edge, mobility) {
 }
 
 /**
+ * 카메라 감시 한 줄(ADR-0091). 노드 카드·통로 카드·현재 노드 패널이 같은 문장을 쓴다 — 규칙을
+ * 세 곳에서 따로 적으면 하나만 고쳐지고 나머지가 거짓말을 한다.
+ */
+const CAMERA_WATCH_NOTICE = `카메라 감시 · 지각 ${CAMERA_PERCEPTION}: 이 방에서 행동을 마치거나 떠날 때 실효 Stealth가 ${CAMERA_PERCEPTION} 미만이면 발각, 소음을 내면 즉시 발각`;
+
+/**
  * 현재 값으로 실제로 뭘 할 수 있는지 — 구현된 효과만 정직하게 나열한다.
  *
  * 층계(D8) 이후로는 "몇부터 된다"가 아니라 "표준이 몇이고, 모자라면 무엇으로 값을 치르는가"가
@@ -328,7 +334,10 @@ function capabilityActionSummary(key, raw) {
     return `이동은 통로와 무관하게 언제나 1칸이라 Mobility가 이동 시간을 줄이지는 않습니다. 회수 계약 확보에 쓰이며, 모자라면 HP로 값을 치릅니다. ${highGround} ${disengage} ${common}`;
   }
   if (key === 'stealth') {
-    const camera = raw >= 3 ? '카메라에 발각되지 않고 이동 흔적도 남기지 않습니다.' : '카메라 노드 진입 시 발각됩니다. Stealth 3부터 카메라를 피할 수 있습니다.';
+    // 카메라는 진입이 아니라 **행동 뒤**와 **출발**에 판정한다(ADR-0091). 카메라가 살아 있는
+    // 노드에서는 상황 보정 −1이 붙으므로, 실효 은신이 카메라의 지각에 닿으려면 장비 합이 그보다
+    // 1 높거나 은엄폐를 써야 한다 — 문구가 그 사실을 그대로 말한다.
+    const camera = `카메라 감시 · 지각 ${CAMERA_PERCEPTION}: 카메라가 있는 방에서 행동을 마치거나 그 방을 떠날 때 실효 Stealth가 ${CAMERA_PERCEPTION} 미만이면 발각되고, 소음을 내면 Stealth와 무관하게 즉시 발각됩니다. 살아 있는 카메라는 상황 보정 −1을 주므로 지금 값(${raw})으로는 그 방에서 실효 ${raw - 1}입니다${raw - 1 >= CAMERA_PERCEPTION ? '' : ' — 은엄폐로 메울 수 있습니다'}.`;
     return `이동 소음과 남는 흔적의 강도를 결정하고, 조우 판정에서 위협의 지각(Perception)과 겨룹니다. 회수 계약 확보에도 쓰이며, 모자라면 강한 흔적이 남고 더 모자라면 그 자리에서 구역 경계도가 오릅니다. ${camera} ${common}`;
   }
   if (key === 'perception') {
@@ -746,6 +755,12 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
         };
       }),
     });
+  }
+
+  // 카메라가 살아 있는 방은 카드에도 규칙 한 줄을 적는다 — 그 방에서 무엇을 하면 걸리는지가
+  // 위치보다 중요한 정보다(ADR-0091).
+  if (devices.some((d) => d.kind === 'camera' && deviceStatus(run, d) === 'active')) {
+    rows.push({ kind: 'device', tone: 'threat', title: '카메라 감시', detail: CAMERA_WATCH_NOTICE });
   }
 
   // 시체·흔적의 위치는 가 본 자리이거나 Perception 4의 정찰 사거리 안에서만 보인다.
@@ -1446,6 +1461,10 @@ export function MapScreen() {
   const selectedCameraActive = selectedCamera
     && !(run.disabledCameraIds || []).includes(selectedCamera.id)
     && !isCameraHackActive(run, selectedCamera.id);
+  // 서 있는 자리가 카메라 노드이고 지금 실효 은신이 카메라의 지각에 못 미치면, 다음 행동을
+  // 마치거나 자리를 뜨는 순간 걸린다 — 그 사실은 노드를 고르지 않아도 상시 보여야 한다.
+  const cameraWatchingHere = hasLiveCameraAt(run, run.playerNodeId)
+    && cameraSeesStealth(explainEffectiveStealth(capabilities.stealth, run).total);
 
   // 시간에 관한 화면 정보는 전부 mapTimeline의 순수 함수에서 온다 — 여기서 다시 세지 않는다.
   const encounterBlocked = encounterBlocks(run);
@@ -1635,7 +1654,7 @@ export function MapScreen() {
                 ${/* 지도에 실제로 그려지는 기호인데 범례에 없던 것들 — 없으면 화면의 C·I·G와
                     구역 색이 무엇인지 알 방법이 없다(리뷰 B7). */ null}
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>장치와 구역 상태</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#dc2626', fontWeight: 900 }}>C</span>카메라 — 작동 중(빨강) / <span style=${{ color: '#0ea5e9', fontWeight: 900 }}>해킹됨(파랑)</span> / <span style=${{ color: '#64748b', fontWeight: 900 }}>파괴됨(회색)</span>. 위치는 런 시작부터 전부 보인다. Stealth 3 미만이면 그 노드에 들어갈 때 발각된다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#dc2626', fontWeight: 900 }}>C</span>카메라 — 작동 중(빨강) / <span style=${{ color: '#0ea5e9', fontWeight: 900 }}>해킹됨(파랑)</span> / <span style=${{ color: '#64748b', fontWeight: 900 }}>파괴됨(회색)</span>. 위치는 런 시작부터 전부 보인다. 그 방에서 행동을 마치거나 떠날 때 실효 Stealth ${CAMERA_PERCEPTION} 미만이면 발각되고, 소음을 내면 즉시 발각된다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#7c3aed', fontWeight: 900 }}>I</span>접속 인터페이스 — 장악하면 이 구역의 발견된 카메라·발전기를 거리와 무관하게 원격 조작할 수 있다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#ca8a04', fontWeight: 900 }}>G</span>배터리 발전기 — 살아 있으면 이 구역 적이 전투 시작 시 갑옷 5를 받는다(<span style=${{ color: '#64748b', fontWeight: 900 }}>회색은 무력화됨</span>)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '1.5px dashed #7c3aed', boxSizing: 'border-box' }}></span>구역 랜드마크(통제실 장악 자리, 구역당 하나). 안개가 걷히면 이름이 툴팁에 보인다</div>
@@ -2110,12 +2129,13 @@ export function MapScreen() {
                     : '경로 없음'}
                 </div>
                 ${selectedEdgeTraversable ? html`<div style=${{ fontSize: '10.5px', color: movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).color, marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).label}</div>` : null}
-                ${selectedCameraActive && capabilities.stealth < 3 ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>카메라 감시: Stealth 3 미만으로 진입하면 발각되어 주변 적이 추적합니다.</div>` : null}
+                ${selectedCameraActive ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${CAMERA_WATCH_NOTICE}</div>` : null}
               ` : null}
 
               ${(!selectedNodeId || selectedNodeId === run.playerNodeId) ? html`
                 <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <${PanelGroup} title="여기서 할 수 있는 것" open=${panelGroupsOpen.actions} onToggle=${() => togglePanelGroup('actions')}>
+                  ${cameraWatchingHere ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginBottom: '8px', fontWeight: 800 }}>${CAMERA_WATCH_NOTICE}</div>` : null}
                   <${PendingTaskPanel} run=${run} runCommand=${runCommand} />
                   <div>
                     <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>오버라이드 칩</div>

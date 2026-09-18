@@ -80,6 +80,9 @@ test('elite prize equipment arrives new; normal prize equipment arrives used', (
   function durabilityOfFirstEquipment(seed, tier) {
     const run = withOpportunityHere(makeRun(seed), { grade: 'prize', tier, axis: 'combat' });
     const farmed = finishTaskSnapshot(gameReducer(snapshotOf(run), { type: 'USE_OPPORTUNITY', opportunityId: 'opp_test', mode: 'normal' }));
+    // 시작 노드에 카메라가 있는 시드에서는 파밍 소음이 그 자리에서 발각을 부르고(ADR-0091)
+    // 달려온 위협이 작업을 끊는다 — 그런 시드는 이 검사의 대상이 아니다.
+    if (!farmed.facilityRunState.pendingFarmChoice) return null;
     const index = farmed.facilityRunState.pendingFarmChoice.options.findIndex((o) => o.kind === 'equipment');
     if (index < 0) return null;
     const picked = finishTaskSnapshot(gameReducer(farmed, { type: 'SELECT_FARM_REWARD', optionIndex: index }));

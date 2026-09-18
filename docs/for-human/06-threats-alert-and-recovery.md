@@ -122,7 +122,7 @@ Deception 2 표준, 0칸, 위협당 한 번. 추적을 끊지 않고 **추적 �
 
 | 항목 | 값 |
 |---|---|
-| 발각선 | 실효 Stealth < `CAMERA_STEALTH_THRESHOLD` = 3이면 걸린다 |
+| 발각선 | 행동을 마치거나 그 자리를 떠날 때 실효 Stealth < `CAMERA_PERCEPTION` = 2이면 걸린다. 그 자리에서 소음이 나면 Stealth와 무관하게 즉시 |
 | 경보 범위 | `CAMERA_ALERT_RANGE` = 3홉 (걸어갈 수 있는 통로만) |
 | 걸린 위협의 상태 | `pursuit`, `alert` = 3, `pursuitStrength` = 3, 마지막 확인 위치 = 그 노드 |
 | 경계 압력 | `ALERT_PRESSURE.cameraDetection` = 6 |
@@ -216,8 +216,8 @@ Deception 2 표준, 0칸, 위협당 한 번. 추적을 끊지 않고 **추적 �
 
 ## 관련 코드
 
-- `src/data/facilityLayout.js` — `THREAT_*`, `NOISE_*`, `PURSUIT_DECAY_*`, `ALERT_GAUGE_CAPACITY`, `ALERT_PRESSURE`, `SECTOR_ALERT_*`, `STEALTH_CONTEXT_*`, `CAMERA_STEALTH_THRESHOLD`, `POWER_CUT_*`, `FALSE_BROADCAST_*`, `TRACE_CLEANUP_TIME_BY_PERCEPTION`, `REINFORCEMENT_*`
-- `src/engine/runEngine.js` — `selectThreatTarget`, `updateThreat`, `resolveArrival`, `applyAlertDecay`, `describeThreatDecay`, `discoverAtNode`, `escalateSectorAlert`, `applyCameraDetection`, `computeThreatPerception`, `computeEncounterTier`, `deceiveThreat`, `reportNoise`, `reportSighting`, `spawnReinforcement`, `tickReinforcements`
+- `src/data/facilityLayout.js` — `THREAT_*`, `NOISE_*`, `PURSUIT_DECAY_*`, `ALERT_GAUGE_CAPACITY`, `ALERT_PRESSURE`, `SECTOR_ALERT_*`, `STEALTH_CONTEXT_*`, `CAMERA_PERCEPTION`, `POWER_CUT_*`, `FALSE_BROADCAST_*`, `TRACE_CLEANUP_TIME_BY_PERCEPTION`, `REINFORCEMENT_*`
+- `src/engine/runEngine.js` — `selectThreatTarget`, `updateThreat`, `resolveArrival`, `applyAlertDecay`, `describeThreatDecay`, `discoverAtNode`, `escalateSectorAlert`, `applyCameraDetection`, `checkCameraDetection`, `computeThreatPerception`, `computeEncounterTier`, `deceiveThreat`, `reportNoise`, `reportSighting`, `spawnReinforcement`, `tickReinforcements`
 - `src/engine/recovery.js` — `plantFakeNoise`, `cleanTraces`, `cutPower`, `broadcastFalseTarget`
 - `src/components/EncounterPanel.js`, `ThinGauge.js`
 - `docs/adr/0069`, `0073`, `0077`, `0079`, `0082`

@@ -131,7 +131,7 @@
 
 ### 이분 게이트는 남아 있지 않다
 
-예전에 요구치 미달을 잠김으로 처리하던 고지대(Mobility 3), 조우 속이기(Deception 2), 가짜 소음(Deception 1)이 전부 층계로 들어왔다. 다음 표들은 게이트가 아니라 **정보의 깊이·사거리·게이지 길이만 조절**하므로 그대로 둔다: `CAMERA_HACK_RANGE_BY_HACKING`, `EXIT_ACTIVATE_TIME_BY_HACKING`, `PERCEPTION_INFO_TABLE`, `FAKE_NOISE_RANGE_BY_DECEPTION`. 카메라 발각선(Stealth 3)도 행동이 아니라 수동 감지 판정이라 층계 밖이다.
+예전에 요구치 미달을 잠김으로 처리하던 고지대(Mobility 3), 조우 속이기(Deception 2), 가짜 소음(Deception 1)이 전부 층계로 들어왔다. 다음 표들은 게이트가 아니라 **정보의 깊이·사거리·게이지 길이만 조절**하므로 그대로 둔다: `CAMERA_HACK_RANGE_BY_HACKING`, `EXIT_ACTIVATE_TIME_BY_HACKING`, `PERCEPTION_INFO_TABLE`, `FAKE_NOISE_RANGE_BY_DECEPTION`. 카메라의 지각(`CAMERA_PERCEPTION` = 2)도 행동이 아니라 수동 감지 판정이라 층계 밖이다.
 
 ### 고지대 통과 (`HIGH_GROUND_MOBILITY_REQUIREMENT` = 3)
 

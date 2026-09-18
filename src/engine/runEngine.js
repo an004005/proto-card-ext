@@ -27,7 +27,7 @@ import {
   APPROACH_TIME_DELTA, APPROACH_NOISE_DELTA, APPROACH_MIN_TIME, BASIC_RECON_TIME,
   SUPPLY_FARM_TIME, SUPPLY_FARM_NOISE, PRIZE_FARM_TIME, PRIZE_FARM_NOISE,
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
-  CAMERA_STEALTH_THRESHOLD, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME,
+  CAMERA_PERCEPTION, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME,
   CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
   CAMERA_SNIPE_AMMO_COST,
 
@@ -600,7 +600,12 @@ export function requestExtraction(state, exitId, effectiveHacking) {
  */
 export function reportNoise(state, sourceNodeId, intensity, createdAt = state.time) {
   const event = { id: idForNewEntry(state, state.noiseEvents, 'noise'), sourceNodeId, intensity, createdAt, expiresAt: createdAt + NOISE_DURATION };
-  return { ...state, noiseEvents: [...state.noiseEvents, event] };
+  const next = { ...state, noiseEvents: [...state.noiseEvents, event] };
+  // 카메라 앞에서 소리를 내면 은신과 무관하게 즉시 발각된다(ADR-0091) — 소음을 심는 자리가
+  // 여기 하나뿐이라, 파밍 소음도 Force 행동도 가짜 소음도 전투 소음도 이 한 줄을 지난다.
+  // **내가 선 자리**의 소음만 본다: 멀리 심은 가짜 소음은 유인이지 내 발각이 아니다.
+  if (intensity >= 1 && sourceNodeId === state.playerNodeId) return applyCameraDetection(next, sourceNodeId, null);
+  return next;
 }
 
 /**
@@ -2097,9 +2102,35 @@ function cameraIsHacked(state, cameraId) {
   return state.disabledCameraIds?.includes(cameraId) || isCameraHackActive(state, cameraId);
 }
 
+/**
+ * 그 노드에서 지금 나를 볼 수 있는 카메라. 해킹 중이거나 파괴된 렌즈는 보지 못한다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string|null|undefined} nodeId
+ */
+function liveCameraAt(state, nodeId) {
+  if (!nodeId) return null;
+  return state.graph.cameras.find((entry) => entry.nodeId === nodeId && !cameraIsHacked(state, entry.id)) || null;
+}
+
+/**
+ * 카메라 발각 판정(ADR-0091). 진입 자체로는 걸리지 않는다 — 부르는 자리는 셋이다:
+ * (a) 카메라 노드 위에서 유료 행동 하나가 끝날 때(facilityReducer.withFacilityRunState),
+ * (b) 카메라 노드에서 다른 노드로 출발할 때(moveToAdjacentNode),
+ * (c) 카메라 노드에서 소음이 날 때(reportNoise) — 이때는 Stealth를 보지 않는다.
+ *
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} nodeId
+ * @param {number|null} effectiveStealth `null`이면 은신을 보지 않는다(소음).
+ * @returns {import('./types.js').FacilityRunState}
+ */
 function applyCameraDetection(state, nodeId, effectiveStealth) {
-  const camera = state.graph.cameras.find((entry) => entry.nodeId === nodeId && !cameraIsHacked(state, entry.id));
-  if (!camera || effectiveStealth >= CAMERA_STEALTH_THRESHOLD) return state;
+  const camera = liveCameraAt(state, nodeId);
+  if (!camera) return state;
+  if (effectiveStealth !== null && effectiveStealth >= CAMERA_PERCEPTION) return state;
+  // 같은 카메라에 같은 칸에 두 번 걸리지는 않는다 — 소음이 난 칸에 그 행동도 끝나므로
+  // (파밍 소음이 그렇다) 판정 자리가 둘 다 열려 있다.
+  const last = state.lastCameraDetection;
+  if (last && last.cameraId === camera.id && last.detectedAt === state.time) return state;
   // 경보를 듣고 실제로 달려올 수 있는 위협만 추격에 들어간다 — 잠긴 문 너머는 반경 안이어도
   // 오지 못한다.
   const hops = bfsHopDistances(edgesForThreatMovement(state), nodeId);
@@ -2120,6 +2151,33 @@ function applyCameraDetection(state, nodeId, effectiveStealth) {
   const detectionId = `camera_${camera.id}_${state.time}`;
   const withThreats = { ...state, threats, lastCameraDetection: { cameraId: camera.id, nodeId, detectedAt: state.time } };
   return { ...withThreats, sectorAlerts: escalateSectorAlert(withThreats, sectorId, detectionId, ALERT_PRESSURE.cameraDetection) };
+}
+
+/**
+ * 지금 이 자리에서 카메라에 걸리는가 — 실효 Stealth가 카메라의 지각보다 낮은가. 화면의 상시
+ * 경고와 엔진 판정이 같은 하나의 함수를 읽는다.
+ * @param {number} effectiveStealth `explainEffectiveStealth`의 합계.
+ */
+export function cameraSeesStealth(effectiveStealth) {
+  return effectiveStealth < CAMERA_PERCEPTION;
+}
+
+/** 그 노드에 지금 나를 볼 수 있는 카메라가 있는가(UI용). */
+export function hasLiveCameraAt(state, nodeId) {
+  return !!liveCameraAt(state, nodeId);
+}
+
+/**
+ * (a)·(b) 판정 — 카메라 노드 위에서 유료 행동이 끝났거나 그 자리를 떠난다. 은신이 카메라의
+ * 지각에 못 미치면 발각된다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string|null|undefined} nodeId
+ * @param {number} effectiveStealth `explainEffectiveStealth`의 합계(은엄폐·카메라 보정 포함).
+ * @returns {import('./types.js').FacilityRunState}
+ */
+export function checkCameraDetection(state, nodeId, effectiveStealth) {
+  if (!nodeId) return state;
+  return applyCameraDetection(state, nodeId, effectiveStealth);
 }
 
 // 이동 비용은 비용 사양표(actionCosts.js)가 들고 있다 — UI 예고와 엔진 청구가 같은 함수를
@@ -2155,6 +2213,11 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
   // TASK_ABORTS가 옛 자리를 봐야 한다).
   state = abandonTask(state);
 
+  // 카메라 발각의 출발 판정(ADR-0091). 카메라 노드에 들어가는 것만으로는 걸리지 않지만, 그
+  // 방을 **떠나는** 순간에는 렌즈 앞을 지난다. 아직 옛 자리에 서 있는 지금 판정해야 은엄폐를
+  // 비롯한 그 자리의 상황 보정이 그대로 들어간다.
+  state = applyCameraDetection(state, /** @type {string} */ (state.playerNodeId), explainEffectiveStealth(effectiveStealth, state).total);
+
   // 고지대는 요구치 3짜리 층계 행동이다(D8). 시간은 이동의 전용 규칙이 이미 청구하므로
   // 여기서 받는 것은 Mobility의 통화인 HP뿐이다. 불가면 위 isEdgeTraversable이 이미 걸렀다.
   const highGroundCost = traversedEdge.features.includes('highGround')
@@ -2169,7 +2232,6 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
   let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null, activeConcealment: null, encounter: null, pendingFarmChoice: null, lastWaitEndedAt: /** @type {number|null} */ (null) };
   // 다른 층계 대가와 같은 자리로 보낸다 — facilityReducer의 공통 래퍼가 playerState에서 정산한다.
   if (highGroundCost?.hpCost) moved = { ...moved, pendingHpLoss: (moved.pendingHpLoss || 0) + highGroundCost.hpCost };
-  moved = applyCameraDetection(moved, destinationNodeId, effectiveStealth);
   const stealthIndex = Math.max(-2, Math.min(4, effectiveStealth)) + 2;
   const movementNoise = [3, 2, 1, 0, 0, 0, 0][stealthIndex];
   if (movementNoise > 0) moved = reportNoise(moved, destinationNodeId, /** @type {1|2|3} */ (movementNoise), state.time);

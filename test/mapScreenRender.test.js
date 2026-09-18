@@ -665,6 +665,21 @@ test('HP가 절반 이하인 런에서는 상단에 부상 배지가 뜬다 (ADR
   assert.ok(root.textContent.includes('부상 −1'), 'HP 50%에서는 −1 배지가 보여야 한다');
 });
 
+test('카메라 노드에 서 있으면 새 감시 규칙이 패널에 상시 뜬다', () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const run = {
+    ...base,
+    threats: {},
+    graph: { ...base.graph, cameras: [{ id: 'camera_test', nodeId: base.playerNodeId }] },
+  };
+  const text = renderMap(run);
+  assert.ok(text.includes('카메라 감시 · 지각 2'), '카메라 감시 규칙이 보여야 한다');
+  assert.ok(text.includes('행동을 마치거나 떠날 때'), '판정 시점이 적혀야 한다');
+  assert.ok(text.includes('소음을 내면 즉시 발각'), '소음 규칙이 적혀야 한다');
+  assert.ok(!text.includes('Stealth 3 미만으로 진입'), '옛 진입 규칙 문구가 남아 있다');
+});
+
 test('카메라 위치는 관측하지 않은 노드에서도 노드 카드에 적힌다', async () => {
   const { graph } = generateFacilityGraph(11);
   const base = createRunState(graph, 11);

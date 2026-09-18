@@ -9,7 +9,7 @@ import {
   disableGenerator, useConcealment, hackControlRoom,
   computeThreatPerception, computeEncounterTier, explainEffectiveStealth, deceiveThreat,
   acquireContractGoods, destroyContractTarget, detonateContractCharge, acquireContractIntel, transmitContractIntel,
-  disposeCorpse, scheduleTask, taskCompleted, waitOneTick, evadeThreat, isHunter,
+  disposeCorpse, scheduleTask, taskCompleted, waitOneTick, evadeThreat, isHunter, checkCameraDetection,
 } from './runEngine.js';
 import { WAIT_BATCH_MAX_TICKS } from '../data/facilityLayout.js';
 import { actionTimeCost } from './actionCosts.js';
@@ -168,13 +168,21 @@ function withFacilityRunState(snapshot, fn, { usesCapability = true } = {}) {
   // UI가 유효한 액션만 노출하는 게 정상 경로지만, 리듀서는 항상 total function이어야 하므로
   // 그것만 흡수한다. TypeError 같은 진짜 버그까지 여기서 삼키면 "버튼을 눌러도 아무 일도
   // 안 일어난다"만 남고 원인이 영영 드러나지 않으므로, 로그를 남기고 다시 던진다(리뷰 A8).
+  const capabilities = effectiveCapabilities(snapshot);
   let next;
   try {
-    next = refreshLocalObservations(fn(synced), effectiveCapabilities(snapshot).perception);
+    next = refreshLocalObservations(fn(synced), capabilities.perception);
   } catch (error) {
     if (error instanceof RuleViolation) return snapshot;
     console.error('[facilityReducer] 시설 액션 처리 중 예상치 못한 오류', error);
     throw error;
+  }
+  // 카메라 발각의 행동 뒤 판정(ADR-0091). 카메라 노드 위에서 유료 행동 하나가 끝나면 — 1칸
+  // 대기도 포함해 — 그 시점의 실효 Stealth로 판정한다. 모든 시설 액션이 이 함수 하나를 지나므로
+  // 빠뜨리는 행동이 없다. 자리를 옮긴 행동(이동)만 건너뛴다: 진입 자체는 판정하지 않고, 떠나는
+  // 쪽 판정은 moveToAdjacentNode가 옛 자리에서 이미 했다.
+  if (next.time > synced.time && next.playerNodeId === synced.playerNodeId) {
+    next = checkCameraDetection(next, next.playerNodeId, explainEffectiveStealth(capabilities.stealth, next).total);
   }
   // 사용 중인 칩은 "다음 판정 있는 유료 행동 하나"에 쓰인다(ADR-0086). 그 하나를 가리는 기준은
   // 시간이 흘렀는가(또는 게이지 작업이 걸렸는가)와 그 행동이 Capability를 읽었는가다. 대기·장비

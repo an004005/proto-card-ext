@@ -216,6 +216,7 @@ function buildWorkbook() {
     ['맵', '부상 페널티', INJURY_PENALTY_STEPS.map((s) => `HP ${Math.round(s.ratio * 100)}% 이하 −${s.penalty}`).join(' / '), '맵이 판정에 쓰는 여섯 Capability 전부에서 같은 값을 뺀 뒤 -2~4로 자른다. 겹치는 문턱은 누적하지 않고 가장 깊은 한 칸만 쓴다. 저장하지 않고 매번 HP에서 계산하므로 회복하면 곧바로 풀린다. 오버라이드 칩 사용 중에는 걸리지 않는다(ADR-0093)', 'src/data/facilityEquipmentCapabilities.js'],
     ['맵', '구역 증원 주기', `${FACILITY.REINFORCEMENT_INTERVAL} / 봉쇄 ${FACILITY.REINFORCEMENT_LOCKDOWN_INTERVAL}`, '구역별 독립 시계. 로스터의 빈자리만 채운다', 'src/data/facilityLayout.js'],
     ['맵', '카메라 위치 공개', '런 시작', '모든 카메라의 위치와 상태는 런 시작부터 지도와 노드 카드에 보인다. 접속 인터페이스 장악이 주는 것은 그 구역 카메라의 원격 접속뿐이다(ADR-0090)', 'src/engine/runEngine.js'],
+    ['맵', '카메라 지각', FACILITY.CAMERA_PERCEPTION, '카메라 노드에서 유료 행동을 마치거나 그 자리를 떠날 때 실효 Stealth가 이 값 미만이면 발각된다. 진입 자체는 판정하지 않고, 그 자리에서 소음이 나면 은신과 무관하게 즉시 발각된다(ADR-0091)', 'src/data/facilityLayout.js'],
     ['맵', '무료 인접 관측', '1홉 · 깊이 ' + FACILITY.FREE_OBSERVATION_DETAIL_LEVEL, '옆방의 위협 유무·그룹 수·모드와 내용물의 존재(보급품·확보 대상·장치)를 공짜로 준다. Perception ' + FACILITY.PERCEPTION_FREE_FAR_VIEW_MIN + ' 이상이면 두 번째 홉의 위협 유무까지 넓어진다(ADR-0090)', 'src/engine/runEngine.js'],
     ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '이 시각 뒤로는 새 가동을 시작할 수 없다. 이미 시작된 가동 게이지와 열린 창은 끝까지 간다(ADR-0054)', 'src/data/facilityLayout.js'],
     ['탈출', '표준 출구 수', '1 (+열쇠 출구)', '표준 출구는 A 하나뿐이고 열쇠 출구가 유일한 대안 경로다. A는 시작 구역도 계약 목표 구역도 아닌 구역에서 시작점으로부터 가장 먼 노드에 놓인다(ADR-0083)', 'src/engine/facilityGraph.js'],
