@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0084
+status: amended by ADR-0084, ADR-0095
 ---
 
 # 맵 시간은 더 쪼갤 수 없는 정수 칸이다
