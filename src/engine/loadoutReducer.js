@@ -76,9 +76,10 @@ function buildStartingWarehouse(loadout) {
 /** @param {number} seed @returns {GameSnapshot} */
 export function newRun(seed) {
   const loadout = defaultLoadout();
-  // 제안은 여덟 구역 전부에서 유형별 한 장씩 나온다(ADR-0083). 구역 추첨은 여기가 아니라
-  // ACCEPT_CONTRACT에서 돈다 — 수락한 계약의 목표 구역이 반드시 포함되어야 하기 때문이다.
-  // 그래서 runSectorIds는 이 시점에 아직 null이다.
+  // 제안은 여덟 구역 전부에서 유형별 한 장씩 나온다(ADR-0083). 구역 추첨은 제안마다 여기서
+  // 함께 돌아(ADR-0089) 각 제안의 `sectorIds`에 적힌다 — 계약 화면이 "이 계약을 고르면 이런
+  // 시설"을 미리 보여줄 수 있어야 하기 때문이다. 스냅샷의 runSectorIds는 아직 null이고,
+  // ACCEPT_CONTRACT가 고른 제안의 목록을 그대로 옮겨 담는다.
   const offered = offerContracts(createRngState(seed));
   return {
     currentScreen: 'contract',

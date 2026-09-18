@@ -83,6 +83,12 @@ test('계약 제안은 더 이상 구역으로 좁혀지지 않는다 — 언제
     const { contracts } = offerContracts(createRngState(seed));
     assert.equal(contracts.length, 3, `시드 ${seed}: 제안은 세 장이다`);
     assert.deepEqual(contracts.map((c) => c.type), ['retrieval', 'destroy', 'intel']);
+    // 제안마다 그 계약을 고르면 지어질 네 구역이 함께 적혀 있다(ADR-0089).
+    for (const contract of contracts) {
+      assert.equal(contract.sectorIds.length, RUN_SECTOR_COUNT, `시드 ${seed}/${contract.id}: 구역 수`);
+      assert.equal(contract.sectorIds[0], START_SECTOR_ID);
+      assert.ok(contract.sectorIds.includes(contract.sectorId), `시드 ${seed}/${contract.id}: 목표 구역이 빠졌다`);
+    }
   }
 });
 
@@ -104,11 +110,13 @@ test('수락한 계약의 목표 구역은 반드시 뽑히고, 시작 구역 �
   }
 });
 
-test('ACCEPT_CONTRACT가 뽑은 구역을 CONFIRM_LOADOUT이 그대로 짓는다', () => {
+test('제안이 보여준 구역을 ACCEPT_CONTRACT가 옮겨 담고 CONFIRM_LOADOUT이 그대로 짓는다', () => {
   for (const seed of [0, 1, 2, 3, 7, 11, 42]) {
     let s = gameReducer(null, { type: 'NEW_RUN', seed });
-    assert.equal(s.runSectorIds, null, '제안 시점에는 구역이 아직 없다');
+    assert.equal(s.runSectorIds, null, '스냅샷의 런 구역은 수락 전까지 비어 있다');
+    const offeredSectorIds = s.offeredContracts[0].sectorIds;
     s = gameReducer(s, { type: 'ACCEPT_CONTRACT', contractId: s.offeredContracts[0].id });
+    assert.deepEqual(s.runSectorIds, offeredSectorIds, '제안에 적힌 구역이 그대로 런의 구역이 된다');
     assert.ok(s.runSectorIds.includes(s.activeContract.sectorId));
     s = gameReducer(s, { type: 'CONFIRM_LOADOUT' });
     const graph = s.facilityRunState.graph;

@@ -19,29 +19,45 @@ test('offerContracts는 여덟 구역 전부에서 유형별 한 장씩, 언제�
     const a = offerContracts(createRngState(seed));
     const b = offerContracts(createRngState(seed));
     assert.deepEqual(a.contracts, b.contracts);
-    for (const c of a.contracts) assert.ok(CONTRACT_DEFS.includes(c));
-    // 구역 추첨이 수락 뒤로 밀렸으므로(ADR-0083) 제안은 더 이상 구역으로 좁혀지지 않는다.
+    // 제안은 계약 정의에 sectorIds를 얹은 사본이다(ADR-0089) — 정의 자체는 그대로 남는다.
+    for (const c of a.contracts) assert.ok(CONTRACT_DEFS.some((def) => def.id === c.id));
+    // 구역으로 좁혀지지 않으므로(ADR-0083) 유형별 한 장씩 언제나 세 장이다.
     assert.deepEqual(a.contracts.map((c) => c.type), ['retrieval', 'destroy', 'intel']);
     assert.equal(a.contracts.length, 3, `seed ${seed}: 제안은 언제나 세 장이다`);
   }
 });
 
-test('ACCEPT_CONTRACT가 구역을 뽑고, 수락한 계약의 목표 구역이 반드시 들어간다', () => {
+test('제안마다 그 계약을 고르면 지어질 네 구역이 미리 적혀 있다 (ADR-0089)', () => {
   for (let seed = 0; seed < 30; seed++) {
     const offered = finishTaskSnapshot(gameReducer(null, { type: 'NEW_RUN', seed }));
-    assert.equal(offered.runSectorIds, null, `seed ${seed}: 제안 시점에는 구역이 아직 없다`);
+    assert.equal(offered.runSectorIds, null, `seed ${seed}: 수락 전 스냅샷에는 구역이 아직 없다`);
     for (const contract of offered.offeredContracts) {
-      const accepted = finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id }));
-      const ids = accepted.runSectorIds;
-      assert.equal(ids.length, 4, `seed ${seed}: 구역 수`);
+      const ids = contract.sectorIds;
+      assert.equal(ids.length, 4, `seed ${seed}: 제안 ${contract.id}의 구역 수`);
       assert.equal(new Set(ids).size, 4, `seed ${seed}: 중복 없음`);
-      assert.equal(ids[0], 'entrance', `seed ${seed}: 시작 구역은 링 0번`);
+      assert.equal(ids[0], 'entrance', `seed ${seed}: 시작 구역(입구·관리동)은 링 0번`);
       assert.ok(ids.includes(contract.sectorId), `seed ${seed}: ${contract.id}의 목표 구역이 빠졌다`);
-      // 같은 시드·같은 계약은 같은 구역을 낸다.
-      assert.deepEqual(finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id })).runSectorIds, ids);
       // 링 2번(시작점 정반대)은 power가 있으면 power, 없으면 목표 구역이다.
       const deep = ids.includes('power') ? 'power' : (contract.sectorId === 'entrance' ? null : contract.sectorId);
       if (deep) assert.equal(ids[2], deep, `seed ${seed}: 링 2번 자리`);
+    }
+    // 같은 시드면 제안도 구역도 같다 — 세 제안이 한 RNG를 순서대로 진행시켜 굴린 결과다.
+    const again = finishTaskSnapshot(gameReducer(null, { type: 'NEW_RUN', seed }));
+    assert.deepEqual(again.offeredContracts.map((c) => c.sectorIds), offered.offeredContracts.map((c) => c.sectorIds));
+  }
+});
+
+test('수락 뒤 런의 구역은 제안에 적혀 있던 그것이다 — 다시 굴리지 않는다', () => {
+  for (let seed = 0; seed < 30; seed++) {
+    const offered = finishTaskSnapshot(gameReducer(null, { type: 'NEW_RUN', seed }));
+    for (const contract of offered.offeredContracts) {
+      const accepted = finishTaskSnapshot(gameReducer(offered, { type: 'ACCEPT_CONTRACT', contractId: contract.id }));
+      assert.deepEqual(accepted.runSectorIds, contract.sectorIds, `seed ${seed}: ${contract.id}의 제안과 런이 어긋났다`);
+      // 수락은 RNG를 진행시키지 않는다 — 추첨이 이미 제안 시점에 끝났기 때문이다.
+      assert.equal(accepted.rngState, offered.rngState, `seed ${seed}: 수락이 RNG를 건드렸다`);
+      // 그리고 실제로 지어지는 시설도 그 목록 그대로다.
+      const built = finishTaskSnapshot(gameReducer(accepted, { type: 'CONFIRM_LOADOUT' }));
+      assert.deepEqual(built.facilityRunState.graph.sectorIds, contract.sectorIds, `seed ${seed}: 화면이 보여준 구역과 지어진 구역이 다르다`);
     }
   }
 });
@@ -86,7 +102,9 @@ test('a retrieval contract completes only if the player is still carrying the go
   // 자체에 집중한다.
   s = {
     ...s,
-    facilityRunState: { ...run, playerNodeId: landmark.nodeId, contract: { ...contract, status: 'acquired', acquiredAt: run.time } },
+    // 위협은 비운다 — 여기서 보는 것은 "물건을 들고 나갔는가"이지 도중에 붙잡히는가가 아니다.
+    // 구역이 런마다 뽑히므로(ADR-0081) 목표부 옆에 위협이 서 있는 시드가 생긴다.
+    facilityRunState: { ...run, playerNodeId: landmark.nodeId, threats: {}, contract: { ...contract, status: 'acquired', acquiredAt: run.time } },
     playerState: {
       ...s.playerState,
       inventory: Array.from({ length: contract.goodsSlots }).reduce(
@@ -99,8 +117,11 @@ test('a retrieval contract completes only if the player is still carrying the go
   assert.equal(goodsCount, contract.goodsSlots);
 
   // 이웃 노드에 출구를 강제로 열어 두고(다른 탈출 테스트와 같은 패턴) 밟으면 완료된다.
-  const neighborId = run.graph.edges.find((e) => e.from === landmark.nodeId)?.to
-    || run.graph.edges.find((e) => e.to === landmark.nodeId)?.from;
+  // 아무 통로나 잡으면 안 된다 — 고지대 통로는 Mobility 0으로는 넘지 못하고, 잠긴 특수 통로는
+  // 아예 열려 있지 않다. 여기서 보려는 것은 이동 판정이 아니라 탈출 시점의 계약 정산이다.
+  const plainEdge = run.graph.edges.find((e) => (e.from === landmark.nodeId || e.to === landmark.nodeId)
+    && !(e.features || []).length && !e.lockKind && !e.special);
+  const neighborId = plainEdge.from === landmark.nodeId ? plainEdge.to : plainEdge.from;
   const opened = {
     ...s,
     facilityRunState: {

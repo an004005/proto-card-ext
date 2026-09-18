@@ -1,7 +1,8 @@
-// 계약 선택/수락 커맨드(§3단계, D3). 로드아웃 화면 진입 전 'contract' 화면에서만 산다 —
+// 계약 선택/수락 커맨드(§3단계, D3). 계약 제안은 그 계약을 골랐을 때 지어질 네 구역까지 함께
+// 들고 있다(ADR-0089) — 구역 추첨이 제안 시점에 돌기 때문이다. 로드아웃 화면 진입 전 'contract' 화면에서만 산다 —
 // 수락 이후의 진행 상태는 confirmLoadout이 facilityRunState.contract로 옮기고 나면
 // runEngine.js의 완료 액션들(facilityReducer.js 경유)이 다룬다.
-import { pick, createRngState } from './rng.js';
+import { pick } from './rng.js';
 import { selectRunSectorIds } from './facilityGraph.js';
 import { CONTRACT_DEFS } from '../data/contracts.js';
 import { addItem, createItem } from './inventoryEngine.js';
@@ -9,22 +10,28 @@ import { addItem, createItem } from './inventoryEngine.js';
 /** @typedef {import('./types.js').GameSnapshot} GameSnapshot */
 
 /**
- * 유형별로 하나씩, 여덟 구역 **전부**의 계약에서 뽑는다 — 언제나 3장이다(ADR-0083). 구역 추첨은
- * 제안이 아니라 수락 뒤에 돌고(acceptContractCommand → selectRunSectorIds) 수락한 계약의 목표
- * 구역이 그 추첨에 무조건 들어가므로, "가지 않을 구역의 계약"이라는 옛 문제가 애초에 없다.
+ * 유형별로 하나씩, 여덟 구역 **전부**의 계약에서 뽑는다 — 언제나 3장이다(ADR-0083). 그리고
+ * 제안마다 그 계약을 수락했을 때 지어질 네 구역을 **여기서 미리 뽑아 둔다**(ADR-0089) — 계약을
+ * 고르는 일은 곧 이번 판의 시설을 고르는 일인데, 추첨이 수락 뒤에 돌던 동안에는 그 사실이
+ * 수락하고 나서야 보였다. 세 제안은 같은 런 RNG를 순서대로 진행시켜 굴리므로 시드가 같으면
+ * 제안도 구역도 같다. 수락(acceptContractCommand)은 여기 적힌 목록을 그대로 쓴다 — 다시 굴리지
+ * 않는다.
  * 순수 함수 — rngState를 명시적으로 스레딩한다.
  * @param {import('./rng.js').RngState} rngState
- * @returns {{contracts: import('../data/contracts.js').ContractDef[], rngState: import('./rng.js').RngState}}
+ * @returns {{contracts: import('./types.js').OfferedContract[], rngState: import('./rng.js').RngState}}
  */
 export function offerContracts(rngState) {
   let state = rngState;
+  /** @type {import('./types.js').OfferedContract[]} */
   const contracts = [];
   for (const type of /** @type {const} */ (['retrieval', 'destroy', 'intel'])) {
     const pool = CONTRACT_DEFS.filter((c) => c.type === type);
     if (pool.length === 0) continue;
     const { value, state: next } = pick(state, pool);
     state = next;
-    contracts.push(value);
+    const drawn = selectRunSectorIds(state, value.sectorId);
+    state = drawn.rngState;
+    contracts.push({ ...value, sectorIds: drawn.sectorIds });
   }
   return { contracts, rngState: state };
 }
@@ -46,10 +53,9 @@ export function computeContractOutcome(facilityRunState) {
 /**
  * 계약 3장 중 하나를 수락한다 — 선불(재화)을 즉시 지급하고 로드아웃 화면으로 넘어간다.
  *
- * **이 런의 구역 추첨이 여기서 돈다**(ADR-0083). 수락한 계약의 목표 구역 + 시작 구역 + 나머지
- * 둘이 이 런의 네 구역이 되고, CONFIRM_LOADOUT이 그 목록 그대로 시설을 짓는다. 추첨을 수락
- * 뒤로 미룬 덕에 제안은 여덟 구역 전부에서 나올 수 있고(항상 3장), 고른 계약은 반드시 갈 수
- * 있는 구역의 계약이 된다.
+ * **구역 추첨은 여기서 돌지 않는다**(ADR-0089). 제안이 만들어질 때 이미 굴려 둔 `sectorIds`를
+ * 그대로 옮겨 담을 뿐이다 — 계약 화면이 보여준 네 구역과 실제로 지어지는 시설이 같아야 하기
+ * 때문이다. CONFIRM_LOADOUT이 그 목록 그대로 generateFacilityGraph에 넘긴다.
  *
  * 사전 정보(목표부 위치 공개)는 여기서가 아니라 confirmLoadout이 createRunState를 부를 때
  * revealLandmarkSectorIds로 처리한다(그 시점에야 graph가 생겨 랜드마크 노드를 알 수 있다).
@@ -62,13 +68,12 @@ export function acceptContractCommand(snapshot, contractId) {
   const contract = (snapshot.offeredContracts || []).find((c) => c.id === contractId);
   if (!contract) return snapshot;
   const inventory = addItem(snapshot.playerState.inventory, createItem('currency', { value: contract.prepaymentCurrency }));
-  const selected = selectRunSectorIds(createRngState(snapshot.rngState), contract.sectorId);
   return {
     ...snapshot,
     playerState: { ...snapshot.playerState, inventory },
     activeContract: { ...contract, status: 'accepted' },
     offeredContracts: null,
-    runSectorIds: selected.sectorIds,
+    runSectorIds: contract.sectorIds,
     currentScreen: 'loadout',
   };
 }

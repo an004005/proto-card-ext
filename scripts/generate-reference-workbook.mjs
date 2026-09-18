@@ -197,7 +197,7 @@ function buildWorkbook() {
     ['장비', '드롭 내구도', `${LOOT_DURABILITY_MIN}~${LOOT_DURABILITY_MAX}`, '장비 드롭 생성 범위', 'src/engine/rewardEngine.js'],
     ['장비', '카드 사용 내구도 감소 확률', `${DURABILITY_DECAY_CHANCE * 100}%`, '장비 소속 카드 사용마다 판정, 전투 종료 후 적용', 'src/engine/combatEngine.js'],
     ['인벤토리', '탄약 더미 크기', AMMO_STACK_SIZE, '한 인벤토리 칸에 저장하는 최대 탄약', 'src/engine/inventoryEngine.js'],
-    ['맵', '구역 추첨', `${FACILITY.RUN_SECTOR_COUNT}구역 / 전체 ${FACILITY.ALL_SECTOR_IDS.length}구역`, `계약 수락 시에 뽑는다. 입구·관리동과 수락한 계약의 목표 구역은 항상 포함되고 나머지를 균등 추첨. 링 정반대(가장 깊은 자리)는 동력·정비동이 뽑혔으면 동력·정비동, 아니면 계약 목표 구역이다(ADR-0083)`, 'src/engine/facilityGraph.js'],
+    ['맵', '구역 추첨', `${FACILITY.RUN_SECTOR_COUNT}구역 / 전체 ${FACILITY.ALL_SECTOR_IDS.length}구역`, `계약 제안마다 미리 뽑아 계약 화면에 보여주고, 수락은 그 목록을 그대로 쓴다(ADR-0089). 입구·관리동과 그 계약의 목표 구역은 항상 포함되고 나머지를 균등 추첨. 링 정반대(가장 깊은 자리)는 동력·정비동이 뽑혔으면 동력·정비동, 아니면 계약 목표 구역이다(ADR-0083)`, 'src/engine/facilityGraph.js'],
     ['맵', '총 노드', `${FACILITY.totalNodesFor(['entrance', 'hangar', 'comms', 'security'])}~${FACILITY.totalNodesFor(['entrance', 'residential', 'waste', 'labs'])}`, `뽑힌 구역 합. 구역별 ${FACILITY.ALL_SECTOR_IDS.map((id) => `${FACILITY.SECTOR_NAMES[id]} ${FACILITY.SECTOR_LAYOUTS[id].nodeCount}`).join(' / ')}`, 'src/data/facilityLayout.js'],
     ['맵', '시간 단위', '1칸', '맵의 모든 시각·비용·지속·예약은 정수 칸이다. 1칸마다 월드를 한 번 갱신한다', 'src/engine/runEngine.js'],
     ['맵', '시설 붕괴', FACILITY.RUN_COLLAPSE_TIME, '이 시각에 도달하면 런 종료(마감과 같은 시각 도착은 늦은 것)', 'src/data/facilityLayout.js'],

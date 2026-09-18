@@ -672,6 +672,12 @@
  */
 
 /**
+ * 계약 화면에 오른 제안. 계약 정의에 "이 계약을 고르면 지어질 네 구역"(링 순서)이 붙어 있다 —
+ * 추첨은 제안이 만들어질 때 돈다(ADR-0089).
+ * @typedef {import('../data/contracts.js').ContractDef & {sectorIds: FacilitySectorId[]}} OfferedContract
+ */
+
+/**
  * @typedef {Object} GameSnapshot
  * @property {string} currentScreen
  * @property {PlayerState} playerState
@@ -682,13 +688,14 @@
  * @property {?CombatSummary} combatSummary post-combat durability report, shown once on the
  *   reward screen then cleared by CONFIRM_REWARDS
  * @property {RngState} rngState
- * @property {FacilitySectorId[]|null} [runSectorIds] 이 런의 구역(링 순서, ADR-0081·ADR-0083).
- *   NEW_RUN 시점에는 null이고 ACCEPT_CONTRACT가 수락한 계약의 목표 구역을 포함해 뽑는다.
- *   CONFIRM_LOADOUT이 그대로 generateFacilityGraph에 넘긴다.
- * @property {import('../data/contracts.js').ContractDef[]|null} offeredContracts 'contract' 화면에서
- *   고르는 중인 계약. 여덟 구역 전부에서 유형별 한 장씩 뽑으므로 언제나 3장이다.
+ * @property {FacilitySectorId[]|null} [runSectorIds] 이 런의 구역(링 순서, ADR-0081·ADR-0089).
+ *   NEW_RUN 시점에는 null이고, ACCEPT_CONTRACT가 수락한 제안에 이미 적혀 있던 목록을 그대로
+ *   옮겨 담는다. CONFIRM_LOADOUT이 그대로 generateFacilityGraph에 넘긴다.
+ * @property {OfferedContract[]|null} offeredContracts 'contract' 화면에서
+ *   고르는 중인 계약. 여덟 구역 전부에서 유형별 한 장씩 뽑으므로 언제나 3장이고, 제안마다
+ *   `sectorIds`(그 계약을 고르면 지어질 네 구역, 링 순서)가 함께 적혀 있다.
  *   수락 즉시 activeContract로 옮겨지고 이 필드는 비워진다.
- * @property {(import('../data/contracts.js').ContractDef & {status: 'accepted'})|null} activeContract
+ * @property {(OfferedContract & {status: 'accepted'})|null} activeContract
  *   수락됐지만 아직 confirmLoadout으로 facilityRunState.contract에 옮겨지지 않은 계약. 'contract'/'loadout'
  *   화면 동안만 쓰인다 — confirmLoadout 이후로는 facilityRunState.contract가 유일한 소스다.
  */

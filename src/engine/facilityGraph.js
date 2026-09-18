@@ -3,8 +3,10 @@
 // Math.random().
 //
 // A run does not use all eight sector definitions. selectRunSectorIds draws RUN_SECTOR_COUNT (4)
-// of them — entrance always, the accepted contract's objective sector always, plus two others
-// (ADR-0081, ADR-0083) — and every step below takes that ordered list as a parameter. The list is
+// of them — entrance always, the contract's objective sector always, plus two others
+// (ADR-0081, ADR-0083). The draw runs once per *offered* contract, at offer time, so the contract
+// screen can show the facility it is selling (ADR-0089); accepting only carries that list over.
+// Every step below takes that ordered list as a parameter. The list is
 // the ring order and is stored on the finished graph as `graph.sectorIds`; nothing outside this
 // module may assume which sectors a run has.
 //
@@ -61,9 +63,11 @@ import {
 } from '../data/facilityLayout.js';
 
 /**
- * 이 런이 쓸 구역을 뽑는다(ADR-0081, ADR-0083). 추첨은 **계약을 수락한 뒤**에 돈다 — 제안은
- * 여덟 구역 전부에서 나오고(contractReducer.offerContracts), 수락한 계약의 목표 구역이 이
- * 추첨에 무조건 포함된다. 그래서 "가지 않을 구역의 계약"도, "제안이 한 장뿐인 조합"도 없다.
+ * 이 런이 쓸 구역을 뽑는다(ADR-0081, ADR-0083, ADR-0089). 추첨은 **계약 제안을 만들 때 제안마다
+ * 한 번씩** 돈다 — 제안은 여덟 구역 전부에서 나오고(contractReducer.offerContracts), 각 제안의
+ * 목표 구역이 그 제안의 추첨에 무조건 포함된다. 결과는 제안의 `sectorIds`에 담겨 계약 화면에
+ * 그대로 보이고, 수락은 그것을 옮겨 담을 뿐 다시 굴리지 않는다. 그래서 "가지 않을 구역의
+ * 계약"도, "제안이 한 장뿐인 조합"도, "수락하고 나서야 알게 되는 시설"도 없다.
  *
  * 구성은 entrance(시작점이자 격자 허브 — 빼면 런이 성립하지 않는다) + 계약 목표 구역 + 나머지
  * 구역에서 균등하게 뽑은 둘이다. 목표 구역이 entrance면(정보 계약 record_review) 이미
@@ -75,7 +79,7 @@ import {
  *   2. 아니면 계약 목표 구역 — 목표가 얕은 자리에 오면 계약이 곧바로 끝나 버린다.
  * 나머지는 뽑힌 순서 그대로 들어간다.
  * @param {import('./rng.js').RngState} rngState
- * @param {string} [contractSectorId] 수락한 계약의 목표 구역. 생략하면 옛 방식대로 셋을 뽑는다
+ * @param {string} [contractSectorId] 이 제안의 목표 구역. 생략하면 옛 방식대로 셋을 뽑는다
  *   (측정 스크립트와 테스트가 계약 없이 한 런을 재현할 때 쓴다).
  * @returns {{sectorIds: import('./types.js').FacilitySectorId[], rngState: import('./rng.js').RngState}}
  */

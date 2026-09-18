@@ -506,6 +506,22 @@ function riggedEncounterState(seed, { alert, size, monsterIds, equip = false }) 
   if (equip) s = equipFromWarehouseByEquipmentId(s, 'implant1');
   if (equip) s = equipFromWarehouseByEquipmentId(s, 'implant3');
   s = finishTaskSnapshot(gameReducer(s, { type: 'CONFIRM_LOADOUT' }));
+  // 조우 단계는 실효 Stealth로 갈리고, 실효 Stealth에는 서 있는 방의 상황 보정이 들어간다 —
+  // 대공간 −1과 살아 있는 카메라 −1이다. 여기서 보려는 것은 단계별 선택지이지 시작 방이 어떤
+  // 방이었나가 아니므로, 그 두 보정을 지워 장비 합만 남긴다(구역이 런마다 뽑히므로 시작 방의
+  // 성격은 시드마다 다르다).
+  const neutral = s.facilityRunState;
+  s = {
+    ...s,
+    facilityRunState: {
+      ...neutral,
+      graph: {
+        ...neutral.graph,
+        nodes: neutral.graph.nodes.map((n) => (n.id === neutral.playerNodeId && n.type === 'hall' ? { ...n, type: 'corridor' } : n)),
+        cameras: neutral.graph.cameras.filter((c) => c.nodeId !== neutral.playerNodeId),
+      },
+    },
+  };
   const run = s.facilityRunState;
   const neighborId = run.graph.edges.find((e) => e.from === run.playerNodeId)?.to
     || run.graph.edges.find((e) => e.to === run.playerNodeId)?.from;
