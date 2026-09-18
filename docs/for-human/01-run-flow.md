@@ -75,7 +75,7 @@
 ### 6단계 — 탈출과 정산
 
 - 탈출 판정은 **유료 행동이 끝나는 칸**에 한 번 한다(`isAtOpenExit`, `src/engine/runEngine.js`). 열린 출구 위에 있으면 같은 칸의 도착 조우보다 탈출이 우선한다.
-- 탈출하면 `extractionComplete`, HP 0 또는 시각 `RUN_COLLAPSE_TIME` = 80 도달이면 `gameOver`.
+- 탈출하면 `extractionComplete`, HP 0 또는 시각 `RUN_COLLAPSE_TIME` = 240 도달이면 `gameOver`.
 - 회수 점수 = 인벤토리에 든 아이템의 `value` 합 + 계약 결과(`computeInventoryScore` + `computeContractOutcome`).
   - 계약 완료: `completionRewardValue`를 더한다(회수 계약은 물건 자체의 값으로 이미 반영되므로 0).
   - 미완수: `penaltyValue`를 뺀다. 미완수 탈출도 생존으로는 성공이다.

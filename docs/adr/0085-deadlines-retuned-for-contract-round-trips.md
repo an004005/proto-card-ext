@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0094
+status: superseded by ADR-0087, amended by ADR-0094
 ---
 
 # 마감은 계약 왕복에 맞춰 다시 잡는다
