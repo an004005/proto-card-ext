@@ -74,7 +74,12 @@ test('초기 상태(pendingTask·lastTaskOutcome·engagedThreatId가 전부 null
   assert.ok(text.includes('기본 정찰 · 4칸'), '예고가 붙은 행동 버튼이 보여야 한다');
 });
 
-test('유료 버튼은 이름·칸·소음을 같은 순서로 적는다', () => {
+/** 현재 노드 패널의 접이식 묶음 머리를 눌러 연다/닫는다 — 기본 접힘인 묶음의 내용을 보려면 필요하다. */
+function panelGroupHeader(root, title) {
+  return queryAll(root, (node) => node.getAttribute && node.getAttribute('role') === 'button' && node.textContent.includes(title))[0] || null;
+}
+
+test('유료 버튼은 이름·칸·소음을 같은 순서로 적는다', async () => {
   const { graph } = generateFacilityGraph(11);
   const base = createRunState(graph, 11);
   // 흔적이 있으면 수습 블록이 열리고, 그 안의 버튼이 같은 라벨 규칙을 따르는지 볼 수 있다.
@@ -82,8 +87,12 @@ test('유료 버튼은 이름·칸·소음을 같은 순서로 적는다', () =>
     ...base,
     evidence: [{ id: 'e1', nodeId: base.playerNodeId, tier: 2, createdBySectorId: base.playerNodeId.split('_')[0] }],
   };
-  const text = renderMap(run);
-  assert.ok(text.includes('흔적 정리(1개) · '), `라벨 규칙이 깨졌다: ${text.slice(0, 0)}`);
+  const root = mountMap(run);
+  // 수습은 기본으로 접힌 묶음(수습·장비)에 산다 — 머리를 눌러 펼친 뒤에 라벨을 본다.
+  fire(panelGroupHeader(root, '수습·장비'), 'click');
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  const text = root.textContent;
+  assert.ok(text.includes('흔적 정리(1개) · '), '라벨 규칙이 깨졌다');
   assert.ok(!text.includes('흔적 정리 1개 '), '괄호 없는 옛 라벨이 남아 있다');
 });
 
@@ -444,6 +453,14 @@ test('평범한 인접 통로에 호버하면 이동 1칸과 양 끝 노드 유�
     assert.ok(text.includes(typeLabels[node.type]), `끝 노드 유형(${node.type})이 카드에 있어야 한다`);
   }
   assert.ok(text.includes('노드를 더블클릭해 이동'), '지날 수 있는 통로에는 조작 힌트가 붙는다');
+
+  // 통로 카드도 커서가 아니라 통로 가운데에 붙는다 — clientX 100이면 커서 추종은 114px이다.
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  const card = queryAll(root, (el) => el.style && el.style.position === 'fixed'
+    && typeof el.style.left === 'string' && el.style.left.endsWith('px'))[0];
+  assert.ok(card, '통로 카드가 화면에 있어야 한다');
+  assert.notEqual(card.style.left, '114px', '통로 카드가 커서를 따라가고 있다');
+  assert.ok(!card.style.left.startsWith('-9999'), '통로 자리에서 계산한 위치가 아직 반영되지 않았다');
 });
 
 test('전자 잠금 통로에 호버하면 종류·요구 Capability·개방 힌트가 카드로 나온다', async () => {
@@ -492,4 +509,119 @@ test('임시 장벽이 쳐진 통로는 남은 칸과 함께 장벽 행을 낸�
   assert.ok(text.includes('임시 장벽 · 적 이동 차단'), '장벽 행이 있어야 한다');
   assert.ok(text.includes('장벽 · 12칸 남음'), '배지에 남은 칸이 적혀야 한다');
   assert.ok(text.includes('나는 지날 수 있다'), '장벽이 막는 것이 누구인지 말해야 한다');
+});
+
+/** 지도 히트 영역(노드 원) 하나를 id로 찾는다 — 클릭마다 재렌더되므로 매번 다시 조회해야 한다. */
+const hitFor = (root, queryAllFn, nodeId) => queryAllFn(root, (node) => node.localName === 'circle'
+  && node.getAttribute('tabindex') != null && node.getAttribute('data-node-id') === nodeId)[0];
+
+/** 현재 위치에서 멀리 떨어진, 지도에 그려진 노드를 골라 선택한다. 최소 홉 수를 만족할 때까지 훑는다. */
+async function selectFarNode(root, run, minHops) {
+  for (const node of run.graph.nodes) {
+    const hit = hitFor(root, queryAll, node.id);
+    if (!hit) continue;
+    fire(hit, 'click');
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    const summary = queryAll(root, (el) => el.getAttribute && el.getAttribute('class') === 'map-route-summary')[0];
+    const match = summary?.textContent.match(/최단 경로: (\d+)칸/);
+    if (match && Number(match[1]) >= minHops) return { nodeId: node.id, hops: Number(match[1]) };
+  }
+  return null;
+}
+
+test('멀리 있는 노드를 고르면 경로 목록과 "경로 따라 한 칸 이동"이 나오고, 눌러도 선택이 남는다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const run = { ...createRunState(graph, 11), threats: {} };
+  const root = mountMap(run);
+
+  const picked = await selectFarNode(root, run, 3);
+  assert.ok(picked, '3칸 이상 떨어진 노드를 하나는 고를 수 있어야 한다');
+
+  // 경로 목록 — 플레이어 자리를 뺀 칸 수만큼의 줄이 유형 이름과 함께 나온다.
+  const rows = queryAll(root, (el) => el.getAttribute && el.getAttribute('role') === 'button'
+    && /^\d+\. /.test(el.textContent));
+  assert.equal(rows.length, picked.hops, '경로 칸 수만큼 목록 줄이 있어야 한다');
+  const typeLabels = ['복도', '사무·작업실', '대공간', '봉인 격실', '설비실', '감시 지점', '은신처', '비인가 통로'];
+  assert.ok(typeLabels.some((label) => rows[0].textContent.includes(label)), '목록 줄에 노드 유형 이름이 있어야 한다');
+
+  const walk = findByText(root, 'button', '경로 따라 한 칸 이동');
+  assert.ok(walk, '인접하지 않은 선택에는 경로 따라 이동 버튼이 나와야 한다');
+  assert.equal(walk.getAttribute('disabled'), null, '지날 수 있는 첫 칸인데 버튼이 잠겨 있다');
+
+  fire(walk, 'click');
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  const after = snapshotSignal.value.facilityRunState;
+  assert.notEqual(after.playerNodeId, run.playerNodeId, '한 칸 움직여야 한다');
+
+  // 선택이 남아 있어야 같은 버튼을 계속 눌러 걸을 수 있다 — 요약이 한 칸 줄어든 채로 그대로 있다.
+  const summary = queryAll(root, (el) => el.getAttribute && el.getAttribute('class') === 'map-route-summary')[0];
+  assert.ok(summary, '이동 뒤에도 선택이 남아 경로 요약이 보여야 한다');
+  assert.ok(summary.textContent.includes(`최단 경로: ${picked.hops - 1}칸`), `한 칸 줄어든 경로가 적혀야 한다: ${summary.textContent}`);
+
+  resetMapView();
+});
+
+test('선택 전에는 호버한 노드까지의 경로가 미리보기로 그려진다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const run = { ...createRunState(graph, 11), threats: {} };
+  const root = mountMap(run);
+
+  let previewed = 0;
+  for (const node of run.graph.nodes) {
+    const hit = hitFor(root, queryAll, node.id);
+    if (!hit || node.id === run.playerNodeId) continue;
+    fire(hit, 'mouseenter', { clientX: 10, clientY: 10 });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    previewed = queryAll(root, (el) => el.localName === 'path' && el.getAttribute('class') === 'map-route-preview').length;
+    if (previewed > 0) break;
+  }
+  assert.ok(previewed > 0, '고르지 않은 먼 노드에 호버하면 경로 미리보기가 그려져야 한다');
+
+  resetMapView();
+});
+
+test('노드 카드는 커서가 아니라 그 노드의 자리에 붙는다', async () => {
+  // 커서를 따라다니면 한 프레임씩 늦게 따라오고, 지도를 끄는 동안 카드가 노드에서 떨어진다.
+  const { graph } = generateFacilityGraph(11);
+  const run = { ...createRunState(graph, 11), threats: {} };
+  const root = mountMap(run);
+
+  const hit = hitFor(root, queryAll, run.playerNodeId);
+  fire(hit, 'mouseenter', { clientX: 999, clientY: 999 });
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+  const card = queryAll(root, (el) => el.style && typeof el.style.left === 'string' && el.style.left.endsWith('px')
+    && el.style.position === 'fixed')[0];
+  assert.ok(card, '호버 카드가 화면에 있어야 한다');
+  assert.ok(!card.style.left.includes('1013'), `카드 위치가 커서(clientX+14)에서 나왔다: ${card.style.left}`);
+  assert.ok(!card.style.top.includes('1013'), `카드 위치가 커서(clientY+14)에서 나왔다: ${card.style.top}`);
+  assert.ok(Number.isFinite(Number.parseFloat(card.style.left)), '카드 위치가 숫자여야 한다');
+  assert.ok(!card.style.left.startsWith('-9999'), '노드 자리에서 계산한 위치가 아직 반영되지 않았다');
+
+  resetMapView();
+});
+
+test('현재 노드 패널은 세 묶음으로 접히고, 수습·장비 머리를 누르면 그 안이 열린다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const run = {
+    ...base,
+    threats: {},
+    corpses: [{ id: 'c1', nodeId: base.playerNodeId, sectorId: base.playerNodeId.split('_')[0] }],
+  };
+  const root = mountMap(run);
+
+  assert.ok(panelGroupHeader(root, '여기서 할 수 있는 것'), '행동 묶음 머리가 있어야 한다');
+  assert.ok(panelGroupHeader(root, '수습·장비'), '수습·장비 묶음 머리가 있어야 한다');
+  assert.ok(root.textContent.includes('기본 정찰'), '기본으로 열린 묶음의 내용은 바로 보여야 한다');
+  assert.ok(!root.textContent.includes('시체 처리'), '수습·장비는 기본으로 접혀 있어야 한다');
+
+  fire(panelGroupHeader(root, '수습·장비'), 'click');
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  assert.ok(root.textContent.includes('시체 처리'), '머리를 누르면 수습·장비 안이 열려야 한다');
+
+  fire(panelGroupHeader(root, '수습·장비'), 'click');
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  assert.ok(!root.textContent.includes('시체 처리'), '다시 누르면 접혀야 한다');
 });
