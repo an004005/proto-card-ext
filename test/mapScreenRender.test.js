@@ -664,3 +664,22 @@ test('HP가 절반 이하인 런에서는 상단에 부상 배지가 뜬다 (ADR
 
   assert.ok(root.textContent.includes('부상 −1'), 'HP 50%에서는 −1 배지가 보여야 한다');
 });
+
+test('카메라 위치는 관측하지 않은 노드에서도 노드 카드에 적힌다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  // 무료 시야가 닿지 않는 먼 노드에 카메라 하나만 세운다 — 관측 기록이 전혀 없는 자리다.
+  const adjacent = new Set(base.graph.edges
+    .filter((e) => e.from === base.playerNodeId || e.to === base.playerNodeId)
+    .map((e) => (e.from === base.playerNodeId ? e.to : e.from)));
+  const far = base.graph.nodes.find((n) => n.id !== base.playerNodeId && !adjacent.has(n.id) && !base.observations[n.id]);
+  assert.ok(far, '관측 기록이 없는 먼 노드가 있어야 한다');
+  const run = { ...base, threats: {}, graph: { ...base.graph, cameras: [{ id: 'camera_far', nodeId: far.id }] } };
+
+  const root = mountMap(run);
+  const hit = queryAll(root, (node) => node.localName === 'circle' && node.getAttribute('data-node-id') === far.id)[0];
+  assert.ok(hit, '그 노드의 조작 표적이 지도에 있어야 한다');
+  fire(hit, 'click');
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  assert.ok(root.textContent.includes('카메라 작동 중'), '미확인 노드에서도 카메라 상태가 보여야 한다');
+});

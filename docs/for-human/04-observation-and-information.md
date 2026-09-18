@@ -12,7 +12,9 @@
 - **출구 A의 위치**(런 시작부터). 열쇠 출구만 비공개다.
 - 구역 랜드마크 노드(안개가 걷힌 상태이면 점선 고리). 계약 목표부는 실선 강조.
 
-감춰지는 것: 현장 기회, 장치(카메라·접속 인터페이스·발전기), 은엄폐 값, 위협, 시체·흔적.
+- **모든 카메라의 위치와 상태**(작동·해킹됨·파괴됨). 어디에 눈이 달려 있는지는 들어서기 전에 아는 정보다.
+
+감춰지는 것: 현장 기회, 접속 인터페이스와 배터리 발전기, 은엄폐 값, 위협, 시체·흔적.
 
 ### 관측 기록의 두 축
 
@@ -87,22 +89,19 @@ Perception 2까지는 정찰 사거리가 무료 인접 관측과 같은 1홉이
 | 기본 정찰 | 4칸 | 1홉(Perception 3+ 2홉) | ○ | Perception |
 | 집중 투시 (`snapshot_scan`, 공간 지각 모듈) | 5칸, 재사용 30칸 | 2홉 | ○ | Perception |
 | 해킹한 카메라 | 카메라 해킹 5칸 | 그 카메라 노드 | ○ | Perception |
-| 접속 인터페이스 장악 | 5칸 | 아래 표 | **카메라만** | 0 |
+
+접속 인터페이스 장악은 더 이상 관측 수단이 아니다 — 그 구역 카메라·발전기의 **원격 접속**만 준다.
 
 ### 집중 투시 (공간 지각 모듈의 현장 행동)
 
 - `snapshot_scan`, 시간 5칸, 재사용 대기 30칸, 사거리 2홉, 지속 없음.
 - 2홉 안 모든 노드에 대해 "지금 위협이 있는가"와 **내용물**을 기록한다. 정찰이 적어둔 은엄폐·확보 대상 등급 같은 깊은 정보는 지우지 않고 병합한다.
 
-### 접속 인터페이스 장악의 카메라 공개
+### 카메라 위치는 런 시작부터 보인다
 
-장악하는 순간, 인터페이스 노드에서 센 홉수 안, **같은 구역**의 카메라 위치가 지도에 드러난다.
+모든 카메라의 위치와 상태(작동·해킹됨·파괴됨)는 관측과 무관하게 처음부터 지도와 노드 카드에 있다. 어디에 눈이 달려 있는지는 시설에 들어서기 전에 아는 정보이고, 관측이 파는 것은 그 방 안의 나머지다. 접속 인터페이스와 배터리 발전기는 그대로 관측해야 드러난다.
 
-| 유효 Hacking | −2 | −1 | 0 | 1 | 2 | 3 | 4 |
-|---|---|---|---|---|---|---|---|
-| 공개 홉수 (`INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING`) | 1 | 1 | 2 | 3 | 4 | 5 | 6 |
-
-드러나는 것은 **카메라의 위치와 상태뿐**(관측 깊이 0)이다. 그 노드의 현장 기회나 위협 유무는 여전히 모른다. 카메라를 끄는 것과 카메라가 어디 있는지 아는 것은 다른 정보다.
+접속 인터페이스 장악이 주는 것은 그 구역 카메라·발전기의 **원격 접속**뿐이다 — 위치가 아니라 접근을 판다.
 
 ### 통제실 장악(구역 랜드마크에서)
 
@@ -141,7 +140,7 @@ Capability 수치도 현장 행동도 주지 않는다. 대신 **현재 구역 �
 
 ## 관련 코드
 
-- `src/data/facilityLayout.js` — `PERCEPTION_INFO_TABLE`, `FREE_OBSERVATION_DETAIL_LEVEL`, `BASIC_RECON_TIME`, `BASIC_RECON_HOP_RANGE`, `PERCEPTION_WAIT_OBSERVATION_MIN`, `INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING`, `CONTROL_ROOM_HACK_TIME`
+- `src/data/facilityLayout.js` — `PERCEPTION_INFO_TABLE`, `FREE_OBSERVATION_DETAIL_LEVEL`, `BASIC_RECON_TIME`, `BASIC_RECON_HOP_RANGE`, `PERCEPTION_WAIT_OBSERVATION_MIN`, `PERCEPTION_FREE_FAR_VIEW_MIN`, `CURRENT_NODE_DETAIL_LEVEL`, `FREE_FAR_OBSERVATION_DETAIL_LEVEL`, `CONTROL_ROOM_HACK_TIME`
 - `src/engine/runEngine.js` — `perceptionInfo`, `detailIncludes`, `refreshLocalObservations`, `observationSuspended`, `refreshActiveRecon`, `nodeContentsAt`, `mergeObservation`, `TASK_COMPLETIONS.recon`, `TASK_COMPLETIONS.fieldEquipment`
 - `src/components/NodeTooltipCard.js`, `MapScreen.js`, `EncounterPanel.js`
 - `docs/adr/0023`, `0024`, `0055`, `0072`

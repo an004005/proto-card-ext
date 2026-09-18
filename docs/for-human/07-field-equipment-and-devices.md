@@ -42,16 +42,9 @@
 |---|---|
 | 해킹 | `CAMERA_HACK_TIME` = 5칸, 소음 0, Hacking 1. **그 노드에 서 있어야** 한다 |
 | 효과 1 (중계) | 그 구역의 카메라에 거리와 무관하게 원격 접속 |
-| 효과 2 (정보) | 장악하는 순간 아래 홉수 안, **같은 구역**의 카메라 위치가 지도에 드러난다 |
-| 효과 3 (자리) | 전원 차단과 가짜 목표 송출을 할 수 있는 유일한 자리 |
+| 효과 2 (자리) | 전원 차단과 가짜 목표 송출을 할 수 있는 유일한 자리 |
 
-#### 카메라 공개 홉수 (`INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING`)
-
-| 유효 Hacking | −2 | −1 | 0 | 1 | 2 | 3 | 4 |
-|---|---|---|---|---|---|---|---|
-| 공개 홉수 | 1 | 1 | 2 | 3 | 4 | 5 | 6 |
-
-드러나는 것은 위치와 상태뿐이며(관측 깊이 0), 그 노드의 나머지는 여전히 모른다. 예고한 반경은 **시작할 때의 유효 수치**로 작업에 박아 두므로, 그 사이 장비가 바뀌어도 예고대로 드러난다.
+인터페이스가 파는 것은 **접근**이지 위치가 아니다 — 카메라의 위치와 상태는 런 시작부터 지도에 있다(ADR-0090).
 
 발전기는 실험동·동력동 두 구역에만 있지만 접속 인터페이스는 구역마다 최소 하나가 보장된다 — 어느 구역에서든 Force/Deception 수습 수단을 쓸 수 있게 하려는 배치다.
 
@@ -137,7 +130,7 @@
 
 - `src/data/facilityLayout.js` — `CAMERA_*`, `ACCESS_INTERFACE_NODE_CHANCE`, `GENERATOR_*`, `SPECIAL_EDGE_*`, `TOWER_ELEVATOR_REQUIREMENT`, `HIGH_GROUND_MOBILITY_REQUIREMENT`, `CONCEALMENT_ACTION_TIME_COST`
 - `src/data/facilityEquipmentCapabilities.js` — 장비별 `fieldAction`
-- `src/engine/runEngine.js` — `hackCamera`, `destroyCamera`, `hackAccessInterface`, `disableGenerator`, `cameraHackRange`, `interfaceCameraRevealHops`, `lineOfSightHops`, `canReachHackingTarget`, `useFieldEquipment`, `TASK_COMPLETIONS.fieldEquipment`, `isEdgeUnlocked`, `isEdgeTraversable`
+- `src/engine/runEngine.js` — `hackCamera`, `destroyCamera`, `hackAccessInterface`, `disableGenerator`, `cameraHackRange`, `lineOfSightHops`, `canReachHackingTarget`, `useFieldEquipment`, `TASK_COMPLETIONS.fieldEquipment`, `isEdgeUnlocked`, `isEdgeTraversable`
 - `src/engine/facilityGraph.js` — `placeSecurityDevices`, `placeGenerators`, `placeSpecialEdges`
 - `src/components/MapScreen.js` — `FIELD_ACTION_LABELS`
 - `docs/adr/0017`, `0056`, `0066`, `0079`

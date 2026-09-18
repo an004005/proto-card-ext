@@ -296,13 +296,9 @@ export const CAMERA_HACK_DURATION = 15;
 // 접속 인터페이스 참고).
 export const CAMERA_HACK_RANGE_BY_HACKING = [0, 0, 0, 1, 2, 3, 4];
 
-// 접속 인터페이스를 장악하면 그 구역 카메라의 **위치**가 지도에 드러난다. 인터페이스는 구역
-// 카메라 버스이므로, 제어를 잡으면 어느 노드에 눈이 달려 있는지가 먼저 읽힌다 — 카메라를 끄는
-// 것과 카메라가 어디 있는지 아는 것은 다른 정보이고, 후자가 인터페이스를 잡을 이유 하나를 더 준다.
-// 잘 하는 해커일수록 버스를 더 멀리까지 따라 읽는다. 인터페이스 노드에서 센 홉수이며 같은 구역
-// 안으로만 퍼진다(카메라 무력화가 구역 단위인 것과 같은 경계다).
-// index = clamp(유효 Hacking, -2, 4) + 2.
-export const INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING = [1, 1, 2, 3, 4, 5, 6];
+// 인터페이스 장악이 주는 것은 그 구역 카메라의 **원격 접속**뿐이다. 예전에는 Hacking에 따른
+// 홉수 안의 카메라 위치도 함께 드러냈지만, 카메라 위치는 이제 런 시작부터 지도에 보이므로
+// (ADR-0090) 그 보상은 아무것도 드러내지 않는 빈 규칙이 됐다.
 export const CAMERA_FORCE_TIME = 3;
 export const CAMERA_FORCE_NOISE = 2;
 

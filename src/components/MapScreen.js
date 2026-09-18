@@ -20,7 +20,7 @@ import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted, perceptionInfo,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
   explainEffectiveStealth, detailIncludes, highGroundMobility, nodeContentsAt,
-  deviceStatus, canClimbHighGround, interfaceCameraRevealHops, describeHunters, isHunter,
+  deviceStatus, canClimbHighGround, describeHunters, isHunter,
 } from '../engine/runEngine.js';
 import { ladderNote, StepBadge } from './ladderDisplay.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
@@ -726,12 +726,18 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
   // 내용물 — 정찰이든 무료 인접 관측이든 한 번 닿았으면 현장 기회와 장치가 전부 적혀 있다.
   const contents = knownContentsOf(run, n.id, debugReveal);
   for (const opp of contents.opportunities) rows.push(opportunityRow(run, n.id, opp, debugReveal));
-  if (contents.devices.length > 0) {
+  // 카메라 위치는 런 시작부터 보인다(ADR-0090) — 아직 관측하지 않은 노드에도 장치 행을 적는다.
+  const devices = [...contents.devices];
+  for (const camera of run.graph.cameras) {
+    if (camera.nodeId !== n.id || devices.some((d) => d.kind === 'camera' && d.id === camera.id)) continue;
+    devices.push({ kind: 'camera', id: camera.id, status: deviceStatus(run, { kind: 'camera', id: camera.id }) });
+  }
+  if (devices.length > 0) {
     rows.push({
       kind: 'device',
       tone: 'plain',
       title: '장치',
-      chips: contents.devices.map((device) => {
+      chips: devices.map((device) => {
         const status = deviceStatus(run, device);
         return {
           label: DEVICE_STATUS_LABELS[device.kind]?.[status] || device.kind,
@@ -1188,7 +1194,9 @@ export function MapScreen() {
   // 장치의 위치는 가 봤거나, 관측이 닿아 내용물이 기록된 노드에서 드러난다(Perception과 무관).
   // 지도 글자(C/I/G)와 해킹·파괴 버튼이 같은 하나의 판정을 써야 "보이는데 못 고르는" 장치가 없다.
   const isDeviceVisible = (nodeId) => debugReveal || visitedNodeIds.has(nodeId) || !!run.observations[nodeId]?.contents;
-  const cameraByNode = Object.fromEntries(run.graph.cameras.filter((camera) => isDeviceVisible(camera.nodeId)).map((camera) => [camera.nodeId, camera]));
+  // 카메라만은 런 시작부터 전부 보인다(ADR-0090) — 어디에 눈이 달려 있는지는 시설을 들어서기
+  // 전에 아는 정보다. 인터페이스·발전기는 그대로 관측해야 드러난다.
+  const cameraByNode = Object.fromEntries(run.graph.cameras.map((camera) => [camera.nodeId, camera]));
   const interfaceNodeIds = new Set(run.graph.accessInterfaces.filter((entry) => isDeviceVisible(entry.nodeId)).map((entry) => entry.nodeId));
   const currentInterface = run.graph.accessInterfaces.find((entry) => entry.nodeId === run.playerNodeId);
   const currentInterfaceHacked = !!currentInterface && (run.hackedInterfaceIds || []).includes(currentInterface.id);
@@ -1202,8 +1210,8 @@ export function MapScreen() {
     if (currentInterfaceHacked && targetSectorId === currentSectorId) return true;
     return (cameraHops.get(nodeId) ?? Infinity) <= cameraRange;
   };
-  const hackableCameras = run.graph.cameras.filter((camera) => isDeviceVisible(camera.nodeId)
-    && canHackDevice(camera.nodeId) && !(run.disabledCameraIds || []).includes(camera.id));
+  const hackableCameras = run.graph.cameras.filter((camera) => canHackDevice(camera.nodeId)
+    && !(run.disabledCameraIds || []).includes(camera.id));
   const generatorByNode = Object.fromEntries((run.graph.generators || []).filter((generator) => isDeviceVisible(generator.nodeId)).map((generator) => [generator.nodeId, generator]));
   const currentGenerator = (run.graph.generators || []).find((generator) => generator.nodeId === run.playerNodeId);
   // 랜드마크 기호는 안개가 걷힌 노드에서만 그린다(툴팁의 규칙과 같다). 계약 목표부는 색을 달리한다.
@@ -1627,7 +1635,7 @@ export function MapScreen() {
                 ${/* 지도에 실제로 그려지는 기호인데 범례에 없던 것들 — 없으면 화면의 C·I·G와
                     구역 색이 무엇인지 알 방법이 없다(리뷰 B7). */ null}
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>장치와 구역 상태</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#dc2626', fontWeight: 900 }}>C</span>카메라 — 작동 중(빨강) / <span style=${{ color: '#0ea5e9', fontWeight: 900 }}>해킹됨(파랑)</span> / <span style=${{ color: '#64748b', fontWeight: 900 }}>파괴됨(회색)</span>. Stealth 3 미만이면 그 노드에 들어갈 때 발각된다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#dc2626', fontWeight: 900 }}>C</span>카메라 — 작동 중(빨강) / <span style=${{ color: '#0ea5e9', fontWeight: 900 }}>해킹됨(파랑)</span> / <span style=${{ color: '#64748b', fontWeight: 900 }}>파괴됨(회색)</span>. 위치는 런 시작부터 전부 보인다. Stealth 3 미만이면 그 노드에 들어갈 때 발각된다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#7c3aed', fontWeight: 900 }}>I</span>접속 인터페이스 — 장악하면 이 구역의 발견된 카메라·발전기를 거리와 무관하게 원격 조작할 수 있다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#ca8a04', fontWeight: 900 }}>G</span>배터리 발전기 — 살아 있으면 이 구역 적이 전투 시작 시 갑옷 5를 받는다(<span style=${{ color: '#64748b', fontWeight: 900 }}>회색은 무력화됨</span>)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '1.5px dashed #7c3aed', boxSizing: 'border-box' }}></span>구역 랜드마크(통제실 장악 자리, 구역당 하나). 안개가 걷히면 이름이 툴팁에 보인다</div>
@@ -2419,7 +2427,7 @@ export function MapScreen() {
                         <${ActionButton}
                           run=${run} actionId="hackInterface" opts=${{ value: capabilities.hacking }}
                           label="접속 인터페이스 해킹"
-                          tip=${`이 노드의 접속 인터페이스를 장악하면, 이 구역에서 이미 발견한 카메라·발전기에 거리와 무관하게 원격 접속할 수 있습니다. 인터페이스는 구역 카메라 버스이기도 해서, 장악하는 순간 여기서 ${interfaceCameraRevealHops(capabilities.hacking)}홉 안(같은 구역)의 카메라 위치가 지도에 드러납니다.`}
+                          tip="이 노드의 접속 인터페이스를 장악하면, 이 구역의 카메라·발전기에 거리와 무관하게 원격 접속할 수 있습니다. 카메라의 위치는 런 시작부터 지도에 보이므로 인터페이스가 파는 것은 위치가 아니라 접근입니다."
                           onClick=${() => runCommand({ type: 'HACK_ACCESS_INTERFACE', interfaceId: currentInterface.id })}
                         />
                       ` : null}

@@ -29,7 +29,6 @@ import {
   FORCE_TIER1_TIME, FORCE_BASE_NOISE, HACKING_TIER1_TIME, HACKING_BASE_NOISE,
   CAMERA_STEALTH_THRESHOLD, CAMERA_ALERT_RANGE, CAMERA_HACK_TIME,
   CAMERA_HACK_DURATION, CAMERA_HACK_RANGE_BY_HACKING, CAMERA_FORCE_TIME, CAMERA_FORCE_NOISE,
-  INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING,
   CAMERA_SNIPE_AMMO_COST,
 
   GENERATOR_HACK_TIME, GENERATOR_FORCE_TIME, GENERATOR_FORCE_NOISE,
@@ -1546,34 +1545,12 @@ const TASK_COMPLETIONS = {
     }
     return next;
   },
+  // 인터페이스 장악이 주는 것은 그 구역 카메라의 **원격 접속**뿐이다. 예전에는 Hacking에 따른
+  // 홉수 안의 카메라 위치도 함께 드러냈지만, 카메라 위치는 이제 런 시작부터 지도에 보이므로
+  // (ADR-0090) 그 보상은 아무것도 드러내지 않는 빈 규칙이 됐다.
   hackInterface(state, task) {
     const ids = state.hackedInterfaceIds || [];
-    let next = ids.includes(task.params.interfaceId) ? state : { ...state, hackedInterfaceIds: [...ids, task.params.interfaceId] };
-    // 인터페이스는 구역 카메라 버스다 — 장악하면 그 버스에 달린 카메라의 **위치**가 드러난다.
-    // 드러나는 것은 위치와 상태뿐이고 그 노드의 나머지(현장 기회·은엄폐·위협)는 여전히
-    // 모르는 채다. 그래서 관측 깊이는 0이고 contents에는 카메라만 병합한다.
-    const entry = next.graph.accessInterfaces.find((e) => e.id === task.params.interfaceId);
-    if (!entry) return next;
-    const interfaceSectorId = sectorOfNode(entry.nodeId);
-    const hops = bfsHopDistances(next.graph.edges, entry.nodeId);
-    const reach = interfaceCameraRevealHops(/** @type {number} */ (task.params.hacking ?? 0));
-    let observations = next.observations;
-    for (const camera of next.graph.cameras) {
-      if (sectorOfNode(camera.nodeId) !== interfaceSectorId) continue;
-      const hop = hops.get(camera.nodeId);
-      if (hop === undefined || hop > reach) continue;
-      const previous = observations[camera.nodeId];
-      const devices = [...(previous?.contents?.devices || [])];
-      if (!devices.some((d) => d.kind === 'camera' && d.id === camera.id)) {
-        devices.push({ kind: /** @type {const} */ ('camera'), id: camera.id, status: deviceStatus(next, { kind: 'camera', id: camera.id }) });
-      }
-      observations = mergeObservation(observations, camera.nodeId, {
-        observedAt: next.time,
-        detailLevel: 0,
-        contents: { opportunities: previous?.contents?.opportunities || [], devices },
-      });
-    }
-    return { ...next, observations };
+    return ids.includes(task.params.interfaceId) ? state : { ...state, hackedInterfaceIds: [...ids, task.params.interfaceId] };
   },
   hackCamera(state, task) {
     const { cameraId, cameraNodeId, duration } = task.params;
@@ -2368,11 +2345,6 @@ export function explainEffectiveStealth(baseEffectiveStealth, state) {
  */
 export function effectiveStealthWithConcealment(baseEffectiveStealth, state) {
   return explainEffectiveStealth(baseEffectiveStealth, state).total;
-}
-
-/** 유효 Hacking -> 인터페이스 장악이 드러내는 카메라의 홉 반경. @param {number} effectiveHacking */
-export function interfaceCameraRevealHops(effectiveHacking) {
-  return INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING[Math.max(-2, Math.min(4, effectiveHacking)) + 2];
 }
 
 /** Effective Hacking -> direct hacking range in graph hops. */

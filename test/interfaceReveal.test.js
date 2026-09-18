@@ -1,105 +1,60 @@
-// 접속 인터페이스 장악이 구역 카메라의 **위치**를 드러낸다.
+// 접속 인터페이스 장악이 무엇을 주는가.
 //
-// 인터페이스는 구역 카메라 버스다 — 제어를 잡으면 어느 노드에 눈이 달려 있는지가 먼저 읽힌다.
-// 드러나는 것은 위치와 상태뿐이고, 그 노드의 나머지(현장 기회·은엄폐·위협)는 여전히 모르는
-// 채로 남는다. 그래서 관측 깊이는 0이다.
+// 예전에는 Hacking에 따른 홉수 안, 같은 구역 카메라의 **위치**를 드러냈다. 카메라 위치가 런
+// 시작부터 지도에 보이게 되면서(ADR-0090) 그 보상은 아무것도 드러내지 않는 빈 규칙이 됐고,
+// 인터페이스가 파는 것은 위치가 아니라 **접근**만 남았다 — 그 구역 카메라·발전기에 거리와
+// 무관하게 원격으로 손을 댈 수 있다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
-import { createRunState, hackAccessInterface, interfaceCameraRevealHops } from '../src/engine/runEngine.js';
+import { createRunState, hackAccessInterface, hackCamera } from '../src/engine/runEngine.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
-import { INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING } from '../src/data/facilityLayout.js';
 import { finishTask } from './helpers/finishTask.js';
 
 const sectorOf = (nodeId) => nodeId.split('_')[0];
 
-/** 같은 구역에 사거리 안 카메라와 사거리 밖 카메라가 둘 다 있는 인터페이스를 찾는다. */
-function findInterfaceWithNearAndFarCameras(hacking) {
-  const reach = interfaceCameraRevealHops(hacking);
+/** 같은 구역에 직접 해킹 사거리 밖 카메라를 가진 인터페이스를 찾는다. */
+function findInterfaceWithFarCamera() {
   for (let seed = 1; seed <= 40; seed++) {
     const { graph } = generateFacilityGraph(seed);
     const run = createRunState(graph, seed);
     for (const entry of graph.accessInterfaces) {
       const hops = bfsHopDistances(graph.edges, entry.nodeId);
-      const sameSector = graph.cameras.filter((c) => sectorOf(c.nodeId) === sectorOf(entry.nodeId));
-      const near = sameSector.filter((c) => (hops.get(c.nodeId) ?? Infinity) <= reach);
-      const far = sameSector.filter((c) => (hops.get(c.nodeId) ?? Infinity) > reach);
-      const otherSector = graph.cameras.filter((c) => sectorOf(c.nodeId) !== sectorOf(entry.nodeId));
-      if (near.length > 0 && far.length > 0 && otherSector.length > 0) {
-        return { run: { ...run, playerNodeId: entry.nodeId }, entry, near, far, otherSector, hops };
-      }
+      const far = graph.cameras.filter((c) => sectorOf(c.nodeId) === sectorOf(entry.nodeId) && (hops.get(c.nodeId) ?? Infinity) > 1);
+      if (far.length > 0) return { run: { ...run, playerNodeId: entry.nodeId }, entry, far };
     }
   }
-  throw new Error(`Hacking ${hacking}의 반경 ${reach} 안팎에 카메라가 갈리는 시드를 찾지 못했다`);
+  throw new Error('같은 구역에 먼 카메라를 가진 인터페이스를 찾지 못했다');
 }
 
-test('인터페이스를 장악하면 같은 구역 사거리 안 카메라가 관측 기록에 드러난다', () => {
+test('인터페이스를 장악하면 그 구역 카메라에 사거리와 무관하게 원격 접속할 수 있다', () => {
   const hacking = 1;
-  const { run, entry, near, far, otherSector } = findInterfaceWithNearAndFarCameras(hacking);
-  const after = finishTask(hackAccessInterface(run, entry.id, hacking));
+  const { run, entry, far } = findInterfaceWithFarCamera();
 
+  // 장악 전: Hacking 1의 직접 사거리는 1홉이라 먼 카메라에는 손이 닿지 않는다.
+  assert.throws(() => hackCamera(run, far[0].id, hacking), /reach|range|out/i);
+
+  const after = finishTask(hackAccessInterface(run, entry.id, hacking));
   assert.ok((after.hackedInterfaceIds || []).includes(entry.id), '인터페이스가 장악 목록에 들어간다');
-
-  for (const camera of near) {
-    const observation = after.observations[camera.nodeId];
-    assert.ok(observation, `사거리 안 ${camera.nodeId}에 관측 기록이 없다`);
-    assert.ok(
-      observation.contents.devices.some((d) => d.kind === 'camera' && d.id === camera.id),
-      `사거리 안 ${camera.id}가 기록되지 않았다`,
-    );
-  }
-
-  // 사거리 밖과 다른 구역은 드러나지 않는다 — 인터페이스가 닿지 않은 자리다. 다만 플레이어가
-  // 서 있는 노드와 그 인접은 무료 관측이 이미 닿으므로 그 자리들은 이 검사에서 뺀다.
-  const freeSight = new Set([run.playerNodeId]);
-  for (const edge of run.graph.edges) {
-    if (edge.from === run.playerNodeId) freeSight.add(edge.to);
-    if (edge.to === run.playerNodeId) freeSight.add(edge.from);
-  }
-  for (const camera of [...far, ...otherSector]) {
-    if (freeSight.has(camera.nodeId)) continue;
-    const devices = after.observations[camera.nodeId]?.contents?.devices || [];
-    assert.ok(
-      !devices.some((d) => d.kind === 'camera' && d.id === camera.id),
-      `${camera.id}는 인터페이스 반경 밖이거나 다른 구역이라 드러나면 안 된다`,
-    );
-  }
+  const hacked = finishTask(hackCamera(after, far[0].id, hacking));
+  assert.ok(hacked.hackedCameras.some((c) => c.cameraId === far[0].id), '장악 뒤에는 같은 구역 먼 카메라도 해킹된다');
 });
 
-test('드러나는 것은 위치와 상태뿐이다 — 관측 깊이는 0이고 현장 기회는 새로 적히지 않는다', () => {
-  const hacking = 1;
-  const { run, entry, near } = findInterfaceWithNearAndFarCameras(hacking);
+test('인터페이스 장악은 더 이상 카메라 위치를 관측 기록에 적지 않는다', () => {
+  const hacking = 4;
+  const { run, entry, far } = findInterfaceWithFarCamera();
   const after = finishTask(hackAccessInterface(run, entry.id, hacking));
 
+  // 무료 관측이 이미 닿는 자리(현재 노드와 인접 1홉)는 이 검사에서 뺀다.
   const freeSight = new Set([run.playerNodeId]);
   for (const edge of run.graph.edges) {
     if (edge.from === run.playerNodeId) freeSight.add(edge.to);
     if (edge.to === run.playerNodeId) freeSight.add(edge.from);
   }
-  const revealed = near.filter((c) => !freeSight.has(c.nodeId));
-  assert.ok(revealed.length > 0, '무료 관측 밖에서 드러난 카메라가 하나는 있어야 한다');
-
-  for (const camera of revealed) {
-    const observation = after.observations[camera.nodeId];
-    assert.equal(observation.detailLevel, 0, '카메라 위치만 안다 — 깊이는 0이다');
-    assert.deepEqual(observation.contents.opportunities, [], '현장 기회는 여전히 모르는 채다');
-    assert.equal(observation.hasThreat, undefined, '그 자리에 위협이 있는지도 여전히 모른다');
+  const outside = far.filter((c) => !freeSight.has(c.nodeId));
+  assert.ok(outside.length > 0, '무료 시야 밖의 카메라가 하나는 있어야 이 검사가 성립한다');
+  for (const camera of outside) {
+    const devices = after.observations[camera.nodeId]?.contents?.devices || [];
+    assert.ok(!devices.some((d) => d.kind === 'camera' && d.id === camera.id), '인터페이스가 카메라를 관측 기록에 적었다');
   }
-});
-
-test('반경은 유효 Hacking이 정하고 표의 양끝으로 잘린다', () => {
-  for (let value = -2; value <= 4; value++) {
-    assert.equal(interfaceCameraRevealHops(value), INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING[value + 2]);
-  }
-  assert.equal(interfaceCameraRevealHops(-9), INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING[0]);
-  assert.equal(interfaceCameraRevealHops(9), INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING[6]);
-
-  // 해커가 좋을수록 더 멀리 읽는다 — 같은 인터페이스에서 반경만 넓어진다.
-  const { run, entry } = findInterfaceWithNearAndFarCameras(1);
-  const countRevealed = (hacking) => {
-    const after = finishTask(hackAccessInterface(run, entry.id, hacking));
-    return run.graph.cameras.filter((c) => (after.observations[c.nodeId]?.contents?.devices || [])
-      .some((d) => d.kind === 'camera' && d.id === c.id)).length;
-  };
-  assert.ok(countRevealed(4) >= countRevealed(1), 'Hacking 4가 1보다 좁게 읽을 수는 없다');
 });
