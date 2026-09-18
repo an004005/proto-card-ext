@@ -372,12 +372,12 @@ test('타임라인은 15칸 밖의 사건을 담지 않고, 알 수 없는 위�
   const watched = {
     ...run,
     threats: { [template.id]: { ...template, nodeId: seenNodeId, nextMoveAt: base.time + 2 } },
-    observations: { ...run.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 3 } },
+    observations: { ...run.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 4 } },
   };
   assert.ok(upcomingEvents(watched).some((e) => e.kind === 'threat'));
   assert.deepEqual(observableThreatMoves(watched).map((t) => t.ticksUntilMove), [2]);
 
-  const shallow = { ...watched, observations: { ...run.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 1 } } };
+  const shallow = { ...watched, observations: { ...run.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 2 } } };
   assert.deepEqual(observableThreatMoves(shallow).map((t) => t.ticksUntilMove), [null], '얕게 본 위협의 다음 이동은 알 수 없다');
 });
 
@@ -390,7 +390,7 @@ test('작업 중 위협이 몇 번 움직이는지를 예고가 셀 수 있다',
     ...base,
     threats: { [template.id]: { ...template, nodeId: seenNodeId, mode: 'patrol', nextMoveAt: base.time + 3 } },
     // 이동 횟수 예고는 Perception 2의 깊이로 본 위협에만 붙는다(정보 깊이 표).
-    observations: { ...base.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 3 } },
+    observations: { ...base.observations, [seenNodeId]: { observedAt: base.time, hasThreat: true, detailLevel: 4 } },
   };
   // 순찰 간격 5칸, 다음 이동까지 3칸 -> 12칸짜리 작업 중에는 +3·+8칸 두 번.
   const moves = threatMovesDuring(run, 12);

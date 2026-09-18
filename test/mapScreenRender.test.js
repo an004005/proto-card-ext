@@ -195,7 +195,7 @@ test('작업 중단·조우·교전 상태가 모두 채워져 있어도 지도 
     corpses: [{ id: 'c1', nodeId: base.playerNodeId, sectorId: base.playerNodeId.split('_')[0] }],
     evidence: [{ id: 'e1', nodeId: base.playerNodeId, tier: 2, createdBySectorId: base.playerNodeId.split('_')[0] }],
     // "다음 이동까지 N칸"은 Perception 2의 깊이로 본 노드에서만 읽힌다(정보 깊이 표).
-    observations: { ...base.observations, [base.playerNodeId]: { observedAt: 40, hasThreat: true, detailLevel: 3 } },
+    observations: { ...base.observations, [base.playerNodeId]: { observedAt: 40, hasThreat: true, detailLevel: 4 } },
   };
 
   const text = renderMap(run);

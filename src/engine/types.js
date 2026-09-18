@@ -274,9 +274,12 @@
  * @typedef {Object} NodeObservation
  * @property {number} observedAt 이 기록을 마지막으로 갱신한 맵 시각(칸).
  * @property {boolean} hasThreat 그 시각에 위협이 그 노드에 있었는가.
+ * @property {number} [threatCount] 그 시각 그 노드에 서 있던 위협 **그룹 수**. 무료 인접 시야가
+ *   주는 정보다(ADR-0090) — 규모는 그보다 깊은 관측이 판다.
  * @property {string} [exitStatus] 표준 출구 노드일 때의 개폐 상태.
- * @property {number} [detailLevel] 이 기록을 **어느 깊이로** 봤는가(PERCEPTION_INFO_TABLE의 level, 0~5).
- *   무료 인접 관측은 언제나 1이고, 정찰은 그때의 실효 Perception이 정한다. 더 깊은 기록이 얕은
+ * @property {number} [detailLevel] 이 기록을 **어느 깊이로** 봤는가(PERCEPTION_INFO_TABLE의 level, 0~6).
+ *   무료 인접 1홉은 언제나 1(유무·그룹 수·모드), 서 있는 노드는 2(+규모), 무료 시야가 한 홉 더
+ *   뻗는 두 번째 홉은 0(유무만)이고, 정찰은 그때의 실효 Perception이 정한다. 더 깊은 기록이 얕은
  *   갱신에 덮이지 않도록 병합은 최댓값을 남긴다. UI는 이 값보다 깊은 것을 그리지 않는다.
  * @property {1|2|3} [concealment] 정찰로 읽어낸 은엄폐 등급(Perception 2 이상).
  * @property {Record<string, {tier: 'normal'|'elite', axis: string|null}>} [opportunityGrades] 정찰로 읽어낸 확보 대상 등급(Perception 0 이상)과 역할축(1 이상, 그 전에는 null).
@@ -294,7 +297,8 @@
 
 /**
  * @typedef {Object} NodeContents
- * @property {{id: string, grade: 'supply'|'prize', usesRemaining: number}[]} opportunities 남아 있는 현장 기회.
+ * @property {{id: string, grade: 'supply'|'prize', usesRemaining?: number}[]} opportunities 남아 있는 현장 기회.
+ *   `usesRemaining`은 값을 치른 관측과 서 있는 노드만 안다 — 무료 인접 시야는 **있다**까지다.
  * @property {ObservedDevice[]} devices 그 노드의 장치.
  */
 

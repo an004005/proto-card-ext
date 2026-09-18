@@ -8,7 +8,10 @@ import {
   perceptionInfo, detailIncludes, waitOneTick,
 } from '../src/engine/runEngine.js';
 import { describeObservedThreat, observableThreatMoves } from '../src/engine/mapTimeline.js';
-import { PERCEPTION_INFO_TABLE, FREE_OBSERVATION_DETAIL_LEVEL, BASIC_RECON_TIME } from '../src/data/facilityLayout.js';
+import {
+  PERCEPTION_INFO_TABLE, FREE_OBSERVATION_DETAIL_LEVEL, FREE_FAR_OBSERVATION_DETAIL_LEVEL,
+  CURRENT_NODE_DETAIL_LEVEL, BASIC_RECON_TIME,
+} from '../src/data/facilityLayout.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
 import { finishTask } from './helpers/finishTask.js';
 
@@ -64,7 +67,7 @@ test('정보 깊이는 관측 기록에 detailLevel로 남고, 깊이별로 읽�
     const scouted = scout(run, perception);
     const record = scouted.observations[scouted.playerNodeId];
     assert.equal(record.detailLevel, info.level, `Perception ${perception}의 깊이가 표와 다르다`);
-    for (const field of ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext', 'prizeGrade', 'prizeAxis', 'concealment', 'evidence']) {
+    for (const field of ['presence', 'count', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext', 'prizeGrade', 'prizeAxis', 'concealment', 'evidence']) {
       const expected = info.threat.includes(field) || info.extra.includes(field);
       assert.equal(detailIncludes(info.level, field), expected, `${field}@Perception ${perception}`);
     }
@@ -94,25 +97,25 @@ test('위협 정보는 관측 깊이만큼만 읽힌다 — 없는 항목은 nul
     threat,
   );
 
-  const shallow = at(0);
-  assert.equal(shallow.size, null, '깊이 0은 유무만이다');
+  const shallow = at(FREE_FAR_OBSERVATION_DETAIL_LEVEL);
+  assert.equal(FREE_FAR_OBSERVATION_DETAIL_LEVEL, 0);
+  assert.equal(shallow.size, null, '두 번째 홉은 유무만이다');
   assert.equal(shallow.mode, null);
 
-  // 공짜 인접 시야는 깊이 0이다 — 규모도 모드도 읽히지 않는다.
+  // 공짜 인접 시야(1홉)는 모드까지 읽는다 — 규모만은 값을 치러야 산다(ADR-0090).
   const free = at(FREE_OBSERVATION_DETAIL_LEVEL);
-  assert.equal(FREE_OBSERVATION_DETAIL_LEVEL, 0);
-  assert.equal(free.size, null, '무료 인접 관측은 유무까지다');
-  assert.equal(free.mode, null);
-  // 규모는 서 있는 자리(깊이 1)나 Perception 0 이상의 정찰부터 읽힌다.
-  assert.equal(at(1).size, threat.size, '규모는 깊이 1부터');
+  assert.equal(FREE_OBSERVATION_DETAIL_LEVEL, 1);
+  assert.equal(free.mode, threat.mode, '무료 인접 관측은 모드까지다');
+  assert.equal(free.size, null, '규모는 무료 시야가 주지 않는다');
+  // 규모는 서 있는 자리나 Perception 0 이상의 정찰부터 읽힌다.
+  assert.equal(at(CURRENT_NODE_DETAIL_LEVEL).size, threat.size, '규모는 서 있는 자리의 깊이부터');
 
-  assert.equal(at(2).mode, threat.mode);
-  assert.equal(at(2).alert, null);
-  assert.equal(at(3).alert, threat.alert);
-  assert.equal(at(3).composition, null);
-  assert.ok(at(4).composition.length > 0, '구성은 Perception 3부터');
-  assert.equal(at(4).patrolNext, null);
-  assert.equal(at(5).patrolNext, threat.patrolRoute[(threat.patrolIndex + 1) % threat.patrolRoute.length]);
+  assert.equal(at(3).alert, null);
+  assert.equal(at(4).alert, threat.alert);
+  assert.equal(at(4).composition, null);
+  assert.ok(at(5).composition.length > 0, '구성은 Perception 3부터');
+  assert.equal(at(5).patrolNext, null);
+  assert.equal(at(6).patrolNext, threat.patrolRoute[(threat.patrolIndex + 1) % threat.patrolRoute.length]);
 });
 
 test('다음 이동까지 남은 칸은 Perception 2의 깊이로 본 위협에만 붙는다', () => {
@@ -125,15 +128,15 @@ test('다음 이동까지 남은 칸은 Perception 2의 깊이로 본 위협에�
     threats: { [threat.id]: { ...threat, nodeId: seenNodeId, nextMoveAt: run.time + 4 } },
   };
 
-  const deep = { ...base, observations: { [seenNodeId]: { observedAt: run.time, hasThreat: true, detailLevel: 3 } } };
+  const deep = { ...base, observations: { [seenNodeId]: { observedAt: run.time, hasThreat: true, detailLevel: 4 } } };
   assert.deepEqual(observableThreatMoves(deep).map((t) => t.ticksUntilMove), [4]);
 
-  const shallow = { ...base, observations: { [seenNodeId]: { observedAt: run.time, hasThreat: true, detailLevel: 1 } } };
+  const shallow = { ...base, observations: { [seenNodeId]: { observedAt: run.time, hasThreat: true, detailLevel: 2 } } };
   assert.deepEqual(observableThreatMoves(shallow).map((t) => t.ticksUntilMove), [null]);
   assert.deepEqual(observableThreatMoves(shallow).map((t) => t.interval), [null]);
 });
 
-test('무료 시야는 서 있는 자리와 옆방을 가른다 — 옆방은 유무까지, Perception을 타지 않는다', () => {
+test('무료 시야는 서 있는 자리와 옆방을 가른다 — 옆방은 내용물의 존재까지, Perception을 타지 않는다', () => {
   const run = makeRun(1);
   const adjacentIds = run.graph.edges
     .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
@@ -143,19 +146,49 @@ test('무료 시야는 서 있는 자리와 옆방을 가른다 — 옆방은 �
   for (const perception of [-2, 0, 4]) {
     const refreshed = refreshLocalObservations(run, perception);
 
-    // 서 있는 자리 — 방 안에 있으므로 내용물과 깊이 1을 얻는다.
+    // 서 있는 자리 — 방 안에 있으므로 내용물을 남은 횟수까지 얻고 깊이도 규모까지다.
     const here = refreshed.observations[run.playerNodeId];
-    assert.equal(here.detailLevel, 1, '서 있는 자리는 깊이 1이다');
+    assert.equal(here.detailLevel, CURRENT_NODE_DETAIL_LEVEL, '서 있는 자리는 규모까지 읽는다');
     assert.ok(here.contents, '서 있는 자리의 내용물은 보인다');
+    for (const opportunity of here.contents.opportunities) {
+      assert.equal(typeof opportunity.usesRemaining, 'number', '서 있는 자리는 남은 횟수까지 안다');
+    }
 
-    // 옆방 — "무언가 있다"까지다. 내용물도 출구 상태도 적히지 않는다.
+    // 옆방 — 무엇이 있는지까지다. 남은 횟수와 출구 상태는 값을 치러야 산다.
     for (const nodeId of adjacentIds) {
       const there = refreshed.observations[nodeId];
       assert.equal(there.detailLevel, FREE_OBSERVATION_DETAIL_LEVEL, '옆방의 깊이는 Perception을 타지 않는다');
-      assert.equal(there.contents, undefined, '공짜 시야는 방 안을 읽지 않는다');
+      assert.ok(there.contents, '공짜 시야도 무엇이 있는지는 읽는다');
+      for (const opportunity of there.contents.opportunities) {
+        assert.equal(opportunity.usesRemaining, undefined, '남은 횟수는 무료 시야가 주지 않는다');
+        assert.ok(opportunity.grade === 'supply' || opportunity.grade === 'prize');
+      }
       assert.equal(there.exitStatus, undefined, '출구 상태도 공짜로는 읽히지 않는다');
-      assert.equal(typeof there.hasThreat, 'boolean', '위협 유무만은 보인다');
+      assert.equal(typeof there.hasThreat, 'boolean', '위협 유무는 보인다');
+      assert.equal(typeof there.threatCount, 'number', '그룹 수도 보인다');
     }
+  }
+});
+
+test('Perception 2 이상이면 무료 시야가 한 홉 더 뻗고, 그 두 번째 홉은 위협 유무까지다', () => {
+  const run = makeRun(1);
+  const hops = bfsHopDistances(run.graph.edges, run.playerNodeId);
+  const twoHopIds = [...hops.entries()].filter(([, hop]) => hop === 2).map(([id]) => id);
+  assert.ok(twoHopIds.length > 0, '시드에 2홉 노드가 있어야 한다');
+
+  const narrow = refreshLocalObservations(run, 1);
+  for (const nodeId of twoHopIds) {
+    assert.equal(narrow.observations[nodeId], undefined, 'Perception 1은 두 번째 홉을 보지 못한다');
+  }
+
+  const wide = refreshLocalObservations(run, 2);
+  for (const nodeId of twoHopIds) {
+    const there = wide.observations[nodeId];
+    assert.ok(there, 'Perception 2는 두 번째 홉을 본다');
+    assert.equal(there.detailLevel, FREE_FAR_OBSERVATION_DETAIL_LEVEL, '두 번째 홉은 유무까지다');
+    assert.equal(there.contents, undefined, '두 번째 홉은 방 안을 읽지 않는다');
+    assert.equal(there.threatCount, undefined, '두 번째 홉은 그룹 수도 모른다');
+    assert.equal(typeof there.hasThreat, 'boolean');
   }
 });
 
@@ -228,6 +261,33 @@ test('무료 인접 관측도 내용물을 적는다 — 현재 노드와 인접
   assert.ok(contents, '서 있는 자리의 내용물이 없다');
   const expectedIds = run.graph.opportunities.filter((o) => o.nodeId === run.playerNodeId && o.usesRemaining > 0).map((o) => o.id);
   assert.deepEqual(contents.opportunities.map((o) => o.id), expectedIds);
+
+  // 인접 1홉도 장치의 존재를 적는다 — 카메라·인터페이스·발전기가 있다는 것까지.
+  const adjacentWithDevice = run.graph.edges
+    .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
+    .map((e) => (e.from === run.playerNodeId ? e.to : e.from))
+    .find((id) => run.graph.cameras.some((c) => c.nodeId === id) || run.graph.accessInterfaces.some((i) => i.nodeId === id));
+  if (adjacentWithDevice) {
+    assert.ok(refreshed.observations[adjacentWithDevice].contents.devices.length > 0, '옆방의 장치 존재가 적히지 않았다');
+  }
+});
+
+test('얕은 무료 관측이 지나가도 정찰이 적어둔 남은 횟수는 지워지지 않는다', () => {
+  const run = makeRun(1);
+  const adjacentId = run.graph.edges
+    .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
+    .map((e) => (e.from === run.playerNodeId ? e.to : e.from))
+    .find((id) => run.graph.opportunities.some((o) => o.nodeId === id && o.usesRemaining > 0));
+  assert.ok(adjacentId, '시드의 인접 노드에 현장 기회가 하나는 있어야 한다');
+
+  const scouted = scout({ ...run, playerNodeId: adjacentId }, 2);
+  const known = scouted.observations[adjacentId].contents.opportunities[0];
+  assert.equal(typeof known.usesRemaining, 'number');
+
+  // 원래 자리로 돌려놓고 공짜 시야만 한 번 갱신한다.
+  const refreshed = refreshLocalObservations({ ...scouted, playerNodeId: run.playerNodeId }, 0);
+  const after = refreshed.observations[adjacentId].contents.opportunities.find((o) => o.id === known.id);
+  assert.equal(after.usesRemaining, known.usesRemaining, '무료 관측이 정찰의 남은 횟수를 지웠다');
 });
 
 test('정보 깊이 표의 레벨은 오름차순이고 항목은 누적이다', () => {

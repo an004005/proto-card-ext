@@ -45,6 +45,7 @@ import {
   WAIT_TICK_TIME, ENCOUNTER_EVADE_TIME, BASIC_RECON_HOP_RANGE, CONTRACT_DETONATE_MIN_HOPS,
   PERCEPTION_INFO_TABLE, FREE_OBSERVATION_DETAIL_LEVEL, PERCEPTION_WAIT_OBSERVATION_MIN,
   HUNTER_MOVE_INTERVAL, HUNTER_LOSE_TICKS, HUNTER_SIGHT_HOPS, HUNTER_STEALTH_THRESHOLD,
+  FREE_FAR_OBSERVATION_DETAIL_LEVEL, CURRENT_NODE_DETAIL_LEVEL, PERCEPTION_FREE_FAR_VIEW_MIN,
 } from '../data/facilityLayout.js';
 import { adjacentSectorIds } from './facilityGraph.js';
 
@@ -264,11 +265,31 @@ export function keepsObservationWhileWaiting(effectivePerception) {
  * @param {Partial<import('./types.js').NodeObservation>} patch
  * @returns {Record<string, import('./types.js').NodeObservation>} 새 맵
  */
+/**
+ * 두 내용물 기록을 합친다. 새 기록이 "무엇이 있는가"의 최신 진실이므로 목록 자체는 새것을
+ * 쓰되, 얕은 기록이 비워 둔 항목(정찰이 사는 남은 횟수)은 예전에 알아낸 값을 남긴다 — 그러지
+ * 않으면 정찰한 노드 옆을 한 번 지나가는 것만으로 4칸을 들여 산 정보가 지워진다.
+ * @param {import('./types.js').NodeContents|undefined} previous
+ * @param {import('./types.js').NodeContents} next
+ * @returns {import('./types.js').NodeContents}
+ */
+function mergeContents(previous, next) {
+  if (!previous) return next;
+  const before = new Map((previous.opportunities || []).map((entry) => [entry.id, entry]));
+  return {
+    opportunities: (next.opportunities || []).map((entry) => (entry.usesRemaining === undefined && before.get(entry.id)?.usesRemaining !== undefined
+      ? { ...entry, usesRemaining: before.get(entry.id).usesRemaining }
+      : entry)),
+    devices: next.devices || [],
+  };
+}
+
 export function mergeObservation(observations, nodeId, patch) {
   const previous = observations[nodeId];
   const merged = { ...previous };
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
+    if (key === 'contents') { merged.contents = mergeContents(previous?.contents, /** @type {any} */ (value)); continue; }
     // detailLevel만은 덮어쓰지 않고 더 깊은 쪽을 남긴다. 값을 치른 정찰이 적어둔 항목들은
     // 얕은 무료 관측이 지나가도 그대로 남으므로(패치에 없는 키는 보존), 깊이도 함께 남아
     // 있어야 UI가 그 항목을 계속 그릴 수 있다.
@@ -284,44 +305,68 @@ export function refreshLocalObservations(run, effectivePerception = 0) {
   // 인접 노드의 위협 정보는 대기 전에 마지막으로 본 그대로 낡는다(observationSuspended).
   // 예외는 Perception 2 이상이다 — 그때는 기다리는 동안에도 인접 1홉이 실시간으로 유지된다.
   const nearNodeIds = new Set([run.playerNodeId]);
+  /** Perception 2 이상이 한 홉 더 보는 자리 — 여기는 위협 유무까지다. */
+  const farNodeIds = new Set();
   if (run.lastWaitEndedAt == null || keepsObservationWhileWaiting(effectivePerception)) {
     for (const e of run.graph.edges) {
       if (e.from === run.playerNodeId) nearNodeIds.add(e.to);
       else if (e.to === run.playerNodeId) nearNodeIds.add(e.from);
     }
+    if ((effectivePerception ?? 0) >= PERCEPTION_FREE_FAR_VIEW_MIN) {
+      for (const e of run.graph.edges) {
+        if (nearNodeIds.has(e.from) && !nearNodeIds.has(e.to)) farNodeIds.add(e.to);
+        else if (nearNodeIds.has(e.to) && !nearNodeIds.has(e.from)) farNodeIds.add(e.from);
+      }
+    }
   }
-  const threatNodeIds = new Set(Object.values(run.threats).map((t) => t.nodeId));
+  /** @type {Record<string, number>} */
+  const threatCountByNodeId = {};
+  for (const threat of Object.values(run.threats)) {
+    threatCountByNodeId[threat.nodeId] = (threatCountByNodeId[threat.nodeId] || 0) + 1;
+  }
   /** @type {Record<string, import('./types.js').ExitRuntimeState>} */
   const exitByNodeId = {};
   for (const exit of Object.values(run.exits)) exitByNodeId[exit.nodeId] = exit;
   let observations = { ...run.observations };
   for (const nodeId of nearNodeIds) {
     const exit = exitByNodeId[nodeId];
+    const count = threatCountByNodeId[nodeId] || 0;
     // 기존 관측을 **병합**한다. 통째로 교체하면 정찰(basicRecon)이 같은 노드에 적어둔
     // concealment 같은 항목이 바로 다음 행동의 이 갱신에서 지워져, 정찰 산출이 0이 되고
     // 은엄폐 버튼(scouted 조건)이 영영 뜨지 않는다. 이 함수는 "시야에 든 노드의 최신
     // 위협·출구 상태"만 덮어쓰는 책임이다.
     //
-    // 서 있는 자리와 옆방은 다르다. 발로 딛고 선 노드는 방 안에 무엇이 있는지 다 보이므로
-    // 내용물과 출구 상태를 깊이 1로 적는다. 인접 노드는 **거기 무언가 있다**까지다 — 공짜
-    // 시야가 방 안까지 읽어 주면 정찰·투시·카메라가 무엇을 파는지가 읽히지 않는다.
+    // 서 있는 자리와 옆방은 다르다(ADR-0090). 발로 딛고 선 노드는 방 안을 다 보므로 내용물을
+    // 남은 횟수까지 적고 깊이도 규모까지다. 옆방은 위협 유무·그룹 수·모드와 **무엇이 있는지**
+    // (보급품·확보 대상·장치의 존재)까지이고, 그것이 무엇인지(등급·역할축·남은 횟수)는 값을
+    // 치른 관측이 판다.
     if (nodeId === run.playerNodeId) {
       observations = mergeObservation(observations, nodeId, {
         observedAt: run.time,
-        hasThreat: threatNodeIds.has(nodeId),
+        hasThreat: count > 0,
+        threatCount: count,
         exitStatus: exit?.kind === 'standard' ? exit.status : undefined,
-        detailLevel: 1,
+        detailLevel: CURRENT_NODE_DETAIL_LEVEL,
         contents: nodeContentsAt(run, nodeId),
       });
     } else {
       observations = mergeObservation(observations, nodeId, {
         observedAt: run.time,
-        hasThreat: threatNodeIds.has(nodeId),
-        // 공짜로 얻는 정보의 깊이는 Perception과 무관하게 0으로 고정이다 — 빌드에 따라
-        // 달라지면 "정찰을 할 것인가"라는 결정 자체가 흐려진다.
+        hasThreat: count > 0,
+        threatCount: count,
+        // 공짜로 얻는 깊이는 Perception과 무관하게 고정이다 — 빌드에 따라 달라지면 "정찰을
+        // 할 것인가"라는 결정 자체가 흐려진다. Perception이 늘리는 것은 깊이가 아니라 사거리다.
         detailLevel: FREE_OBSERVATION_DETAIL_LEVEL,
+        contents: nodeContentsAt(run, nodeId, 'presence'),
       });
     }
+  }
+  for (const nodeId of farNodeIds) {
+    observations = mergeObservation(observations, nodeId, {
+      observedAt: run.time,
+      hasThreat: (threatCountByNodeId[nodeId] || 0) > 0,
+      detailLevel: FREE_FAR_OBSERVATION_DETAIL_LEVEL,
+    });
   }
   return { ...run, observations };
 }
@@ -415,12 +460,16 @@ export function refreshActiveRecon(run) {
  * 장치 상태(status)는 그 시각의 값이다 — 기록이 "마지막으로 확인한 것"이라는 결을 지킨다.
  * @param {import('./types.js').FacilityRunState} run
  * @param {string} nodeId
+ * @param {'full'|'presence'} [depth] `presence`는 무료 인접 시야가 읽는 깊이다 — 무엇이 있는지는
+ *   적지만 남은 횟수는 적지 않는다(그것은 정찰이 판다).
  * @returns {import('./types.js').NodeContents}
  */
-export function nodeContentsAt(run, nodeId) {
+export function nodeContentsAt(run, nodeId, depth = 'full') {
   const opportunities = run.graph.opportunities
     .filter((opportunity) => opportunity.nodeId === nodeId && opportunity.usesRemaining > 0)
-    .map((opportunity) => ({ id: opportunity.id, grade: opportunity.grade, usesRemaining: opportunity.usesRemaining }));
+    .map((opportunity) => (depth === 'full'
+      ? { id: opportunity.id, grade: opportunity.grade, usesRemaining: opportunity.usesRemaining }
+      : { id: opportunity.id, grade: opportunity.grade }));
   /** @type {import('./types.js').ObservedDevice[]} */
   const devices = [];
   for (const camera of run.graph.cameras) {

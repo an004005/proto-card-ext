@@ -17,7 +17,7 @@ import { effectiveCapabilities, computeCapabilities, listFieldActiveEquipment } 
 import { bfsHopDistances, bfsHopDistancesOverArcs, isEdgeUnlocked, shortestPathOverArcs, baselineWalkArcs } from '../engine/graphUtils.js';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_PADDING, NODE_RADIUS, PASSAGE_TYPES, layoutPositions, edgePath } from './mapLayout.js';
 import {
-  canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
+  canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted, perceptionInfo,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
   explainEffectiveStealth, detailIncludes, highGroundMobility, nodeContentsAt,
   deviceStatus, canClimbHighGround, interfaceCameraRevealHops, describeHunters, isHunter,
@@ -604,7 +604,8 @@ const DEVICE_STATUS_LABELS = {
  * 등급·역할축만이 정찰이 사는 깊이다 — 정찰 전에는 "등급·역할축 미확인"이다.
  */
 function opportunityRow(run, nodeId, opp, debugReveal) {
-  const uses = `${opp.usesRemaining}회 남음`;
+  // 남은 횟수는 값을 치른 관측과 서 있는 노드만 안다 — 공짜 인접 시야는 "있다"까지다(ADR-0090).
+  const uses = opp.usesRemaining == null ? '남은 횟수 미확인' : `${opp.usesRemaining}회 남음`;
   if (opp.grade !== 'prize') {
     return { kind: 'opportunity', icon: 'supply', tone: 'plain', title: '보급품', detail: uses };
   }
@@ -665,7 +666,12 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
   const exit = exitByNode[n.id];
   const live = debugReveal || knowledge === 'current' || knowledge === 'fresh';
   const hasThreat = live ? (threatsByNode[n.id] || []).length > 0 : !!run.observations[n.id]?.hasThreat;
-  const threatCount = live ? (threatsByNode[n.id] || []).length : (run.observations[n.id]?.hasThreat ? null : 0);
+  // 그룹 수는 무료 인접 시야가 주는 정보다(ADR-0090) — 시야 밖으로 나가도 마지막으로 센 수가
+  // 관측 기록에 남는다. 그보다 얕게(두 번째 홉) 본 자리만 수를 모른 채 유무만 안다.
+  const observedCount = run.observations[n.id]?.threatCount;
+  const threatCount = live
+    ? (threatsByNode[n.id] || []).length
+    : (observedCount ?? (run.observations[n.id]?.hasThreat ? null : 0));
   const observedAt = run.observations[n.id]?.observedAt;
   const knowledgeLabel = {
     current: '현재 위치',
@@ -2126,7 +2132,7 @@ export function MapScreen() {
                     <${ActionButton}
                       run=${run} actionId="recon"
                       label="기본 정찰"
-                      tip="현재 노드와 인접 노드에 위협이 있는지 없는지만 확인합니다(정확한 수·경계 상태는 알 수 없음). 소음 없이 항상 성공하며, 완료 시점의 상태를 관측합니다. 도중에 적이 도착하면 중단되어 아무것도 얻지 못합니다."
+                      tip=${`무료 인접 시야가 이미 위협 유무·그룹 수·모드와 무엇이 놓여 있는지를 알려줍니다. 정찰이 사는 것은 그 다음의 **깊이**입니다 — 확보 대상의 등급·역할축, 현장 기회의 남은 횟수, 은엄폐 값, 시체·흔적, 위협의 규모·경계·다음 이동${perceptionInfo(capabilities.perception).reconHops > 1 ? ' · 구성' : ''}. 사거리는 ${perceptionInfo(capabilities.perception).reconHops}홉(Perception ${capabilities.perception})이고, 정찰 중에는 대기 중에도 그 자리가 실시간으로 유지됩니다. 소음 없이 항상 성공하지만 도중에 적이 도착하면 중단되어 아무것도 얻지 못합니다.`}
                       onClick=${() => runCommand({ type: 'BASIC_RECON' })}
                     />
                     ${run.activeRecon ? html`

@@ -624,10 +624,10 @@ export const APPROACH_MIN_TIME = 1;
 
 export const BASIC_RECON_TIME = 2;
 // 기본 정찰의 표준 홉 범위 — 현재 노드 + 1홉. 무료 인접 실시간 관측도 1홉이므로, Perception
-// 0~2에서 정찰이 사는 것은 **사거리가 아니라 깊이**다: 무료 관측이 "무언가 있다"까지라면 정찰은
-// 그 자리의 내용물과 위협 상세를 읽는다. 사거리를 더 사려면 Perception 3 이상이어야 한다
-// (PERCEPTION_INFO_TABLE에서 2홉). 이 상수는 Perception 0~2의 값이자 호출부가 수치를 모를 때의
-// 기본값이다.
+// 0~2에서 정찰이 사는 것은 **사거리가 아니라 깊이**다: 무료 관측이 "무엇이 있다"까지라면 정찰은
+// 그것이 무엇인지(등급·역할축·남은 횟수)와 위협 상세를 읽는다. 사거리를 더 사려면 Perception
+// 3 이상이어야 한다(PERCEPTION_INFO_TABLE에서 2홉). 이 상수는 Perception 0~2의 값이자 호출부가
+// 수치를 모를 때의 기본값이다.
 export const BASIC_RECON_HOP_RANGE = 1;
 
 // ---- 정보의 깊이 (ADR-0079 계열, Perception) ----
@@ -646,50 +646,56 @@ export const BASIC_RECON_HOP_RANGE = 1;
 // threat/extra의 각 항목은 누적이다(상위 레벨이 하위를 전부 포함한다).
 /**
  * @typedef {Object} PerceptionInfoLevel
- * @property {number} level 0~5. 관측 기록의 detailLevel.
+ * @property {number} level 0~6. 관측 기록의 detailLevel.
  * @property {number} reconHops 정찰 사거리(홉).
- * @property {('presence'|'size'|'mode'|'alert'|'nextMove'|'composition'|'patrolNext')[]} threat 위협에 대해 읽히는 항목.
+ * @property {('presence'|'count'|'mode'|'size'|'alert'|'nextMove'|'composition'|'patrolNext')[]} threat 위협에 대해 읽히는 항목.
  * @property {('prizeGrade'|'prizeAxis'|'concealment'|'evidence')[]} extra 사거리 안에서 함께 드러나는 것.
  */
 /** @type {PerceptionInfoLevel[]} */
 export const PERCEPTION_INFO_TABLE = [
   // -2
-  { level: 0, reconHops: 1, threat: ['presence'], extra: [] },
+  { level: 1, reconHops: 1, threat: ['presence', 'count', 'mode'], extra: [] },
   // -1
-  { level: 0, reconHops: 1, threat: ['presence'], extra: [] },
+  { level: 1, reconHops: 1, threat: ['presence', 'count', 'mode'], extra: [] },
   // 0
-  { level: 1, reconHops: 1, threat: ['presence', 'size'], extra: ['prizeGrade'] },
+  { level: 2, reconHops: 1, threat: ['presence', 'count', 'mode', 'size'], extra: ['prizeGrade'] },
   // 1
-  { level: 2, reconHops: 1, threat: ['presence', 'size', 'mode'], extra: ['prizeGrade', 'prizeAxis'] },
+  { level: 3, reconHops: 1, threat: ['presence', 'count', 'mode', 'size'], extra: ['prizeGrade', 'prizeAxis'] },
   // 2
-  { level: 3, reconHops: 1, threat: ['presence', 'size', 'mode', 'alert', 'nextMove'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
+  { level: 4, reconHops: 1, threat: ['presence', 'count', 'mode', 'size', 'alert', 'nextMove'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
   // 3
-  { level: 4, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
+  { level: 5, reconHops: 2, threat: ['presence', 'count', 'mode', 'size', 'alert', 'nextMove', 'composition'], extra: ['prizeGrade', 'prizeAxis', 'concealment'] },
   // 4
-  { level: 5, reconHops: 2, threat: ['presence', 'size', 'mode', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'evidence'] },
+  { level: 6, reconHops: 2, threat: ['presence', 'count', 'mode', 'size', 'alert', 'nextMove', 'composition', 'patrolNext'], extra: ['prizeGrade', 'prizeAxis', 'concealment', 'evidence'] },
 ];
 
-// 장치(카메라·접속 인터페이스·발전기)와 현장 기회의 **존재**는 이 표에 없다. **값을 치른**
-// 관측이 닿기만 하면 Perception 깊이와 무관하게 관측 기록의 `contents`에 적힌다 — 방 안에
-// 무엇이 놓여 있는지까지 Perception으로 가리면 "정찰은 무엇을 사는가"가 읽히지 않는다.
-// Perception이 가르는 것은 그 다음의 깊이뿐이다: 위협 상세, 확보 대상의 등급·역할축, 은엄폐 값.
+// ---- 무료 관측이 주는 것 (ADR-0090) ----
 //
-// 다만 "값을 치른"이 조건이다. 공짜 인접 시야는 내용물을 적지 않고 위협 유무만 적는다
-// (FREE_OBSERVATION_DETAIL_LEVEL) — 내용물은 정찰·집중 투시·카메라·인터페이스가 파는 것이다.
-// 서 있는 노드만은 공짜로도 내용물이 보인다: 그 방 안에 서 있기 때문이다.
+// 공짜 인접 시야는 더 이상 "저기 무언가 있다" 하나가 아니다. 옆방에 대해 **위협 유무·그룹 수·
+// 위협 모드**와 **내용물의 존재**(보급품·확보 대상이 있다, 카메라·인터페이스·발전기가 있다)를
+// 준다. 정찰을 "누르지 않으면 눈을 감고 걷는 버튼"에서 "더 알고 싶을 때 고르는 선택지"로
+// 되돌리려는 것이다.
+//
+// 정찰이 사는 것은 그 다음이다: 확보 대상의 등급·역할축, 현장 기회의 남은 횟수, 은엄폐 값,
+// 시체·흔적, 위협의 규모·경계·다음 이동·구성·다음 목적지, Perception 3 이상의 두 번째 홉,
+// 그리고 대기 중에도 끊기지 않는 실시간 유지. 즉 정찰이 파는 것은 **깊이**와 **유지**다.
+//
+// 장치와 현장 기회의 **존재**는 이 표 밖이다 — 관측이 닿기만 하면 Perception과 무관하게
+// 관측 기록의 `contents`에 적힌다. 표가 가르는 것은 그 다음의 깊이다.
 
-// 무료 인접 관측은 Perception과 무관하게 이 깊이로 고정이다 — **유무까지**, 그 이상은 없다.
-// 공짜 시야가 말해 주는 것은 "저기 무언가 있다" 하나뿐이고, 방 안에 무엇이 놓여 있는지(현장
-// 기회·장치)와 그 너머의 깊이는 전부 값을 치러야 산다: 정찰, 집중 투시, 해킹한 카메라,
-// 접속 인터페이스. 값을 치르지 않고 얻는 정보가 빌드에 따라 달라지면 "정찰을 할 것인가"라는
-// 결정 자체가 흐려지므로 Perception도 타지 않는다.
-//
-// 서 있는 노드는 예외다 — 발로 딛고 선 방은 다 보이므로 내용물과 출구 상태를 깊이 1로 적는다
-// (runEngine.refreshLocalObservations). 이 상수가 정하는 것은 **인접** 노드의 깊이다.
-export const FREE_OBSERVATION_DETAIL_LEVEL = 0;
+/** 인접 1홉의 무료 시야가 남기는 깊이 — 위협 유무·그룹 수·모드와 내용물의 존재까지. */
+export const FREE_OBSERVATION_DETAIL_LEVEL = 1;
+/** 두 번째 홉의 무료 시야가 남기는 깊이 — 위협 유무만(표에 없는 최저 깊이). */
+export const FREE_FAR_OBSERVATION_DETAIL_LEVEL = 0;
+/** 서 있는 노드의 깊이 — 방 안에 있으므로 규모까지 읽힌다. */
+export const CURRENT_NODE_DETAIL_LEVEL = 2;
 
 // 이 수치 이상이면 대기 중에도 인접 1홉의 실시간 관측이 끊기지 않는다(대기 관측 차단의 예외).
 export const PERCEPTION_WAIT_OBSERVATION_MIN = 2;
+/** 이 수치 이상이면 무료 시야가 한 홉 더 뻗는다 — 두 번째 홉은 위협 유무까지다. */
+export const PERCEPTION_FREE_FAR_VIEW_MIN = 2;
+/** 그 두 번째 홉의 사거리. */
+export const FREE_FAR_VIEW_HOPS = 2;
 
 // 대기와 조우 회피. 대기는 HP·경계도를 회복시키지 않는다 — 개방·쿨다운·적 위치를
 // 기다리는 용도다. 묶음 대기는 1칸 대기를 반복하며 새 조우·출구 개방/폐쇄·붕괴에서 즉시 멈춘다.
