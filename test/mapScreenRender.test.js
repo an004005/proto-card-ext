@@ -11,7 +11,7 @@ import { register } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState } from '../src/engine/runEngine.js';
-import { RUN_COLLAPSE_TIME } from '../src/data/facilityLayout.js';
+import { RUN_COLLAPSE_TIME, BASIC_RECON_TIME } from '../src/data/facilityLayout.js';
 import { finishTaskSnapshot } from './helpers/finishTask.js';
 
 const projectUrl = (path) => new URL(path, import.meta.url).href;
@@ -71,7 +71,7 @@ test('초기 상태(pendingTask·lastTaskOutcome·engagedThreatId가 전부 null
   assert.ok(!text.includes('가장 이른 마감'), '접두어 없이 마감 자체를 적는다');
   assert.ok(!text.includes('폐쇄까지'), '가장 이른 마감으로 적은 출구를 뒤에서 또 세면 안 된다');
   assert.ok(text.includes('앞으로 15칸'), '타임라인 블록이 보여야 한다');
-  assert.ok(text.includes('기본 정찰 · 4칸'), '예고가 붙은 행동 버튼이 보여야 한다');
+  assert.ok(text.includes(`기본 정찰 · ${BASIC_RECON_TIME}칸`), '예고가 붙은 행동 버튼이 보여야 한다');
 });
 
 /** 현재 노드 패널의 접이식 묶음 머리를 눌러 연다/닫는다 — 기본 접힘인 묶음의 내용을 보려면 필요하다. */

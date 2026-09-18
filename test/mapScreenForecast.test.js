@@ -26,7 +26,7 @@ import {
 } from '../src/engine/mapTimeline.js';
 import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
-import { RUN_COLLAPSE_TIME, CONTRACT_DETONATE_MIN_HOPS } from '../src/data/facilityLayout.js';
+import { RUN_COLLAPSE_TIME, CONTRACT_DETONATE_MIN_HOPS, BASIC_RECON_TIME } from '../src/data/facilityLayout.js';
 import { adjacentSectorIds } from '../src/engine/facilityGraph.js';
 import { bfsHopDistances } from '../src/engine/graphUtils.js';
 import { finishTask } from './helpers/finishTask.js';
@@ -271,7 +271,7 @@ test('등급을 모르는 확보 대상만 범위로 예고하고, 실제 청구
 
 test('예고 문장은 최종 칸과 그 분해를 함께 말한다', () => {
   // 분해가 최종값과 어긋나면 플레이어는 둘 중 무엇을 믿어야 할지 알 수 없다.
-  assert.equal(describeForecast(forecastAction('recon'), '정찰'), '정찰 4칸');
+  assert.equal(describeForecast(forecastAction('recon'), '정찰'), `정찰 ${BASIC_RECON_TIME}칸`);
   const surplus = forecastAction('openEdge', { value: 2, capabilityKind: 'hacking', edge: { requiredCapability: 1 }, mode: 'normal' });
   assert.equal(describeForecast(surplus, '문 해킹'), `문 해킹 ${surplus.timeCost}칸 = 기본 ${surplus.baseTime} − 능력 1`);
   // 이동은 가감이 없으므로 분해가 붙지 않는다 — 언제나 1칸이다(ADR-0084).
