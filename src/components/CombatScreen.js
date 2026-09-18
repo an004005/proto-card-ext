@@ -24,6 +24,18 @@ import { PileListPopup } from './PileListPopup.js';
 /** 전투 중 마감 배너를 띄우는 시간 창(칸). 한 턴이 3칸이니 다섯 턴 남짓이다. */
 const COMBAT_DEADLINE_BANNER_WINDOW = 15;
 
+/**
+ * 전투 머리의 "라운드 N · 이 전투 T칸". 첫 플레이어 턴이 1라운드이고, 맵 시간은 라운드가
+ * 끝날 때마다 나가므로 아직 아무 라운드도 정산되지 않은 1라운드에는 0칸이다 — 시계만 보면
+ * "이 전투에 이미 얼마를 썼나"를 알 수 없다.
+ * @param {number} turn 현재 라운드 번호(1부터)
+ * @param {number} roundCost 라운드 하나가 쓰는 맵 칸
+ */
+export function combatTimeSpentText(turn, roundCost) {
+  const rounds = Math.max(0, (turn || 1) - 1);
+  return `라운드 ${Math.max(1, turn || 1)} · 이 전투 ${rounds * roundCost}칸`;
+}
+
 export function CombatScreen() {
   const [draggingCard, setDraggingCard] = useState(null);
   const [showInventory, setShowInventory] = useState(false);
@@ -98,6 +110,9 @@ export function CombatScreen() {
         <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
           <h3 style=${{ margin: 0 }}>전투 — ${enemyNames}</h3>
           ${run ? html`<${MapClock} run=${run} countdowns=${countdowns} compact=${true} />` : null}
+          <${Tooltip} width=${260} content=${`전투는 1라운드마다 맵 시간 ${COMBAT_ROUND_TIME_COST}칸이 흐릅니다. 위 시계의 마감은 그동안에도 다가옵니다.`}>
+            <span style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', whiteSpace: 'nowrap' }}>${combatTimeSpentText(combat.turn, COMBAT_ROUND_TIME_COST)}</span>
+          <//>
           <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 10px' }} onClick=${() => setShowInventory(true)}>인벤토리</button>
           <label style=${{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px' }}>
             <span>연출</span>

@@ -74,6 +74,10 @@ export function installMiniDom() {
   globalThis.Element = MiniElement;
   globalThis.Text = MiniText;
   if (!globalThis.window) globalThis.window = globalThis;
+  // 컴포넌트가 useEffect에서 window에 키/리사이즈 리스너를 거는 일이 있다 — Node의 globalThis에는
+  // 이 둘이 없어서, 없으면 아무 일도 하지 않는 자리만 채워 준다.
+  if (typeof globalThis.window.addEventListener !== 'function') globalThis.window.addEventListener = () => {};
+  if (typeof globalThis.window.removeEventListener !== 'function') globalThis.window.removeEventListener = () => {};
   return document;
 }
 export function makeRoot() { return new MiniElement('div'); }
