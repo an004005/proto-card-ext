@@ -225,15 +225,23 @@ test('정찰은 Perception과 무관하게 노드의 내용물을 기록한다 �
   // Perception 3의 2홉 사거리로 본다 — 1홉 안은 무료 인접 관측이 이미 닿아 "정찰이 새로 적었다"를
   // 보여주지 못한다.
   const perception = 3;
-  const run = makeRun(1);
-  const hops = bfsHopDistances(run.graph.edges, run.playerNodeId);
   const reconHops = perceptionInfo(perception).reconHops;
-  const inRange = (nodeId) => (hops.get(nodeId) ?? Infinity) <= reconHops;
-
-  const supply = run.graph.opportunities.find((o) => o.grade !== 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
-  const prize = run.graph.opportunities.find((o) => o.grade === 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
-  const camera = run.graph.cameras.find((c) => inRange(c.nodeId));
-  assert.ok(supply && prize && camera, `시드 1의 ${reconHops}홉 안에 보급품·확보 대상·카메라가 하나씩은 있어야 이 검사가 성립한다`);
+  // 시작점 2홉 안에 세 가지가 다 있는 시드를 찾아 쓴다 — 어느 시드가 그런지는 생성 난수에
+  // 달려 있어서 고정 시드로 박아 두면 무관한 변경마다 이 검사가 깨진다.
+  const found = (() => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const run = makeRun(seed);
+      const hops = bfsHopDistances(run.graph.edges, run.playerNodeId);
+      const inRange = (nodeId) => (hops.get(nodeId) ?? Infinity) <= reconHops;
+      const supply = run.graph.opportunities.find((o) => o.grade !== 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
+      const prize = run.graph.opportunities.find((o) => o.grade === 'prize' && o.usesRemaining > 0 && inRange(o.nodeId));
+      const camera = run.graph.cameras.find((c) => inRange(c.nodeId));
+      if (supply && prize && camera) return { run, hops, supply, prize, camera };
+    }
+    return null;
+  })();
+  assert.ok(found, `${reconHops}홉 안에 보급품·확보 대상·카메라가 다 있는 시드를 찾지 못했다`);
+  const { run, hops, supply, prize, camera } = found;
 
   // 정찰 전에는 아무것도 없다 — 인접 무료 관측이 닿는 자리는 빼고 본다.
   const far = [supply, prize, camera].filter((entry) => (hops.get(entry.nodeId) ?? 0) === reconHops);

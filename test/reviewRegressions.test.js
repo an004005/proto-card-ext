@@ -55,7 +55,10 @@ test('a retrieval contract is not completed by acting at the objective — only 
     id: `g${i}`, kind: 'contractGoods', contractId: contract.id, value: contract.goodsValuePerSlot,
   }));
   const run = {
+    // 위협은 이 테스트의 주제가 아니다. 두면 목표부에 마커가 걸어 들어와 조우가 먼저 열리고
+    // 이동 자체가 막혀, 보려는 "출구를 밟아야 완료된다"에 닿지 못한다.
     ...base,
+    threats: {},
     playerNodeId: landmark.nodeId,
     contract: { ...contract, status: 'acquired', acquiredAt: base.time },
   };

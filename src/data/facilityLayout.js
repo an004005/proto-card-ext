@@ -27,8 +27,8 @@ export const SECTOR_NAMES = {
 };
 
 // ---- 구역별 배치 원형 (D6·D18·D20) ----
-// 노드 수는 더 이상 구역마다 같지 않다. 크기 자체가 정보다 — 격납고가 14개라는 것은 숨을 데가
-// 없다는 뜻이고, 거주동이 32개인데 복도 비중이 높다는 것은 병목투성이라는 뜻이다.
+// 노드 수는 더 이상 구역마다 같지 않다. 크기 자체가 정보다 — 격납고가 28개라는 것은 숨을 데가
+// 없다는 뜻이고, 거주동이 64개인데 복도 비중이 높다는 것은 병목투성이라는 뜻이다.
 //
 // `archetype`은 src/engine/layoutArchetypes.js의 골격 생성기를 고른다. 모든 원형은 같은 방식으로
 // 만들어진다: 복도 골격을 먼저 놓고(원형마다 모양이 다르다) 그 골격에 방을 매단다.
@@ -45,49 +45,49 @@ export const SECTOR_NAMES = {
 export const SECTOR_LAYOUTS = {
   // 격자 허브 — 갈림길이 많고 안전하다. 어디로 들어갈지 정하는 곳이다.
   entrance: {
-    archetype: 'grid', nodeCount: 34, corridorRatio: 0.45,
+    archetype: 'grid', nodeCount: 68, corridorRatio: 0.45,
     roomTypes: [{ value: 'office', weight: 60 }, { value: 'watch', weight: 15 }, { value: 'utility', weight: 15 }, { value: 'refuge', weight: 10 }],
   },
   // 봉인 격실 사슬 — 격실이 전자문으로 직렬 연결되어 해킹 없이는 우회가 길다.
   labs: {
-    archetype: 'chain', nodeCount: 28, corridorRatio: 0.30,
+    archetype: 'chain', nodeCount: 56, corridorRatio: 0.30,
     roomTypes: [{ value: 'vault', weight: 45 }, { value: 'office', weight: 35 }, { value: 'utility', weight: 20 }],
   },
   // 대공간 — 노드가 적고 크며 시야가 트여 은엄폐가 거의 없다.
   hangar: {
-    archetype: 'hall', nodeCount: 14, corridorRatio: 0.25,
+    archetype: 'hall', nodeCount: 28, corridorRatio: 0.25,
     roomTypes: [{ value: 'office', weight: 50 }, { value: 'utility', weight: 35 }, { value: 'watch', weight: 15 }],
   },
   // 검문 격자 — 짧은 격자지만 통과 지점마다 카메라와 전자문이 겹친다.
   security: {
-    archetype: 'grid', nodeCount: 24, corridorRatio: 0.35,
+    archetype: 'grid', nodeCount: 48, corridorRatio: 0.35,
     roomTypes: [{ value: 'watch', weight: 40 }, { value: 'office', weight: 35 }, { value: 'vault', weight: 25 }],
   },
   // 방사형 — 발전기 중심 회랑이며 중심을 지나지 않는 우회로가 드물다.
   power: {
-    archetype: 'radial', nodeCount: 26, corridorRatio: 0.45,
+    archetype: 'radial', nodeCount: 52, corridorRatio: 0.45,
     roomTypes: [{ value: 'utility', weight: 60 }, { value: 'office', weight: 25 }, { value: 'vault', weight: 15 }],
   },
   // 이중층 — 정규 통로와 비인가 통로가 겹치고 후자는 대가를 요구한다.
   waste: {
-    archetype: 'dual', nodeCount: 30, corridorRatio: 0.40,
+    archetype: 'dual', nodeCount: 60, corridorRatio: 0.40,
     roomTypes: [{ value: 'utility', weight: 50 }, { value: 'office', weight: 30 }, { value: 'refuge', weight: 20 }],
   },
   // 탑 구조 — 올라갈수록 노드가 줄고 정보 가치는 커지며 퇴로가 하나다.
   comms: {
-    archetype: 'tower', nodeCount: 18, corridorRatio: 0.35,
+    archetype: 'tower', nodeCount: 36, corridorRatio: 0.35,
     roomTypes: [{ value: 'watch', weight: 45 }, { value: 'office', weight: 35 }, { value: 'utility', weight: 20 }],
   },
   // 선형 사슬 — 복도가 길고 병목이 많아 마주치면 피할 곳이 적다.
   residential: {
-    archetype: 'chain', nodeCount: 32, corridorRatio: 0.50,
+    archetype: 'chain', nodeCount: 64, corridorRatio: 0.50,
     roomTypes: [{ value: 'refuge', weight: 45 }, { value: 'office', weight: 40 }, { value: 'utility', weight: 15 }],
   },
 };
 
 /**
  * 주어진 구역 조합의 노드 총수. 구역이 런마다 달라지므로 상수가 아니다 — 네 구역 조합은
- * 대략 90~125개 사이에 떨어진다(여덟 구역 전부였던 시절은 206개였다).
+ * 180~248개 사이에 떨어진다(ADR-0088로 구역마다 노드 수를 두 배로 키웠다).
  * @param {readonly string[]} sectorIds
  */
 export function totalNodesFor(sectorIds) {
@@ -98,13 +98,15 @@ export function totalNodesFor(sectorIds) {
 // 구역 중심은 하나의 큰 링 위에 균등 배치한다. 각 구역 내부는 SECTOR_LAYOUTS의 배치 원형에
 // 따라 평면도처럼 생성된다(layoutArchetypes.js) — 더 이상 원판 안 무작위 산포가 아니다.
 // 구역 내부 엣지는 그 평면도가 직접 만들고, 구역과 구역은 관문 노드 한 쌍씩으로만 이어진다.
-export const SECTOR_RING_RADIUS = 900; // 전역 중심에서 각 구역 중심까지 거리.
-export const SECTOR_NODE_RADIUS = 280; // 구역 중심에서 그 구역 평면도가 차지하는 반경.
+export const SECTOR_RING_RADIUS = 1273; // 전역 중심에서 각 구역 중심까지 거리.
+export const SECTOR_NODE_RADIUS = 396; // 구역 중심에서 그 구역 평면도가 차지하는 반경.
 
 // 같은 구역 안에서 두 노드가 이만큼은 떨어져 있어야 한다. 평면도를 반지름 1로 정규화한 뒤의
-// 로컬 단위이므로, 구역 크기와 무관하게 화면상 간격이 같아진다(정규화 좌표 1 = 화면 약 154px).
+// 로컬 단위이므로, 구역 크기와 무관하게 화면상 간격이 같아진다(정규화 좌표 1 = 화면 약 223px).
 // 방을 복도에 매달 때 서로 겹칠 수 있어, 생성 마지막에 이 값을 만족할 때까지 밀어낸다.
-export const NODE_MIN_SEPARATION = 0.17;
+// 구역마다 노드가 두 배가 되면서(ADR-0088) 정규화 면적당 노드 밀도가 두 배가 되므로, 이 값도
+// 면적 기준 √2로 줄였다(0.17 → 0.12). 화면상 간격은 캔버스를 같은 √2로 키워 예전과 같다.
+export const NODE_MIN_SEPARATION = 0.12;
 export const NODE_SEPARATION_PASSES = 24;
 
 // 배치 원형이 구조적으로 항상 놓는 특수 엣지의 개수. 무작위 특수 엣지와 달리 시드와 무관하게
@@ -120,7 +122,8 @@ export const TOWER_ELEVATOR_REQUIREMENT = 3;
 // 탑 구조는 1층만 바깥으로 열려 있다. 계단은 층과 층만 잇고 위층 방은 자기 층에만 붙으므로,
 // 다른 구역으로 나가는 길과 구역 간 특수 엣지는 전부 1층 로비를 지나야 한다. 로비가 노드
 // 하나뿐이면 그 한 점에 연결이 몰려 차수 상한에 걸리므로, 1층에는 방을 이만큼 먼저 붙인다.
-export const TOWER_LOBBY_ROOMS = 4;
+// 탑의 노드 수와 함께 두 배로 키운다(ADR-0088) — 층이 두 배가 되면 로비로 모이는 연결도 는다.
+export const TOWER_LOBBY_ROOMS = 8;
 
 // 로비 방이 1층 복도에서 떨어지는 거리 배수. 탑은 위아래로 길어서 정규화하면 가로 폭이 크게
 // 줄어든다. 기본 간격 그대로 두면 로비 노드들이 최소 간격에 딱 붙은 덩어리로 보이므로, 1층만
@@ -153,9 +156,11 @@ export const BASE_EDGE_DEGREE_HARD_CAP = 4;
 // 생성을 통째로 다시 돌린다(GENERATION_MAX_ATTEMPTS).
 export const EXIT_PLACEMENT_MAX_ATTEMPTS = 24;
 
-// 구역 "내부" 특수 엣지 (기존과 동일한 배치 방식 — 같은 구역 노드 풀에서만 고름).
-export const SPECIAL_EDGES_PER_SECTOR_MIN = 4;
-export const SPECIAL_EDGES_PER_SECTOR_MAX = 6;
+// 구역 "내부" 특수 엣지 (기존과 동일한 배치 방식 — 같은 구역 노드 풀에서만 고름). 구역 노드가
+// 두 배가 되었으므로 개수도 두 배다(ADR-0088) — 구역을 걸어 다니며 특수 통로를 만나는 빈도가
+// 예전과 같아야 "이 구역에는 지름길이 몇 개쯤 있다"는 감각이 유지된다.
+export const SPECIAL_EDGES_PER_SECTOR_MIN = 8;
+export const SPECIAL_EDGES_PER_SECTOR_MAX = 12;
 
 // 구역 "사이" 특수 엣지 — 링에서 맞닿은 각 쌍마다, 두 구역 풀에서 각각 하나씩 뽑아 잇는다.
 export const CROSS_SECTOR_SPECIAL_EDGES_MIN = 2;
@@ -326,9 +331,11 @@ export const GENERATOR_COMBAT_START_ARMOR = 5;
 // Mobility는 고지대 통과·조우 회피·회수 계약의 판정 통화로 남는다.
 
 // 초기 위협 배치 — 구역 정원이다. 뽑힌 구역만 채워지므로 한 런의 총 위협 수는 조합에 따라
-// 다르다(입구 3 + 나머지 세 구역의 합, 12~16).
+// 다르다(입구 6 + 나머지 세 구역의 합, 24~32). 구역 노드가 두 배가 되었으므로 정원도 두 배다
+// (ADR-0088) — 노드당 위협 밀도가 그대로여야 "이 구역은 빽빽하다"는 상대 비교가 유지된다.
+// 증원 로스터(graph.threats)도 이 정원 그대로이므로 함께 두 배가 된다.
 export const THREAT_COUNT_BY_SECTOR = {
-  entrance: 3, labs: 3, hangar: 3, security: 4, power: 5, waste: 4, comms: 3, residential: 3,
+  entrance: 6, labs: 6, hangar: 6, security: 8, power: 10, waste: 8, comms: 6, residential: 6,
 };
 export const THREAT_MIN_HOPS_FROM_START = 3; // "시작점 2홉 안에 배치하지 않는다" -> 최소 3홉.
 export const THREAT_MIN_HOPS_BETWEEN_MARKERS = 2;

@@ -16,7 +16,7 @@
 |---|---|
 | 계약 세 유형 제안, 수락 후 목표 구역 보장 | [계약 선택](../../src/engine/contractReducer.js)의 offerContracts·acceptContractCommand, [계약 데이터](../../src/data/contracts.js), [시설 구성](../../src/engine/facilityGraph.js)의 selectRunSectorIds |
 | 새 판마다 체력·창고 초기화, 전 장비 제공 | [출격 준비](../../src/engine/loadoutReducer.js)의 newRun·buildStartingWarehouse. 두 장비 풀을 모두 창고에 합친다 |
-| 한 판은 네 구역, 지점 수 90~124 | [시설 데이터](../../src/data/facilityLayout.js)의 RUN_SECTOR_COUNT·SECTOR_LAYOUTS. 입구 34에 나머지 셋의 최소 14+18+24, 최대 28+30+32를 더한 범위 |
+| 한 판은 네 구역, 지점 수 180~248 | [시설 데이터](../../src/data/facilityLayout.js)의 RUN_SECTOR_COUNT·SECTOR_LAYOUTS. 입구 68에 나머지 셋의 최소 28+36+48, 최대 56+60+64를 더한 범위 |
 | 일반 출구 하나, 계약 목표 구역과 분리 | [시설 구성](../../src/engine/facilityGraph.js)의 placeStartAndExits. A와 key만 배치한다 |
 | 정보의 깊이와 무료 관측 차이 | [시설 데이터](../../src/data/facilityLayout.js)의 PERCEPTION_INFO_TABLE·FREE_OBSERVATION_DETAIL_LEVEL, [현장 규칙](../../src/engine/runEngine.js)의 refreshLocalObservations·basicRecon |
 | 잠금·고지대와 부족 수행 비용 | [행동 비용](../../src/engine/actionCosts.js), [능력 비용](../../src/engine/capabilityCosts.js), [현장 규칙](../../src/engine/runEngine.js)의 openSpecialEdge·highGroundMobility |

@@ -271,7 +271,9 @@ test('유료 행동이 실제로 청구한 칸은 UI가 미리 보여주는 예�
   // 가짜 목표 송출 — 시간은 층계 가감, 지속은 고정표. 둘 다 예고와 같아야 한다.
   const interfaceRun = makeRun(7);
   const entry = interfaceRun.graph.accessInterfaces[0];
-  const atInterface = { ...interfaceRun, playerNodeId: entry.nodeId };
+  // 위협이 인터페이스 노드로 걸어 들어오면 조우로 작업이 끊겨 청구된 칸이 예고와 어긋난다.
+  // 여기서 재는 것은 예고와 청구의 일치이므로 마커를 비운다.
+  const atInterface = { ...interfaceRun, threats: {}, playerNodeId: entry.nodeId };
   const sectorId = entry.nodeId.split('_')[0];
   const targetSectorId = adjacentSectorIds(interfaceRun.graph, sectorId)[0];
   const raised = {

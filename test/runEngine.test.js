@@ -530,8 +530,11 @@ test('useOpportunity decrements usesRemaining by one per farm, costs its own gra
 // D10: 확보 대상은 길고 시끄럽다 — 그 대가가 "저기까지 갈 만한가"를 묻는 장치다.
 test('a prize opportunity costs more time than a supply one, and its tier raises the cost further', () => {
   const state = makeRun(1);
-  const supply = state.graph.opportunities.find((o) => o.grade === 'supply' && o.usesRemaining > 0);
-  const prize = state.graph.opportunities.find((o) => o.grade === 'prize' && o.usesRemaining > 0);
+  // 위협이 서 있는 노드에서 파밍하면 조우로 중단되어 청구된 칸이 표의 값과 달라진다. 여기서
+  // 재려는 것은 표의 값이므로 위협이 없는 자리의 기회만 고른다.
+  const quiet = (o) => Object.values(state.threats).every((t) => t.nodeId !== o.nodeId);
+  const supply = state.graph.opportunities.find((o) => o.grade === 'supply' && o.usesRemaining > 0 && quiet(o));
+  const prize = state.graph.opportunities.find((o) => o.grade === 'prize' && o.usesRemaining > 0 && quiet(o));
   assert.ok(prize, 'fixture seed should have at least one prize opportunity');
   assert.ok(prize.tier && prize.axis, '확보 대상은 등급과 역할축을 함께 갖는다');
 
@@ -606,7 +609,9 @@ test('useFieldEquipment rejects out-of-range targets for remote_intrusion and te
 });
 
 test('battery generators can be hacked directly or through a hacked same-sector interface, and Force is local', () => {
-  let state = makeRun(21);
+  // 위협은 이 테스트의 주제가 아니다 — 마커가 작업 노드로 들어오면 조우로 게이지가 끊겨
+  // 발전기가 실제로 꺼지지 않는다.
+  let state = { ...makeRun(21), threats: {} };
   const generator = state.graph.generators.find((entry) => entry.sectorId === 'labs');
   const remoteLabsNode = state.graph.nodes.find((node) => node.sectorId === 'labs' && node.id !== generator.nodeId);
   const localInterface = { id: 'test_labs_interface', nodeId: remoteLabsNode.id };
@@ -630,11 +635,23 @@ test('useConcealment applies its node\'s fixed bonus, costs CONCEALMENT_ACTION_T
   // 카메라가 살아 있는 노드는 상황 보정으로 Stealth가 −1이라 은엄폐 값만 보려는 이 테스트의
   // 기준선이 흐려진다 — 장치가 없는 은엄폐 노드를 고른다.
   const cameraNodeIds = new Set(graph.cameras.map((c) => c.nodeId));
-  const concealedNodeId = Object.keys(graph.concealmentByNodeId).find((id) => !cameraNodeIds.has(id));
+  // 떠날 자리도 필요하다 — 목적지에 카메라가 있으면 거기서도 −1이 붙어 "은엄폐가 사라졌다"와
+  // 구분되지 않으므로, 카메라 없는 이웃이 하나라도 있는 은엄폐 노드를 고른다.
+  const cameraFreeNeighbor = (id) => {
+    const edge = graph.edges.find((e) => {
+      const other = e.from === id ? e.to : e.to === id ? e.from : null;
+      return other && !cameraNodeIds.has(other);
+    });
+    return edge ? (edge.from === id ? edge.to : edge.from) : null;
+  };
+  const concealedNodeId = Object.keys(graph.concealmentByNodeId)
+    .find((id) => !cameraNodeIds.has(id) && cameraFreeNeighbor(id));
   assert.ok(concealedNodeId, 'fixture seed should have at least one concealed node');
   const bonus = graph.concealmentByNodeId[concealedNodeId];
 
-  let state = { ...createRunState(graph, 2), playerNodeId: concealedNodeId };
+  // 위협이 그 노드로 걸어 들어오면 조우로 작업이 중단되어 청구된 칸이 달라진다. 여기서
+  // 보려는 것은 은엄폐 값과 그 비용뿐이므로 마커를 비운다.
+  let state = { ...createRunState(graph, 2), threats: {}, playerNodeId: concealedNodeId };
   assert.equal(effectiveStealthWithConcealment(1, state), 1, 'no bonus before use');
 
   const before = state.time;
@@ -644,8 +661,7 @@ test('useConcealment applies its node\'s fixed bonus, costs CONCEALMENT_ACTION_T
   assert.equal(effectiveStealthWithConcealment(1, state), 1 + bonus);
 
   // moving away clears it — a node without concealment must throw.
-  const neighborId = graph.edges.find((e) => e.from === concealedNodeId || e.to === concealedNodeId);
-  const destinationId = neighborId.from === concealedNodeId ? neighborId.to : neighborId.from;
+  const destinationId = cameraFreeNeighbor(concealedNodeId);
   state = moveToAdjacentNode(state, destinationId);
   assert.equal(state.activeConcealment, null);
   assert.equal(effectiveStealthWithConcealment(1, state), 1);

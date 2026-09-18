@@ -2,8 +2,11 @@
 // 노드가 남의 통로 위에 얹히거나 서로 포개지지 않도록 조금씩 밀어내는 정리를 한다.
 // 순수 함수이며 RNG를 쓰지 않는다 — 같은 그래프는 언제나 같은 그림이 된다.
 
-export const CANVAS_WIDTH = 1400;
-export const CANVAS_HEIGHT = 1400;
+// 구역마다 노드가 두 배가 되면서(ADR-0088) 캔버스도 면적 두 배, 즉 변으로 √2배 키웠다.
+// 엔진 좌표는 여기서 캔버스에 꽉 차게 축척되므로(fitToCanvas), 노드 사이 px 간격을 예전과
+// 비슷하게 유지하는 것은 엔진 쪽 반경이 아니라 이 두 값이다.
+export const CANVAS_WIDTH = 1980;
+export const CANVAS_HEIGHT = 1980;
 export const CANVAS_PADDING = 50;
 export const NODE_RADIUS = 8;
 

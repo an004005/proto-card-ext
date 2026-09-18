@@ -42,7 +42,9 @@ function runWithCameraInSight() {
       const hops = sightHops(base, camera.nodeId);
       // 카메라 자리 자신은 제외한다 — "원거리"가 아니면 이 행동의 값이 없다.
       const from = [...hops.entries()].find(([nodeId, h]) => h > 0 && h <= CAMERA_SNIPE_RANGE && nodeId !== camera.nodeId);
-      if (from) return { run: { ...base, playerNodeId: from[0] }, camera };
+      // 위협은 이 행동의 주제가 아니다. 두면 마커가 사거리 안 노드로 걸어 들어와 조우로
+      // 작업이 중단되고, 재려는 것(청구된 칸·소음·흔적)이 표의 값과 달라진다.
+      if (from) return { run: { ...base, threats: {}, playerNodeId: from[0] }, camera };
     }
   }
   throw new Error('사거리 안에 카메라가 있는 시드를 찾지 못했다');

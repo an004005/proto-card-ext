@@ -541,7 +541,9 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
     const target = count + SPECIAL_EDGES_PER_SECTOR_MIN;
     let placed = 0;
     let attempts = 0;
-    while (placed < target && attempts < 60) {
+    // 시도 한도는 목표 개수에 비례한다. 고정값이면 개수를 늘렸을 때(ADR-0088의 8~12개) 마지막
+    // 한두 개가 차수 상한·중복에 막혀 계약 개수를 못 채운다.
+    while (placed < target && attempts < target * 20) {
       attempts += 1;
       const { value: a, state: sa } = pick(state, pool);
       state = sa;
@@ -564,12 +566,14 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
     state = sCount;
     const target = count + CROSS_SECTOR_SPECIAL_EDGES_MIN;
     // 구역과 구역을 잇는 특수 엣지는 서로 마주 본 경계 쪽에서만 난다 — 반대편 끝까지
-    // 가로지르는 줄이 생기지 않도록 상대 구역에 가까운 노드 여덟 개 안에서 고른다.
-    const frontA = nearest(externalIdsBySector[sectorA] || poolA, sectorCentroids[sectorB], 8, '');
-    const frontB = nearest(externalIdsBySector[sectorB] || poolB, sectorCentroids[sectorA], 8, '');
+    // 가로지르는 줄이 생기지 않도록 상대 구역에 가까운 노드 열여섯 개 안에서 고른다. 구역
+    // 노드가 두 배가 되었으므로(ADR-0088) 이 후보 수도 두 배다 — 고정 8개로 두면 같은 넓이에
+    // 노드가 두 배로 들어차 후보가 한 점에 몰리고, 차수 상한에 막혀 개수를 못 채운다.
+    const frontA = nearest(externalIdsBySector[sectorA] || poolA, sectorCentroids[sectorB], 16, '');
+    const frontB = nearest(externalIdsBySector[sectorB] || poolB, sectorCentroids[sectorA], 16, '');
     let placed = 0;
     let attempts = 0;
-    while (placed < target && attempts < 60) {
+    while (placed < target && attempts < target * 20) {
       attempts += 1;
       const { value: a, state: sa } = pick(state, frontA);
       const { value: b, state: sb } = pick(sa, frontB);
@@ -596,7 +600,10 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
     const longRangeTarget = longRangeCount + LONG_RANGE_SPECIAL_EDGES_MIN;
     let placed = 0;
     let attempts = 0;
-    while (placed < longRangeTarget && attempts < 60) {
+    // 원거리 지름길은 마지막에 놓이므로, 구역 안·구역 사이 특수 엣지가 이미 써 버린 차수만
+    // 남은 자리에서 고른다. 구역 노드가 두 배가 되면서(ADR-0088) 그 소모도 두 배라, 시도
+    // 한도를 넉넉히 둔다 — 두세 개를 못 채우면 링을 건너뛰는 길이 아예 없는 런이 된다.
+    while (placed < longRangeTarget && attempts < 300) {
       attempts += 1;
       const { value: pair, state: sPair } = pick(state, nonAdjacentSectorPairs);
       const { value: a, state: sa } = pick(sPair, externalIdsBySector[pair[0]] || nodeIdsBySector[pair[0]]);
