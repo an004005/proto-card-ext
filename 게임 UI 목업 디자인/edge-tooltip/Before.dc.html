@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap">
+  <style>
+    body { margin: 0; font-family: "Archivo", system-ui, sans-serif; background: #f3f2f2; color: #201e1d; }
+  </style>
+</helmet>
+<div style="width: 560px; height: 360px; padding: 32px; background: #f3f2f2; display: flex; flex-direction: column; gap: 16px;">
+  <div style="font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #7d7979; font-weight: 800;">현재 — 엣지 호버 한 줄 문자열</div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <div style="background: #2d2b2b; color: #f3f2f2; padding: 6px 10px; font-size: 11px; line-height: 1.5; max-width: 260px; box-shadow: 0 12px 32px rgba(45,43,43,0.22);">입구·관리동 · 4홉 ↔ 입구·관리동 · 3홉</div>
+    <div style="background: #2d2b2b; color: #f3f2f2; padding: 6px 10px; font-size: 11px; line-height: 1.5; max-width: 260px; box-shadow: 0 12px 32px rgba(45,43,43,0.22);">보안·격리동 · 인접 1홉 → 보안·격리동 · 2홉 — 일방통행(역방향 이동 불가) — 특수 엣지(전자 잠금) · 미개방 · Hacking 2이 표준 — 임시 장벽 활성(적 이동 차단, 12칸 남음)</div>
+    <div style="background: #2d2b2b; color: #f3f2f2; padding: 6px 10px; font-size: 11px; line-height: 1.5; max-width: 260px; box-shadow: 0 12px 32px rgba(45,43,43,0.22);">실험동 · 현재 위치 ↔ 실험동 · 인접 1홉 — 특수 엣지(높은 지형) · 고지대 — Mobility 3 기준, 현재 부족분 2: HP −8</div>
+  </div>
+
+  <div style="font-size: 12px; color: #605d5d; line-height: 1.5; max-width: 500px;">
+    양 끝이 "구역 이름 + 현재 위치에서의 홉수"로만 적혀 같은 구역 안에서는 두 끝이 구별되지 않는다. 잠금·방향·장벽·고지대 대가가 한 문단에 ' — '로 이어져 무엇이 지금 나를 막는지, 얼마를 치르면 지나는지, 무엇을 클릭하면 되는지가 한눈에 안 읽힌다. 이동 1칸과 도착 위험은 통로 위에서는 전혀 보이지 않고 노드를 클릭해 패널을 열어야 나온다.
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

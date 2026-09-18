@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap">
+  <style>
+    body { margin: 0; font-family: "Archivo", system-ui, sans-serif; background: #f3f2f2; color: #201e1d; }
+  </style>
+</helmet>
+<div style="width: 560px; height: 520px; padding: 32px; background: #f3f2f2; display: flex; flex-direction: column; gap: 16px;">
+  <div style="font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #7d7979; font-weight: 800;">개선안 — 구조화된 통로 카드 (인접 · 전자 잠금 · 열 수 있음)</div>
+
+  <div style="width: 300px; background: #2d2b2b; color: #f3f2f2; box-shadow: 0 12px 32px rgba(45,43,43,0.22); display: flex; flex-direction: column;">
+
+    <!-- 머리: 통로 종류(굵게) · 상태 배지 / 양 끝 노드 -->
+    <div style="display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-bottom: 1px solid rgba(243,242,242,0.18);">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <div style="font-size: 12px; font-weight: 800; letter-spacing: -0.01em;">전자 잠금 통로</div>
+        <div style="font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; background: #605d5d; color: #f3f2f2; white-space: nowrap;">잠김 · 열 수 있음</div>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; font-size: 10px; color: #d7d3d3;">
+        <span style="font-weight: 800; color: #f3f2f2;">복도</span><span style="color: #bab6b6;">현재 위치</span>
+        <span style="color: #9b9797;">↔</span>
+        <span style="font-weight: 800; color: #f3f2f2;">감시 지점</span><span style="color: #bab6b6;">보안·격리동 · 출입구</span>
+      </div>
+    </div>
+
+    <!-- 행: 아이콘 + 굵은 한 줄 + 보조 한 줄 -->
+    <div style="display: flex; flex-direction: column; padding: 6px 10px 8px; gap: 6px;">
+
+      <div style="display: flex; gap: 8px; align-items: flex-start;">
+        <div style="width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; color: #f3f2f2;">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="10" height="7"></rect><path d="M5 7 V5 a3 3 0 0 1 6 0 V7"></path></svg>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1;">
+          <div style="font-size: 11px; font-weight: 800;">Hacking 2 표준 · 현재 1 <span style="color: #ffc4b9;">무리</span></div>
+          <div style="font-size: 10px; color: #d7d3d3; line-height: 1.45;">개방 6칸(시작 1 + 게이지 5) · 소음 1 · 표준 접근 · 경계도 압력 +2</div>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 8px; align-items: flex-start;">
+        <div style="width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; color: #f3f2f2;">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8 H13 M10 4.5 L13.5 8 L10 11.5"></path></svg>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 1px; flex-grow: 1;">
+          <div style="font-size: 11px; font-weight: 800; color: #bab6b6;">이동 1칸 — 열기 전에는 지날 수 없다</div>
+          <div style="font-size: 10px; color: #d7d3d3; line-height: 1.45;">건너편 도착 예상: <span style="color: #ff9784; font-weight: 800;">적 1그룹</span> · 순찰 · 4칸마다 이동</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 꼬리: 조작 힌트 -->
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-top: 1px solid rgba(243,242,242,0.18); font-size: 10px; color: #bab6b6;">
+      <span>패널의 접근 모드(안전/표준/강행)가 적용된다</span>
+      <span style="color: #f3f2f2; font-weight: 800;">클릭해 개방</span>
+    </div>
+  </div>
+
+  <div style="font-size: 12px; color: #605d5d; line-height: 1.5; max-width: 500px;">
+    머리(통로 종류 · 상태 배지 · 양 끝 노드 유형+구역) → 행(잠금/고지대 대가 · 이동과 도착 위험 · 방향 · 장벽) → 꼬리(조작 힌트). 노드 카드(NodeTooltipCard)와 같은 뼈대·토큰을 쓴다. 양 끝은 "구역 · 홉수"가 아니라 <b>노드 유형</b>이 주어이고, 현재 위치가 끝점이면 그렇게 적는다. 없는 행은 그리지 않는다.
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
