@@ -38,6 +38,7 @@ import { OverloadToggle } from './OverloadToggle.js';
 import { InventoryPopup } from './InventoryPopup.js';
 import { Tooltip } from './Tooltip.js';
 import { NodeTooltipCard } from './NodeTooltipCard.js';
+import { EdgeTooltipCard } from './EdgeTooltipCard.js';
 import { ThinGauge } from './ThinGauge.js';
 import { PlayLog } from './PlayLog.js';
 import { HistoryControls } from './HistoryControls.js';
@@ -240,12 +241,29 @@ const FIELD_DEVICE_LABELS = { camera: '카메라 지정', accessInterface: '접�
  * @returns {string}
  */
 function highGroundNote(edge, mobility) {
+  const { required, value, blocked, gap, hpCost } = highGroundParts(edge, mobility);
+  const head = `고지대 — Mobility ${required} 기준`;
+  if (blocked) return `${head}, 현재 ${value}: 통과 불가`;
+  if (gap <= 0) return `${head}, 현재 ${value}: 추가 대가 없음`;
+  return `${head}, 현재 부족분 ${gap}: HP −${hpCost}`;
+}
+
+/**
+ * 같은 판정을 문장이 아니라 숫자로 — 통로 카드는 기준·현재값·부족분·HP를 각각 다른 줄에
+ * (그리고 다른 색으로) 적어야 해서 한 문장을 도로 쪼갤 수 없다. 숫자는 여전히 전부
+ * `forecastAction`에서 오고, highGroundNote도 이 함수를 읽는다.
+ * @param {{features: string[]}} edge @param {number} mobility 원시 Mobility.
+ * @returns {{required: number, value: number, blocked: boolean, gap: number, hpCost: number}}
+ */
+function highGroundParts(edge, mobility) {
   const forecast = forecastAction('traverseHighGround', { edge, value: highGroundMobility(mobility) });
-  const head = `고지대 — Mobility ${forecast.required} 기준`;
-  if (forecast.blocked) return `${head}, 현재 ${forecast.value}: 통과 불가`;
-  const gap = forecast.required - forecast.value;
-  if (gap <= 0) return `${head}, 현재 ${forecast.value}: 추가 대가 없음`;
-  return `${head}, 현재 부족분 ${gap}: HP −${forecast.cost.hpCost}`;
+  return {
+    required: forecast.required,
+    value: forecast.value,
+    blocked: forecast.blocked,
+    gap: Math.max(0, forecast.required - forecast.value),
+    hpCost: forecast.cost?.hpCost ?? 0,
+  };
 }
 
 /**
@@ -302,6 +320,9 @@ const CANVAS_CENTER = CANVAS_WIDTH / 2;
 /** 선택 노드까지의 경로 색. 위협 표식(빨강)·관측(파랑)과 겹치지 않는 초록 — "위협 없음" 예고와
  * 같은 계열이라 '지나갈 수 있는 길'로 읽힌다. */
 const ROUTE_COLOR = '#15803d';
+/** 고지대만 쓰는 연보라. 어두운 카드 위에서 읽히는 유일한 값이라 토큰 대신 이 리터럴을 쓴다
+ * (지도 선의 #7c3aed는 밝은 배경용이고, 검은 카드 위에서는 거의 안 보인다). */
+const HIGH_GROUND_COLOR = '#c4b5fd';
 
 /** 노드 유형별 표시 이름. 도면을 읽는 언어이므로 툴팁·패널·범례가 모두 이 표를 쓴다. */
 const NODE_TYPE_LABELS = {
@@ -732,6 +753,245 @@ function describeNodeText(description) {
   return parts.filter(Boolean).join(' — ');
 }
 
+/** 통로 카드 머리의 종류 이름. EDGE_FEATURE_LABELS는 "무엇으로 막혀 있는가"의 이름이라
+ * `높은 지형`이지만, 통로의 **종류**를 부를 때는 `고지대 통로`가 화면의 다른 자리(고지대 행·
+ * 범례)와 같은 말이 된다. */
+const EDGE_KIND_LABELS = {
+  blocked: EDGE_FEATURE_LABELS.blocked,
+  electronic: EDGE_FEATURE_LABELS.electronic,
+  highGround: '고지대',
+  oneWay: '일방통행',
+};
+
+/** 접근 모드 세 가지의 표시 이름 — 개방 행이 "어느 모드로 열 것인가"를 함께 적는다. */
+const EDGE_APPROACH_LABELS = { safe: '안전', normal: '표준', rush: '강행' };
+
+/**
+ * 통로(엣지) 하나를 **구조화된 카드**로 요약 — 지도 위 엣지 호버가 EdgeTooltipCard로 그리고,
+ * describeEdgeText가 그것을 한 문장 사본으로 잇는다(게임 UI 목업 디자인/edge-tooltip).
+ *
+ * 머리(통로 종류 · 상태 배지 · 양 끝 노드) / 행(잠금 → 고지대 → 방향 → 장벽 → 이동) /
+ * 꼬리(규칙 한 줄 + 조작 힌트)로 나눈다. 없는 행은 만들지 않는다.
+ *
+ * 숫자와 판정은 전부 ctx로 받은 기존 계산(forecastAction · ladderNote · canTraverseEdge ·
+ * movementRiskForecast · openableEdgeIds …)에서 온다 — 여기서 다시 세면 카드만 엔진과 다른
+ * 말을 하게 된다.
+ * @param {object} run
+ * @param {object} edge
+ * @param {{revealed: boolean, capabilities: object, debugReveal?: boolean, openableEdgeIds: Set<string>,
+ *   pickableEdgeIds: Set<string>|null, activeBarriers: object, routeEdgeIds: Set<string>|null,
+ *   playerHops: Map<string, number>, edgeApproachMode: string, threatMoves: any[]}} ctx
+ */
+function describeEdge(run, edge, ctx) {
+  const {
+    revealed, capabilities, debugReveal = false, openableEdgeIds, pickableEdgeIds,
+    activeBarriers, routeEdgeIds, playerHops, edgeApproachMode, threatMoves,
+  } = ctx;
+  const nodeById = (id) => run.graph.nodes.find((n) => n.id === id);
+  // 'electronic'은 통로의 종류가 아니라 자물쇠의 종류다 — 막힌 통로는 언제나 'blocked'를 달고,
+  // 그중 일부에 'electronic'이 덧붙는다(facilityLayout.js). 그러니 자물쇠는 언제나 하나다.
+  const lockFeature = edge.features.includes('electronic') ? 'electronic'
+    : edge.features.includes('blocked') ? 'blocked'
+    : null;
+  const highGround = edge.features.includes('highGround');
+  const oneWay = edge.bidirectional === false;
+  const opened = run.openedEdgeIds.includes(edge.id);
+  const barrier = activeBarriers[edge.id] || null;
+  const adjacent = edge.from === run.playerNodeId || edge.to === run.playerNodeId;
+  const destinationNodeId = edge.from === run.playerNodeId ? edge.to : edge.from;
+  const traversable = adjacent && canTraverseEdge(run, edge, capabilities.mobility);
+  const openable = openableEdgeIds.has(edge.id);
+  const pickable = !!pickableEdgeIds?.has(edge.id);
+  // 일방통행의 역방향 끝에 서 있는가 — 여기서는 들어갈 수 없고, 되돌아올 수도 없다.
+  const reverseEnd = revealed && oneWay && edge.to === run.playerNodeId;
+
+  // ── 머리 ────────────────────────────────────────────────────────────────────
+  // 특수한 성격은 드러난 통로에서만 이름에 나온다(지도 선 모양과 같은 게이팅) — 아직 양 끝을
+  // 한 번도 보지 못한 통로는 그냥 `통로`다.
+  const kinds = revealed
+    ? [
+      lockFeature ? EDGE_KIND_LABELS[lockFeature] : null,
+      highGround ? EDGE_KIND_LABELS.highGround : null,
+      oneWay ? EDGE_KIND_LABELS.oneWay : null,
+    ].filter(Boolean)
+    : [];
+  const title = `${kinds.length ? `${kinds.join(' · ')} ` : ''}통로`;
+
+  const ACCENT = { background: 'var(--color-accent-2-500)', color: 'var(--color-neutral-900)' };
+  const LOCKED = { background: 'var(--color-neutral-700)', color: 'var(--color-bg)' };
+  const NEGATIVE = { background: 'var(--color-negative, #dc2626)', color: 'var(--color-bg)' };
+  const hgParts = highGround ? highGroundParts(edge, capabilities.mobility) : null;
+  let badge = null;
+  if (barrier) {
+    badge = { label: `장벽 · ${leftTicksText(barrier.expiresAt, run.time)}`, background: 'transparent', color: 'var(--color-bg)', border: '1px solid var(--color-bg)' };
+  } else if (reverseEnd) {
+    badge = { label: '역방향 · 불가', ...NEGATIVE };
+  } else if (revealed && lockFeature && !opened) {
+    badge = { label: openable ? '잠김 · 열 수 있음' : '잠김', ...LOCKED };
+  } else if (revealed && lockFeature && opened) {
+    badge = { label: '개방됨', ...ACCENT };
+  } else if (revealed && highGround && adjacent && !traversable) {
+    badge = { label: '통과 불가', ...NEGATIVE };
+  } else if (traversable) {
+    badge = { label: highGround && hgParts.gap > 0 ? '지날 수 있음 · 대가' : '지날 수 있음', ...ACCENT };
+  }
+
+  /** 끝 노드 하나 — 주어는 노드 유형이고, 그 뒤에 구역(또는 `현재 위치`)이 온다. */
+  const endOf = (nodeId) => {
+    const node = nodeById(nodeId);
+    const typeLabel = node ? (NODE_TYPE_LABELS[node.type] || node.type) : nodeId;
+    if (nodeId === run.playerNodeId) return { typeLabel, note: '현재 위치' };
+    const landmark = run.graph.landmarks.find((l) => l.nodeId === nodeId);
+    // 랜드마크는 노드 카드와 같은 판정으로만 드러낸다 — 한 번도 닿지 않은 자리의 이름을
+    // 통로 카드가 먼저 흘리면 안 된다.
+    const landmarkKnown = !!landmark && (debugReveal || !!run.observations[nodeId] || run.visitedNodeIds.includes(nodeId));
+    const notes = [node ? SECTOR_NAMES[node.sectorId] : null];
+    if (node?.isGateway) notes.push('출입구');
+    if (landmarkKnown) notes.push('랜드마크');
+    return { typeLabel, note: notes.filter(Boolean).join(' · ') };
+  };
+  const header = {
+    title,
+    titleColor: revealed && highGround ? HIGH_GROUND_COLOR : null,
+    badge,
+    arrow: revealed && oneWay ? '→' : '↔',
+    ends: [endOf(edge.from), endOf(edge.to)],
+  };
+
+  // ── 행 ──────────────────────────────────────────────────────────────────────
+  const rows = [];
+  if (revealed && lockFeature && !opened) {
+    const kind = lockFeature === 'electronic' ? 'hacking' : 'force';
+    const kindLabel = kind === 'hacking' ? 'Hacking' : 'Force';
+    const required = edge.requiredCapability ?? 1;
+    const current = capabilities[kind];
+    const forecast = forecastAction('openEdge', { value: current, capabilityKind: kind, edge, mode: edgeApproachMode });
+    const ladder = ladderNote(forecast);
+    let detail;
+    if (ladder?.blocked) {
+      detail = `${ladder.note}`;
+    } else if (adjacent && openable) {
+      const time = forecast.timeCost;
+      const shape = time <= 1 ? `개방 ${time}칸` : `개방 ${time}칸(시작 1 + 게이지 ${time - 1})`;
+      // 층계 대가는 ladderNote가 만든 문장을 그대로 쓰되, 이미 앞줄에 적은 시간·소음은 덜어낸다 —
+      // 같은 숫자를 한 줄에 두 번 적으면 둘 중 어느 쪽이 실제 청구인지 읽히지 않는다.
+      const extra = (ladder && !ladder.blocked ? ladder.note.split(' · ') : [])
+        .filter((part) => !part.startsWith('소음') && !part.startsWith('시간') && part !== '추가 대가 없음');
+      detail = [`${shape} · 소음 ${forecast.noise} · ${EDGE_APPROACH_LABELS[edgeApproachMode] || edgeApproachMode} 접근`, ...extra].join(' · ');
+    } else {
+      detail = '양 끝 노드 중 하나에 서면 열 수 있다';
+    }
+    rows.push({
+      kind: 'lock',
+      icon: 'lock',
+      title: `${kindLabel} ${required} 표준 · 현재 ${current}`,
+      titleSuffix: ladder ? { text: ladder.label, color: ladder.color } : null,
+      detail,
+    });
+  }
+  if (revealed && highGround) {
+    const { required, value, blocked, gap, hpCost } = hgParts;
+    const detail = blocked
+      ? [{ text: `통과 불가 — Mobility ${required - 2} 이상이어야 대가를 치르고 넘는다` }]
+      : gap <= 0
+        ? [{ text: '추가 대가 없음' }]
+        : [{ text: `부족분 ${gap} → 넘을 때 ` }, { text: `HP −${hpCost}`, color: 'var(--color-accent-2-400)' }, { text: ' · 시간은 그대로 1칸' }];
+    rows.push({
+      kind: 'highGround',
+      icon: 'highGround',
+      color: HIGH_GROUND_COLOR,
+      title: `Mobility ${required} 기준 · 현재 ${value}`,
+      detail,
+    });
+  }
+  if (revealed && oneWay) {
+    const fromLabel = header.ends[0].typeLabel;
+    const toLabel = header.ends[1].typeLabel;
+    rows.push({
+      kind: 'direction',
+      icon: 'direction',
+      color: reverseEnd ? 'var(--color-accent-2-400)' : null,
+      title: `${fromLabel} → ${toLabel} 방향만 열려 있다`,
+      detail: reverseEnd
+        ? '여기서는 들어갈 수 없다. 반대편에서 오는 위협은 이 길로 올 수 있다.'
+        : '역방향으로는 돌아올 수 없다',
+    });
+  }
+  if (barrier) {
+    rows.push({
+      kind: 'barrier',
+      icon: 'barrier',
+      title: '임시 장벽 · 적 이동 차단',
+      detail: `${leftTicksText(barrier.expiresAt, run.time)}(시각 ${barrier.expiresAt}) · 나는 지날 수 있다 · 만료 후 다시 열린다`,
+    });
+  }
+  // 이동 행은 "지금 여기서 이 길로 무엇을 할 수 있는가"다. 역방향 일방통행은 방향 행이 이미
+  // 그 답을 말했으므로 중복해서 적지 않는다.
+  if (adjacent && !reverseEnd) {
+    const lockedNow = !!lockFeature && !opened && revealed;
+    const risk = movementRiskForecast(run, edge, destinationNodeId, capabilities.mobility);
+    const detail = [{ text: risk.label, color: risk.color }];
+    // 도착지에 위협이 있다면 그것이 어떤 상태로 얼마나 자주 움직이는지까지 — 관측한 만큼만.
+    const observed = threatMoves.find((threat) => threat.nodeId === destinationNodeId);
+    if (observed?.mode) detail.push({ text: ` · ${THREAT_MODE_LABELS[observed.mode] || observed.mode}` });
+    if (observed?.interval) detail.push({ text: ` · ${observed.interval}칸마다 이동` });
+    rows.push({
+      kind: 'move',
+      icon: 'move',
+      color: traversable ? null : 'var(--color-neutral-400)',
+      title: traversable ? '이동 1칸'
+        : lockedNow ? '이동 1칸 — 열기 전에는 지날 수 없다'
+        : '이동 1칸 — 지금은 지날 수 없다',
+      detail,
+    });
+  } else if (!adjacent) {
+    const hops = [playerHops.get(edge.from), playerHops.get(edge.to)].filter((h) => h !== undefined);
+    const onRoute = !!routeEdgeIds?.has(edge.id);
+    rows.push({
+      kind: 'move',
+      icon: 'move',
+      color: 'var(--color-neutral-400)',
+      title: `${hops.length ? `여기서 ${Math.max(...hops)}홉` : '닿는 길 없음'}${onRoute ? ' · 최단 경로에 포함' : ''}`,
+      detail: onRoute ? '선택한 노드로 가는 길이 이 통로를 지난다' : '인접하지 않아 지금은 이동 대상이 아니다',
+    });
+  }
+
+  // ── 꼬리 ────────────────────────────────────────────────────────────────────
+  const rule = barrier ? '장벽은 현장 장비로 다시 칠 수 있다'
+    : reverseEnd ? '다른 길로 돌아가야 한다'
+    : revealed && lockFeature && opened ? '열린 문은 위협도 지난다'
+    : openable ? '패널의 접근 모드(안전/표준/강행)가 적용된다'
+    : revealed && lockFeature && !opened ? '열면 런 내내 열려 있다'
+    : revealed && highGround ? 'Mobility 0 이하는 통과 불가'
+    : adjacent ? '이동 소음은 출발 시각에 난다'
+    : '';
+  const hint = pickable ? '클릭해 지정'
+    : openable ? '클릭해 개방'
+    : traversable ? '노드를 더블클릭해 이동'
+    : null;
+
+  return { header, rows, footer: { rule, hint } };
+}
+
+/**
+ * 구조화된 통로 설명을 한 문장 사본으로 잇는다 — 카드는 이 문장을 보이지 않게 항상 들고 있다
+ * (NodeTooltipCard와 같은 규칙). 보조 기술이 읽고, 렌더 테스트가 검사한다.
+ */
+function describeEdgeText(description) {
+  const { header, rows, footer } = description;
+  const endText = (end) => `${end.typeLabel}${end.note ? `(${end.note})` : ''}`;
+  const parts = [
+    `${header.title}${header.badge ? ` · ${header.badge.label}` : ''}`,
+    `${endText(header.ends[0])} ${header.arrow} ${endText(header.ends[1])}`,
+  ];
+  for (const row of rows) {
+    const detail = Array.isArray(row.detail) ? row.detail.map((part) => part.text).join('') : row.detail;
+    parts.push([`${row.title || ''}${row.titleSuffix ? ` ${row.titleSuffix.text}` : ''}`, detail].filter(Boolean).join(' — '));
+  }
+  parts.push(footer.rule, footer.hint);
+  return parts.filter(Boolean).join(' — ');
+}
+
 export function MapScreen() {
   const [showInventory, setShowInventory] = useState(false);
   const [error, setError] = useState('');
@@ -747,6 +1007,7 @@ export function MapScreen() {
   // node는 describeNode의 구조화된 설명이고, 그때는 NodeTooltipCard로 그린다.
   const [hover, setHover] = useState(null);
   const [hoveredNodeId, setHoveredNodeId] = useState(null); // 노드 호버 시 연결 엣지 강조용
+  const [hoveredEdgeId, setHoveredEdgeId] = useState(null); // 통로 호버 시 그 통로를 굵게 — 카드가 어느 선을 말하는지 보여야 한다
   const [selectedNodeId, setSelectedNodeId] = useState(null); // 클릭해 "선택 노드" 패널에 고정한 노드
   const [legendOpen, setLegendOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -1049,8 +1310,10 @@ export function MapScreen() {
   // 호버는 rAF 한 프레임에 한 번만 반영한다(scheduleHover) — 마우스를 한 번 훑으면
   // onMouseMove가 수십 번 오는데, 그때마다 100여 노드 지도를 다시 그리면 눈에 띄게 끊긴다.
   const showHover = (ev, text) => scheduleHover({ x: ev.clientX, y: ev.clientY, text });
-  /** 노드 호버만은 문장이 아니라 카드다(NodeTooltipCard) — 엣지·화살표는 그대로 문자열을 쓴다. */
+  /** 노드와 통로는 문장이 아니라 카드다(NodeTooltipCard / EdgeTooltipCard) — 지도 임플란트
+   * 화살표처럼 성격이 하나뿐인 표식만 그대로 문자열을 쓴다. */
   const showNodeHover = (ev, description, hint) => scheduleHover({ x: ev.clientX, y: ev.clientY, node: description, hint });
+  const showEdgeHover = (ev, description) => scheduleHover({ x: ev.clientX, y: ev.clientY, edge: description });
   const hideHover = () => scheduleHover(null);
   const recenterAt = (canvasX, canvasY) => setView((v) => ({ ...v, x: -(canvasX - CANVAS_CENTER) * v.scale, y: -(canvasY - CANVAS_CENTER) * v.scale }));
   /** 패널 줄을 눌렀을 때 지도를 그 노드로 옮긴다 — 위치를 말로만 읽어 주면 결국 눈으로 찾아야 한다. */
@@ -1310,7 +1573,7 @@ export function MapScreen() {
                   const pickable = pickableEdgeIds?.has(e.id);
                   const barrier = activeBarriers[e.id];
                   const highGround = e.features.includes('highGround');
-                  const highlighted = !!highlightedEdgeIds?.has(e.id);
+                  const highlighted = !!highlightedEdgeIds?.has(e.id) || e.id === hoveredEdgeId;
                   const onRoute = !!routeEdgeIds?.has(e.id);
                   const dashed = special && !opened;
                   const clickable = openable || !!pickable;
@@ -1318,15 +1581,13 @@ export function MapScreen() {
                   // 같은 배치 원형이 방들 사이에 묻히지 않고 한눈에 읽힌다.
                   const isSpine = !special && PASSAGE_TYPES.has(nodeTypeById[e.from]) && PASSAGE_TYPES.has(nodeTypeById[e.to]);
                   const stroke = barrier ? 'var(--color-neutral-900)' : pickable ? 'var(--color-accent)' : openable ? 'var(--color-accent-2-700)' : highGround ? '#7c3aed' : 'var(--color-divider)';
-                  const barrierLabel = barrier ? ` — 임시 장벽 활성(적 이동 차단, ${leftTicksText(barrier.expiresAt, run.time)})` : '';
                   const oneWay = e.bidirectional === false && revealed;
-                  const levelNote = special && !opened && (e.requiredCapability ?? 1) > 1
-                    ? ` · ${e.features.includes('electronic') ? 'Hacking' : 'Force'} ${e.requiredCapability}이 표준` : '';
-                  // 고지대도 층계 행동이라 부족분이 곧 HP다 — 그 값을 통로 위에서 바로 읽게 한다.
-                  const highGroundLevelNote = special && highGround ? ` · ${highGroundNote(e, capabilities.mobility)}` : '';
-                  // 통로에는 더 이상 고유한 이동 시간이 없다(ADR-0084) — 어느 통로든 1칸이므로
-                  // 통로마다 숫자를 적을 것이 없다.
-                  const edgeLabel = `${whereIs(e.from)} ${oneWay ? '→' : '↔'} ${whereIs(e.to)}${oneWay ? ' — 일방통행(역방향 이동 불가)' : ''}${special ? ` — 특수 엣지(${featureText(e.features)})${highGround ? '' : opened ? ' · 개방됨' : ' · 미개방'}${levelNote}${highGroundLevelNote}` : ''}${barrierLabel}`;
+                  // 통로의 설명은 문장이 아니라 카드다(EdgeTooltipCard) — 잠금·고지대·방향·
+                  // 장벽·이동은 서로 다른 결정을 부르므로 각자의 줄을 가져야 한다.
+                  const edgeDescription = describeEdge(run, e, {
+                    revealed, capabilities, debugReveal, openableEdgeIds, pickableEdgeIds,
+                    activeBarriers, routeEdgeIds, playerHops, edgeApproachMode, threatMoves,
+                  });
                   const { d: pathD, midX, midY, angleDeg } = edgePath(from, to);
                   return html`
                     <g key=${e.id}>
@@ -1336,11 +1597,15 @@ export function MapScreen() {
                       ${oneWay ? html`<polygon points="-7,-5 7,0 -7,5" fill=${stroke} transform=${`translate(${midX},${midY}) rotate(${angleDeg})`} pointer-events="none"></polygon>` : null}
                       <path
                         d=${pathD} fill="none" stroke="transparent" stroke-width="16"
+                        data-edge-id=${e.id}
                         style=${{ cursor: clickable ? 'pointer' : 'default' }}
                         onClick=${() => handleEdgeClick(e)}
-                        onMouseEnter=${(ev) => showHover(ev, edgeLabel)} onMouseMove=${(ev) => showHover(ev, edgeLabel)} onMouseLeave=${hideHover}
+                        onMouseEnter=${(ev) => { showEdgeHover(ev, edgeDescription); setHoveredEdgeId(e.id); }}
+                        onMouseMove=${(ev) => showEdgeHover(ev, edgeDescription)}
+                        onMouseLeave=${() => { hideHover(); setHoveredEdgeId(null); }}
                         tabindex=${clickable ? 0 : undefined}
-                        onFocus=${(ev) => showHover(ev, edgeLabel)} onBlur=${hideHover}
+                        onFocus=${(ev) => { showEdgeHover(ev, edgeDescription); setHoveredEdgeId(e.id); }}
+                        onBlur=${() => { hideHover(); setHoveredEdgeId(null); }}
                         onKeyDown=${(ev) => { if (clickable && (ev.key === 'Enter' || ev.key === ' ')) handleEdgeClick(e); }}
                       ></path>
                     </g>
@@ -1493,7 +1758,15 @@ export function MapScreen() {
               <${NodeTooltipCard} description=${hover.node} text=${describeNodeText(hover.node)} hint=${hover.hint || '클릭해 선택'} />
             </div>
           ` : null}
-          ${hover && !hover.node ? html`
+          ${hover && hover.edge ? html`
+            <div style=${{
+              position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
+              boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
+            }}>
+              <${EdgeTooltipCard} description=${hover.edge} text=${describeEdgeText(hover.edge)} />
+            </div>
+          ` : null}
+          ${hover && !hover.node && !hover.edge ? html`
             <div style=${{
               position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
               background: 'var(--color-neutral-900)', color: 'var(--color-bg)', padding: '6px 10px',
