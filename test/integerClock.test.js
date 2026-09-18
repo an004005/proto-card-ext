@@ -14,7 +14,7 @@ import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabil
 import {
   RUN_COLLAPSE_TIME, THREAT_MOVE_INTERVAL,
   REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
-  EXIT_A_DISABLED_AT, EXIT_OPEN_WINDOW, BASIC_RECON_TIME, FORCE_TIER1_TIME,
+  EXIT_A_DISABLED_AT, EXIT_OPEN_WINDOW, BASIC_RECON_TIME, FORCE_TIER1_TIME, EXIT_ACTIVATE_TIME_BY_HACKING,
   APPROACH_TIME_DELTA, TRACE_CLEANUP_TIME_BY_PERCEPTION, FALSE_BROADCAST_TIME,
   FALSE_BROADCAST_DURATION_BY_STEP,
 } from '../src/data/facilityLayout.js';
@@ -192,8 +192,9 @@ test('ADR-0054: 폐쇄 시각 뒤 새 가동은 막히지만 이미 시작된 �
   // 가동은 중단되면 취소되므로(TASK_ABORTS.exitActivate), 여기서는 위협 없는 런으로 본다 —
   // 보려는 것은 폐쇄 시각이 이미 시작된 가동을 끊지 않는다는 것뿐이다.
   let state = { ...makeRun(9), threats: {} };
-  // 폐쇄 2칸 전에 가동 → Hacking 4의 게이지 8칸이 폐쇄 시각을 넘긴다(개방 창까지 붕괴 전에 닫힌다).
-  state = advanceTime(state, EXIT_A_DISABLED_AT - 2);
+  // Hacking 4의 게이지가 폐쇄 시각을 딱 한 칸 넘기도록 가동한다(개방 창까지 붕괴 전에 닫힌다).
+  const gauge = EXIT_ACTIVATE_TIME_BY_HACKING[4 + 2];
+  state = advanceTime(state, EXIT_A_DISABLED_AT - gauge + 1);
   state = requestExtraction(state, 'A', 4);
   const opensAt = state.exits.A.opensAt;
   assert.ok(opensAt > EXIT_A_DISABLED_AT);

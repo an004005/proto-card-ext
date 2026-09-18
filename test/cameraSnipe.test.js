@@ -116,7 +116,6 @@ test('Perception 층계는 시간으로만 받는다 — 1은 무리(+2), -1은 
   // 요구치 2. Perception 1은 한 칸 모자라 무리(strained) — 시간 +2.
   const strained = finishTask(useFieldEquipment(run, INSTANCE, SNIPER, camera.id, { effectivePerception: 1, usableAmmo: 10 }));
   assert.equal(strained.time, run.time + CAMERA_SNIPE_TIME + CAPABILITY_STEP_TIME_DELTA.strained);
-  assert.equal(strained.time, run.time + 6);
   assert.ok((strained.disabledCameraIds || []).includes(camera.id), '무리해도 카메라는 부서진다');
 
   // Perception 0은 두 칸 모자라 위태(severe) — 시간 +4.

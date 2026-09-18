@@ -33,9 +33,9 @@ import {
 } from '../data/facilityLayout.js';
 
 /** 맵에서 장비를 한 건 갈아끼우는 데 드는 칸. 다른 현장 작업과 같은 결로 중단 대상이다. */
-export const MAP_EQUIP_TIME_COST = 3;
+export const MAP_EQUIP_TIME_COST = 2;
 /** 맵에서 회복류 소모품을 쓰는 데 드는 칸. */
-export const MAP_CONSUMABLE_TIME_COST = 2;
+export const MAP_CONSUMABLE_TIME_COST = 1;
 
 /** @typedef {import('./capabilityCosts.js').CapabilityKind} CapabilityKind */
 /** @typedef {import('./capabilityCosts.js').CapabilityCost} CapabilityCost */

@@ -1707,7 +1707,7 @@ export function MapScreen() {
                 // 그대로 둬서 이동 가능 판정 등 다른 로직은 안개 규칙을 그대로 따른다).
                 const displayKnowledge = debugReveal ? (n.id === run.playerNodeId ? 'current' : 'fresh') : knowledge;
                 // 관측이 닿은 노드는 무엇이 놓여 있는지가 기록에 남으므로 지도에도 ◆(확보 대상)·
-                // ○(보급품)로 남는다 — 4칸을 쓴 대가가 화면에 계속 보여야 "어디를 정찰할까"가
+                // ○(보급품)로 남는다 — 정찰에 쓴 칸의 대가가 화면에 계속 보여야 "어디를 정찰할까"가
                 // 결정이 된다. 등급(정예 색)만은 여전히 정찰로 읽은 것만 쓴다.
                 const nodeContents = knownContentsOf(run, n.id, debugReveal);
                 const opportunity = nodeContents.opportunities.find((o) => o.grade === 'prize') || nodeContents.opportunities[0];

@@ -150,7 +150,7 @@ function distOf(distances, nodeId) {
 
 // ---- 시드 하나 측정 ----
 
-/** 탈출구를 실제로 쓰려면 도착 뒤 가동 게이지(Hacking 0 -> 9칸)를 다 채워야 한다(ADR-0084·0085). */
+/** 탈출구를 실제로 쓰려면 도착 뒤 가동 게이지(Hacking 0 -> 5칸)를 다 채워야 한다(ADR-0084·0085). */
 const EXIT_OVERHEAD = EXIT_ACTIVATE_TIME_BY_HACKING[BASE_CAPABILITY + 2];
 
 /**

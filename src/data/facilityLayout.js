@@ -258,14 +258,14 @@ export const STEALTH_CONTEXT_LOCKDOWN = -1;
 // 구역 통제실 해킹(§신규) — 각 구역의 랜드마크 노드(graph.landmarks)에서만 시도할 수 있다.
 // 해킹 수치별로 누적 언락(상위 레벨은 하위 효과를 전부 포함): 1=이 구역 순찰경로 영구 표시,
 // 2=이 구역 경계레벨 감소(감소량 = 해킹 수치 - 1), 3=맵 전체 위협 전원 patrol 전환.
-export const CONTROL_ROOM_HACK_TIME = 8;
+export const CONTROL_ROOM_HACK_TIME = 4;
 
 // 계약(§3단계, D3·D4·D21). 완료 액션 세 종류의 시간 비용. 확보(회수 물건 집기·정보
 // 데이터 추출)는 정찰보다 무겁고 해킹보다는 가볍게, 파괴는 가장 무겁게, 송출은 확보보다
 // 가볍게 잡았다 — 다른 §신규 필드 액션들과 같은 대역(4~9칸)에 맞춘 1차값이다.
-export const CONTRACT_ACQUIRE_TIME = 6;
-export const CONTRACT_DESTROY_TIME = 9;
-export const CONTRACT_TRANSMIT_TIME = 5;
+export const CONTRACT_ACQUIRE_TIME = 3;
+export const CONTRACT_DESTROY_TIME = 5;
+export const CONTRACT_TRANSMIT_TIME = 3;
 
 /**
  * 파괴 계약의 마지막 장(C5). 목표부에서 폭약을 **설치**(CONTRACT_DESTROY_TIME, 여기서 봉쇄
@@ -273,7 +273,7 @@ export const CONTRACT_TRANSMIT_TIME = 5;
  * 시절에는 목표부가 곧 종점이라 "터뜨리고 내려오는" 장면이 아예 없었다 — 봉쇄가 켜진 시설을
  * 가로질러 빠져나오는 그 구간이 이 계약의 값이다.
  */
-export const CONTRACT_DETONATE_TIME = 2;
+export const CONTRACT_DETONATE_TIME = 1;
 /** 기폭 지점이 목표부에서 떨어져 있어야 하는 최소 홉수. */
 export const CONTRACT_DETONATE_MIN_HOPS = 2;
 
@@ -288,7 +288,7 @@ export const CAMERA_NODE_CHANCE = 0.22;
 export const ACCESS_INTERFACE_NODE_CHANCE = 0.16;
 export const CAMERA_STEALTH_THRESHOLD = 3;
 export const CAMERA_ALERT_RANGE = 3;
-export const CAMERA_HACK_TIME = 5;
+export const CAMERA_HACK_TIME = 3;
 export const CAMERA_HACK_DURATION = 15;
 // Effective Hacking -2/-1/0/1/2/3/4 -> direct graph-hop range (§10.2 문서: "Hacking 1·2·3·4에서
 // 각각 1·2·3·4홉 이내"). Hacking 0 이하는 자격 미달로 아예 시도할 수 없으므로 0. A hacked access
@@ -303,7 +303,7 @@ export const CAMERA_HACK_RANGE_BY_HACKING = [0, 0, 0, 1, 2, 3, 4];
 // 안으로만 퍼진다(카메라 무력화가 구역 단위인 것과 같은 경계다).
 // index = clamp(유효 Hacking, -2, 4) + 2.
 export const INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING = [1, 1, 2, 3, 4, 5, 6];
-export const CAMERA_FORCE_TIME = 5;
+export const CAMERA_FORCE_TIME = 3;
 export const CAMERA_FORCE_NOISE = 2;
 
 // ---- 카메라 저격 (저격총의 현장 행동) ----
@@ -315,7 +315,7 @@ export const CAMERA_FORCE_NOISE = 2;
 // 원거리 파괴의 병목은 힘이 아니라 조준이다. 그리고 Perception이 정보 수단에만 머물면
 // Perception 특화 장비가 능동 행동을 하나도 갖지 못한다.
 export const CAMERA_SNIPE_REQUIREMENT = 2;
-export const CAMERA_SNIPE_TIME = 4;
+export const CAMERA_SNIPE_TIME = 2;
 /** 총성은 **내 노드**에서 난다 — 위협이 조사하러 오는 곳은 카메라가 아니라 쏜 자리다. */
 export const CAMERA_SNIPE_NOISE = 2;
 /** 사거리는 통로 홉수다. 시야가 없으면 못 쏜다 — 잠긴 통로 너머와 일방통행의 역방향은 불가. */
@@ -323,8 +323,8 @@ export const CAMERA_SNIPE_RANGE = 2;
 /** 장전된 탄은 전투 안에만 있는 개념이라(combatEngine.createCombat), 맵에서는 인벤토리의 예비탄 1발을 쓴다. */
 export const CAMERA_SNIPE_AMMO_COST = 1;
 export const GENERATOR_SECTOR_IDS = ['power', 'labs'];
-export const GENERATOR_HACK_TIME = 5;
-export const GENERATOR_FORCE_TIME = 5;
+export const GENERATOR_HACK_TIME = 3;
+export const GENERATOR_FORCE_TIME = 3;
 export const GENERATOR_FORCE_NOISE = 2;
 export const GENERATOR_COMBAT_START_ARMOR = 5;
 // 이동은 언제나 1칸이다(ADR-0084) — 통로의 길이도, Mobility도 이동 시간을 바꾸지 않는다.
@@ -374,7 +374,7 @@ export const EXIT_OPEN_WINDOW = 5;
  * "언제 가동을 걸 것인가"가 판단으로 남을 만큼만 남긴다. effectiveHacking을 -2..4로 clamp한 뒤
  * (value+2) 인덱스로 조회.
  */
-export const EXIT_ACTIVATE_TIME_BY_HACKING = [9, 9, 9, 8, 7, 6, 4];
+export const EXIT_ACTIVATE_TIME_BY_HACKING = [5, 5, 5, 4, 4, 3, 2];
 
 export const NOISE_DURATION = 5; // §7.1 소음은 발생 시각 C부터 [C, C+5) 동안 들린다.
 export const INVESTIGATION_MEMORY_DURATION = 15; // §7.1 "출처 도착 또는 기억 만료 전까지".
@@ -448,7 +448,7 @@ export const ALERT_PRESSURE = {
 
 // 시체(D13) — 전투에서 이긴 노드에 남는다. 위협이 밟으면 신고되어 경계도가 오르고 그 지점으로
 // 조사가 몰린다. 치우는 것은 선택이며 기본은 그냥 두고 가는 것이다.
-export const CORPSE_DISPOSAL_TIME = 5;
+export const CORPSE_DISPOSAL_TIME = 3;
 /** 시체·강한 흔적이 발견됐을 때 그 지점에 생기는 조사 유발 소음의 강도. */
 export const DISCOVERY_NOISE_INTENSITY = 2;
 
@@ -461,7 +461,7 @@ export const EVIDENCE_TIER_RAISING_ALERT = 2;
  * 첫 칸(Perception -2)은 층계상 도달할 수 없어 실제로는 쓰이지 않는다 — 다른 Capability 표와
  * 같은 -2~4 일곱 칸 모양을 유지하려고 남겨 둔 자리다.
  */
-export const TRACE_CLEANUP_TIME_BY_PERCEPTION = [8, 8, 7, 6, 5, 4, 4];
+export const TRACE_CLEANUP_TIME_BY_PERCEPTION = [4, 4, 4, 3, 3, 2, 2];
 
 // 증원(D14) — 구역마다 로스터(graph.threats)에 정해진 정원이 있고, 전투로 비운 자리만 다시
 // 채운다("그냥 리스폰"). 정원을 넘지 않으므로 맵 청소는 불가능해지되 무한 증식도 하지 않는다.
@@ -475,14 +475,14 @@ export const REINFORCEMENT_LOCKDOWN_INTERVAL = 90;
 // 전원 차단(D12) — 그 구역 경계도 상승을 잠시 멈춘다. 대가는 큰 소음과, 그동안 그 구역의
 // 전자식 자물쇠를 열 수 없다는 것이다(전원이 없으니 해킹할 제어가 없다. 문을 뜯는 Force는 된다).
 export const POWER_CUT_DURATION = 30;
-export const POWER_CUT_TIME = 6;
+export const POWER_CUT_TIME = 3;
 export const POWER_CUT_NOISE = 3;
 
 // ---- 기만: 유인과 오도 ----
 //
 // 가짜 소음 — Deception만 있으면 어디서든 쓸 수 있는 유인 수단이다. 접속 인터페이스를 요구하는
 // 가짜 목표 송출과 달리 자리를 가리지 않지만, 경계도를 옮기지는 못한다. 시선만 끈다.
-export const FAKE_NOISE_TIME = 3;
+export const FAKE_NOISE_TIME = 2;
 export const FAKE_NOISE_REQUIREMENT = 1;
 /**
  * 실효 Deception -2/-1/0/1/2/3/4 -> 소음을 심을 수 있는 홉 범위.
@@ -519,7 +519,7 @@ export const ENCOUNTER_DECEIVE_STEP_PENALTY = {
 export const FALSE_BROADCAST_ANY_SECTOR_DECEPTION = 3;
 
 // 가짜 목표 송출(D12) — 경계를 인접 구역으로 옮긴다. 총량은 보존된다.
-export const FALSE_BROADCAST_TIME = 7;
+export const FALSE_BROADCAST_TIME = 4;
 export const FALSE_BROADCAST_INTENSITY = 2;
 /**
  * Deception — 어설픈 속임수는 오래 못 간다. 심어둔 가짜 목표가 유지되는 시간이며, 소음(5칸)
@@ -575,10 +575,10 @@ export const PRIZE_PROMOTION_CHANCE_BY_NODE_TYPE = {
 /** @type {{value: 'normal'|'elite', weight: number}[]} */
 export const PRIZE_TIER_WEIGHTS = [{ value: 'normal', weight: 70 }, { value: 'elite', weight: 30 }];
 
-export const SUPPLY_FARM_TIME = 5;
+export const SUPPLY_FARM_TIME = 3;
 export const SUPPLY_FARM_NOISE = 1;
 /** @type {Record<'normal'|'elite', number>} */
-export const PRIZE_FARM_TIME = { normal: 10, elite: 13 };
+export const PRIZE_FARM_TIME = { normal: 5, elite: 7 };
 /** @type {Record<'normal'|'elite', 1|2|3>} */
 export const PRIZE_FARM_NOISE = { normal: 2, elite: 3 };
 // 확보 대상 지점의 역할축. 지점마다 독립적으로 굴리므로 한 구역의 확보 대상이 전부 같은
@@ -603,7 +603,7 @@ export const APPROACH_MIN_TIME = 1;
 
 // ---- 기본 맵 행동 (§6.2) ----
 
-export const BASIC_RECON_TIME = 4;
+export const BASIC_RECON_TIME = 2;
 // 기본 정찰의 표준 홉 범위 — 현재 노드 + 1홉. 무료 인접 실시간 관측도 1홉이므로, Perception
 // 0~2에서 정찰이 사는 것은 **사거리가 아니라 깊이**다: 무료 관측이 "무언가 있다"까지라면 정찰은
 // 그 자리의 내용물과 위협 상세를 읽는다. 사거리를 더 사려면 Perception 3 이상이어야 한다
@@ -688,7 +688,7 @@ export const COMBAT_ENEMY_AMBUSH_TIME_COST = 1;
 
 // ---- Capability 행동표 tier 1 (§6.3) — MVP는 tier 1 접근만 구현한다. 더 높은 tier(예: Force
 // 2~4의 바리케이드 파괴·구조물 붕괴)는 이후 단계 과제로 남긴다.
-export const FORCE_TIER1_TIME = 5;
+export const FORCE_TIER1_TIME = 3;
 export const FORCE_BASE_NOISE = 2; // §6.3 "Force 기본 소음은 2와 흔적이다."
-export const HACKING_TIER1_TIME = 4;
+export const HACKING_TIER1_TIME = 2;
 export const HACKING_BASE_NOISE = 0;

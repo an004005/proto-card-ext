@@ -74,7 +74,7 @@ function snapshotOf(run, playerState = {}) {
 
 // ---- 1. 중단: 경과한 칸만 소모하고 예약은 해제된다 ----
 
-test('적이 3칸째에 도착하면 10칸 파밍은 거기서 끝난다 — 시간만 3칸 나가고 보상·기회·소음은 남지 않는다', () => {
+test('적이 3칸째에 도착하면 파밍은 거기서 끝난다 — 시간만 3칸 나가고 보상·기회·소음은 남지 않는다', () => {
   const base = quietRun(3);
   const nodeId = base.playerNodeId;
   const opportunity = { id: 'p1', nodeId, keyEligible: true, usesRemaining: 1, grade: 'prize', tier: 'normal', axis: 'resource' };
@@ -82,7 +82,7 @@ test('적이 3칸째에 도착하면 10칸 파밍은 거기서 끝난다 — 시
     ...base,
     graph: { ...base.graph, opportunities: [opportunity] },
   }, 3);
-  assert.equal(PRIZE_FARM_TIME.normal, 10, '이 검증은 10칸짜리 작업을 전제한다');
+  assert.ok(PRIZE_FARM_TIME.normal > 3, '이 검증은 3칸보다 오래 걸리는 작업을 전제한다');
 
   const { state: started, keyGranted } = useOpportunity(run, 'p1', 'normal');
   const after = finishTask(started);
@@ -107,8 +107,8 @@ test('작업 시작 때 같은 노드에 있던 위협도 떠났다 돌아오면
   const template = Object.values(createRunState(base.graph, 1).threats)[0];
   const opportunity = { id: 'p1', nodeId, keyEligible: false, usesRemaining: 1, grade: 'prize', tier: 'elite', axis: 'resource' };
 
-  // 순찰 경로 [옆 노드, 현재 노드] — 6칸째에 옆으로 나갔다가 순찰 주기(5칸) 뒤인 11칸째에
-  // 돌아온다. 작업은 13칸짜리라 완료 전에 재접촉이 일어난다.
+  // 순찰 경로 [옆 노드, 현재 노드] — 1칸째에 옆으로 나갔다가 순찰 주기(5칸) 뒤인 6칸째에
+  // 돌아온다. 정예 파밍은 그보다 길어서 완료 전에 재접촉이 일어난다.
   const run = {
     ...base,
     graph: { ...base.graph, opportunities: [opportunity] },
@@ -122,19 +122,19 @@ test('작업 시작 때 같은 노드에 있던 위협도 떠났다 돌아오면
         lastKnownPlayerNodeId: null,
         target: null,
         patrolRoute: [away, nodeId],
-        patrolIndex: 0,
+        patrolIndex: 1,
         nextMoveAt: base.time + 1,
       },
     },
   };
-  assert.equal(PRIZE_FARM_TIME.elite, 13, '이 검증은 13칸짜리 작업을 전제한다');
+  assert.ok(PRIZE_FARM_TIME.elite > 6, '이 검증은 6칸보다 긴 작업을 전제한다');
   assert.equal(THREAT_MOVE_INTERVAL.patrol, 5, '이 검증은 순찰 주기 5칸을 전제한다');
 
   const { state: started } = useOpportunity(run, 'p1', 'normal');
   const after = finishTask(started);
   assert.equal(after.lastTaskOutcome.status, 'interrupted', '되돌아온 위협은 새 접촉이다');
   assert.equal(after.lastTaskOutcome.reason, 'threatContact');
-  assert.equal(after.time - run.time, 11, '되돌아온 칸까지만 소모한다');
+  assert.equal(after.time - run.time, 6, '되돌아온 칸까지만 소모한다');
   assert.equal(after.graph.opportunities[0].usesRemaining, 1, '기회는 소모되지 않는다');
 });
 
@@ -239,11 +239,11 @@ test('기본 정찰은 완료 시점의 적 위치를 관측한다 — 시작 �
         lastKnownPlayerNodeId: null,
         patrolRoute: [watched, away],
         patrolIndex: 0,
-        nextMoveAt: 2,
+        nextMoveAt: 1,
       },
     },
   };
-  assert.ok(BASIC_RECON_TIME > 2, '정찰이 끝나기 전에 위협이 한 번 움직여야 한다');
+  assert.ok(BASIC_RECON_TIME > 1, '정찰이 끝나기 전에 위협이 한 번 움직여야 한다');
 
   const after = finishTask(basicRecon(run));
   assert.equal(after.time, run.time + BASIC_RECON_TIME);
