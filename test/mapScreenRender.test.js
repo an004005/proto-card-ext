@@ -319,3 +319,98 @@ test('노드를 클릭하면 그곳까지의 최단 경로가 지도 위에 그�
   }
   assert.ok(shown, '2칸 이상 떨어진 노드를 골랐을 때 경로 요약과 강조 통로가 있어야 한다');
 });
+
+/** 지도 위 통로의 히트 영역(투명한 굵은 path). 통로 카드는 여기에 호버해야 뜬다. */
+function edgeHit(root, edgeId) {
+  return queryAll(root, (node) => node.localName === 'path' && node.getAttribute('data-edge-id') === edgeId)[0] || null;
+}
+
+/** 그 통로 하나만 특별하게 만든 run — 나머지는 전부 평범한 통로로 둔다. */
+function withEdge(base, edgeId, patch) {
+  return {
+    ...base,
+    threats: {},
+    graph: { ...base.graph, edges: base.graph.edges.map((e) => (e.id === edgeId ? { ...e, ...patch } : e)) },
+  };
+}
+
+/** 통로 하나에 호버해 카드를 띄운다 — 카드는 문자열 사본을 감춰 두므로 textContent로 읽힌다. */
+async function hoverEdge(root, edgeId) {
+  const hit = edgeHit(root, edgeId);
+  assert.ok(hit, `통로 ${edgeId}의 히트 영역이 있어야 한다`);
+  fire(hit, 'mouseenter', { clientX: 100, clientY: 100 });
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  return root.textContent;
+}
+
+test('평범한 인접 통로에 호버하면 이동 1칸과 양 끝 노드 유형이 카드로 나온다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const edge = base.graph.edges.find((e) => (e.from === base.playerNodeId || e.to === base.playerNodeId)
+    && e.features.length === 0 && e.bidirectional !== false);
+  assert.ok(edge, '평범한 인접 통로가 하나는 있어야 한다');
+  const run = { ...base, threats: {} };
+  const typeLabels = {
+    corridor: '복도', office: '사무·작업실', hall: '대공간', vault: '봉인 격실',
+    utility: '설비실', watch: '감시 지점', refuge: '은신처', crawlway: '비인가 통로',
+  };
+  const root = mountMap(run);
+  const text = await hoverEdge(root, edge.id);
+
+  assert.ok(text.includes('이동 1칸'), '인접 통로에는 이동 행이 있어야 한다');
+  assert.ok(text.includes('도착 예상'), '도착 위험 예보가 붙어야 한다');
+  assert.ok(text.includes('현재 위치'), '내가 선 끝은 구역이 아니라 현재 위치로 적힌다');
+  for (const nodeId of [edge.from, edge.to]) {
+    const node = run.graph.nodes.find((n) => n.id === nodeId);
+    assert.ok(text.includes(typeLabels[node.type]), `끝 노드 유형(${node.type})이 카드에 있어야 한다`);
+  }
+  assert.ok(text.includes('노드를 더블클릭해 이동'), '지날 수 있는 통로에는 조작 힌트가 붙는다');
+});
+
+test('전자 잠금 통로에 호버하면 종류·요구 Capability·개방 힌트가 카드로 나온다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const edge = base.graph.edges.find((e) => e.from === base.playerNodeId || e.to === base.playerNodeId);
+  // 전자 자물쇠는 언제나 'blocked' 위에 덧붙는다(facilityLayout.js) — 실제 생성과 같은 모양으로 둔다.
+  const run = withEdge(base, edge.id, { features: ['blocked', 'electronic'], requiredCapability: 2 });
+
+  const root = mountMap(run);
+  const text = await hoverEdge(root, edge.id);
+
+  assert.ok(text.includes('전자 잠금 통로'), '머리에 통로 종류가 있어야 한다');
+  assert.ok(text.includes('잠김 · 열 수 있음'), '인접해 있으면 열 수 있다는 배지가 붙는다');
+  assert.ok(text.includes('Hacking 2 표준 · 현재 0'), '요구치와 현재 값을 함께 적어야 한다');
+  assert.ok(text.includes('클릭해 개방'), '열 수 있는 통로에는 개방 힌트가 붙는다');
+  assert.ok(!text.includes('electronic'), '코드 키가 그대로 새어 나왔다');
+});
+
+test('일방통행 통로를 역방향 끝에서 보면 역방향·불가로 적힌다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  // 반대편에서 현재 위치로만 열린 통로를 만든다 — 즉 내가 선 쪽이 `to`가 되게 방향을 잡는다.
+  const edge = base.graph.edges.find((e) => e.from === base.playerNodeId || e.to === base.playerNodeId);
+  const oriented = edge.to === base.playerNodeId ? {} : { from: edge.to, to: edge.from };
+  const run = withEdge(base, edge.id, { bidirectional: false, ...oriented });
+
+  const root = mountMap(run);
+  const text = await hoverEdge(root, edge.id);
+
+  assert.ok(text.includes('일방통행 통로'), '머리에 일방통행이 있어야 한다');
+  assert.ok(text.includes('역방향 · 불가'), '역방향 끝에서는 불가 배지가 붙는다');
+  assert.ok(text.includes('여기서는 들어갈 수 없다'), '왜 안 되는지 한 줄로 말해야 한다');
+  assert.ok(text.includes('다른 길로 돌아가야 한다'), '꼬리에 규칙 한 줄이 있어야 한다');
+});
+
+test('임시 장벽이 쳐진 통로는 남은 칸과 함께 장벽 행을 낸다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const edge = base.graph.edges.find((e) => e.from === base.playerNodeId || e.to === base.playerNodeId);
+  const run = { ...base, threats: {}, activeBarriers: [{ edgeId: edge.id, expiresAt: base.time + 12 }] };
+
+  const root = mountMap(run);
+  const text = await hoverEdge(root, edge.id);
+
+  assert.ok(text.includes('임시 장벽 · 적 이동 차단'), '장벽 행이 있어야 한다');
+  assert.ok(text.includes('장벽 · 12칸 남음'), '배지에 남은 칸이 적혀야 한다');
+  assert.ok(text.includes('나는 지날 수 있다'), '장벽이 막는 것이 누구인지 말해야 한다');
+});
