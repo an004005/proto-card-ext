@@ -33,6 +33,7 @@ import {
   CAMERA_SNIPE_NOISE, CAMERA_SNIPE_AMMO_COST,
 } from '../data/facilityLayout.js';
 import { getBurdenItems } from '../engine/inventoryEngine.js';
+import { injuryPenalty } from '../engine/capabilityEngine.js';
 import { CAPABILITY_ORDER, CAPABILITY_LABELS, CAPABILITY_SHORT, CAPABILITY_ROLE, CAPABILITY_KOREAN } from '../data/capabilityDisplay.js';
 import { OverloadToggle } from './OverloadToggle.js';
 import { InventoryPopup } from './InventoryPopup.js';
@@ -1146,6 +1147,10 @@ export function MapScreen() {
   // 그린다. 사용이 0칸이고 취소가 환불되므로, 상한 Perception으로 그리면 "썼다가 취소"로
   // 인접 노드의 실시간 정보를 공짜로 훔쳐볼 수 있다.
   const viewCapabilities = computeCapabilities(ps.loadout);
+  // 부상 페널티(ADR-0093)는 장비 합에서 얼마가 깎였는지를 화면이 분해해 적을 수 있어야 한다 —
+  // 실효값만 보여주면 "장비를 바꿔야 하는가, 붕대를 써야 하는가"를 고를 수 없다. 칩을 쓰는
+  // 동안은 여섯 값이 상한으로 고정되므로 분해할 것도 없다.
+  const injury = run.overrideArmed ? 0 : injuryPenalty(ps.hp, ps.maxHp);
   const hasMapImplant = !!getImplantEffect(ps.loadout, 'sectorLandmarkArrow');
   const landmarkArrowTarget = getSectorLandmarkArrowTarget(run, hasMapImplant);
   const fieldEquipment = listFieldActiveEquipment(ps.loadout);
@@ -1457,9 +1462,10 @@ export function MapScreen() {
           ` : null}
         </div>
         <div style=${{ display: 'flex', gap: 0, fontSize: '13px', alignItems: 'stretch' }}>
-          <${Tooltip} content="현재 체력입니다. 0이 되면 전투 불능으로 런이 종료됩니다. 필드에서는 소모품으로만 회복할 수 있습니다.">
+          <${Tooltip} content=${`현재 체력입니다. 0이 되면 전투 불능으로 런이 종료됩니다. 필드에서는 소모품으로만 회복할 수 있습니다.${injury > 0 ? ` 지금은 HP가 ${Math.round((ps.hp / ps.maxHp) * 100)}%라 여섯 Capability가 전부 ${injury} 깎여 있습니다 — 회복하면 그 자리에서 풀립니다(ADR-0093).` : ''}`}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
               <${IconHeart} /><span>HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
+              ${injury > 0 ? html`<span class="tag" style=${{ background: 'var(--color-negative, #dd2b0f)', color: 'var(--color-bg)', fontWeight: 800, fontSize: '10px', padding: '0 5px' }}>부상 −${injury}</span>` : null}
             </div>
           <//>
           <${MapClock} run=${run} countdowns=${countdowns} />
@@ -2698,8 +2704,12 @@ export function MapScreen() {
               <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', marginTop: '6px' }}>
                 ${CAPABILITY_ORDER.map((key) => {
                   const raw = capabilities[key];
+                  // 부상 중이면 합계만으로는 무엇이 값을 깎았는지 읽히지 않는다 — 분해해 적는다.
+                  const breakdown = injury > 0
+                    ? ` 장비 합 ${viewCapabilities[key]} − 부상 ${injury} = 실효 ${raw}.`
+                    : '';
                   return html`
-                    <${Tooltip} key=${key} width=${240} align="left" content=${`${CAPABILITY_LABELS[key]}(${CAPABILITY_KOREAN[key]}) — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다 — 0으로 자르지 않습니다. 예외는 고지대 통과 하나로, 지형 판정이라 0 하한을 적용한 값으로 층계를 가릅니다). ${capabilityActionSummary(key, raw)}`}>
+                    <${Tooltip} key=${key} width=${240} align="left" content=${`${CAPABILITY_LABELS[key]}(${CAPABILITY_KOREAN[key]}) — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다 — 0으로 자르지 않습니다. 예외는 고지대 통과 하나로, 지형 판정이라 0 하한을 적용한 값으로 층계를 가릅니다).${breakdown} ${capabilityActionSummary(key, raw)}`}>
                       <span class="tag tag-outline" tabIndex="0">${CAPABILITY_SHORT[key]}(${CAPABILITY_KOREAN[key]}) ${raw >= 0 ? '+' : ''}${raw}</span>
                     <//>
                   `;

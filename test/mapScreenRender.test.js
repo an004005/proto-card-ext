@@ -651,3 +651,16 @@ test('추적자는 관측하지 못한 구역에 있어도 지도와 위협 패�
   assert.ok(text.includes('추적자'), '미관측 구역의 추적자도 지도·패널에 이름이 보여야 한다');
   assert.ok(text.includes('놓치기까지 16칸'), '남은 칸이 위협 패널 첫 줄에 보여야 한다');
 });
+
+test('HP가 절반 이하인 런에서는 상단에 부상 배지가 뜬다 (ADR-0093)', () => {
+  const { graph } = generateFacilityGraph(11);
+  const run = { ...createRunState(graph, 11), threats: {} };
+  const snapshot = snapshotOf(run);
+  snapshot.playerState = { ...snapshot.playerState, hp: 20, maxHp: 40 };
+  snapshotSignal.value = snapshot;
+  historySignal.value = createHistory(snapshot);
+  const root = makeRoot();
+  render(html`<${MapScreen} />`, root);
+
+  assert.ok(root.textContent.includes('부상 −1'), 'HP 50%에서는 −1 배지가 보여야 한다');
+});

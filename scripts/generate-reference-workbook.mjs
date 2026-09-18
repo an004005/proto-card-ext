@@ -12,7 +12,7 @@ import { LOADOUT_PRESETS } from '../src/data/loadoutPresets.js';
 import { MONSTER_DEFINITIONS } from '../src/data/monsters.js';
 import { axisOfEquipment } from '../src/engine/fieldLoot.js';
 import { STATUS_LABELS, POWER_LABELS } from '../src/data/statusEffects.js';
-import { MAP_EQUIPMENT_CAPABILITIES } from '../src/data/facilityEquipmentCapabilities.js';
+import { MAP_EQUIPMENT_CAPABILITIES, INJURY_PENALTY_STEPS } from '../src/data/facilityEquipmentCapabilities.js';
 import * as FACILITY from '../src/data/facilityLayout.js';
 import { BASE_MAX_HP, BASE_INVENTORY_CAPACITY, CONSUMABLE_SLOT_COUNT, previewPresetCapabilities } from '../src/engine/loadoutReducer.js';
 import { SLOT_LIMITS } from '../src/engine/inventoryReducer.js';
@@ -213,6 +213,7 @@ function buildWorkbook() {
     ['맵', '경계도 2+ 이동 간격', `순찰 ${FACILITY.SECTOR_ALERT_MOVE_INTERVAL.patrol} / 조사·경계 ${FACILITY.SECTOR_ALERT_MOVE_INTERVAL.investigate} / 추적 ${FACILITY.SECTOR_ALERT_MOVE_INTERVAL.pursuit}`, `구역 경계도가 ${FACILITY.SECTOR_ALERT_FAST_MOVE_LEVEL} 이상이면 그 구역의 위협이 모드를 가리지 않고 빨라진다. 봉쇄표와 함께 걸리면 둘 중 작은 값을 쓴다`, 'src/data/facilityLayout.js'],
     ['맵', '구역 경계 게이지', `정원 ${FACILITY.ALERT_GAUGE_CAPACITY}`, `원인마다 압력이 쌓이고 정원을 채우면 단계가 1 오르며 남은 양은 이월된다(3에서 멈춘다). 카메라 감지 +${FACILITY.ALERT_PRESSURE.cameraDetection} / 시체 발견 +${FACILITY.ALERT_PRESSURE.corpseFound} / 강한 흔적 발견 +${FACILITY.ALERT_PRESSURE.strongTraceFound} / 층계 위태 +${FACILITY.ALERT_PRESSURE.botchedAction} / 허탕 조사 +${FACILITY.ALERT_PRESSURE.failedInvestigation}. 단계를 낮추는 수습은 그 구역 게이지를 0으로 지운다`, 'src/data/facilityLayout.js'],
     ['맵', '추적자', `이동 ${FACILITY.HUNTER_MOVE_INTERVAL}칸 고정 / 지각 ${FACILITY.HUNTER_PERCEPTION}`, `구역 경계도 단계가 3이 되는 순간 그 구역의 랜드마크(없으면 관문)에 규모 1의 추적자 하나가 나온다. 구역당 하나. 경계도 가속·봉쇄와 무관하게 ${FACILITY.HUNTER_MOVE_INTERVAL}칸 고정 간격이고, ${FACILITY.HUNTER_SIGHT_HOPS}홉 이내에서 실효 Stealth ${FACILITY.HUNTER_STEALTH_THRESHOLD} 미만이면 관측한다. 같은 노드에 닿으면 회피·속이기 없이 강제 조우. 연속 ${FACILITY.HUNTER_LOSE_TICKS}칸 미관측 / 경계도 3 아래로 하락 / 통제실 장악 중 하나로 물러난다. 안개와 무관하게 항상 보인다(ADR-0092)`, 'src/data/facilityLayout.js'],
+    ['맵', '부상 페널티', INJURY_PENALTY_STEPS.map((s) => `HP ${Math.round(s.ratio * 100)}% 이하 −${s.penalty}`).join(' / '), '맵이 판정에 쓰는 여섯 Capability 전부에서 같은 값을 뺀 뒤 -2~4로 자른다. 겹치는 문턱은 누적하지 않고 가장 깊은 한 칸만 쓴다. 저장하지 않고 매번 HP에서 계산하므로 회복하면 곧바로 풀린다. 오버라이드 칩 사용 중에는 걸리지 않는다(ADR-0093)', 'src/data/facilityEquipmentCapabilities.js'],
     ['맵', '구역 증원 주기', `${FACILITY.REINFORCEMENT_INTERVAL} / 봉쇄 ${FACILITY.REINFORCEMENT_LOCKDOWN_INTERVAL}`, '구역별 독립 시계. 로스터의 빈자리만 채운다', 'src/data/facilityLayout.js'],
     ['맵', '인터페이스 카메라 공개', FACILITY.INTERFACE_CAMERA_REVEAL_HOPS_BY_HACKING.join('/'), '접속 인터페이스를 장악하면 그 노드에서 유효 Hacking -2~4별 이 홉수 안, 같은 구역의 카메라 위치가 지도에 드러난다(위치·상태만, 그 노드의 나머지 내용물은 아니다)', 'src/data/facilityLayout.js'],
     ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '이 시각 뒤로는 새 가동을 시작할 수 없다. 이미 시작된 가동 게이지와 열린 창은 끝까지 간다(ADR-0054)', 'src/data/facilityLayout.js'],

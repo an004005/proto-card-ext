@@ -80,3 +80,13 @@ export const MAP_EQUIPMENT_CAPABILITIES = {
 
 export const CAPABILITY_MIN = -2;
 export const CAPABILITY_MAX = 4;
+
+/**
+ * 부상 페널티(ADR-0093) — HP 비율이 이 문턱 아래로 내려가면 여섯 Capability가 전부 그만큼
+ * 깎인다. 회복하면 그 자리에서 풀린다(상태를 저장하지 않고 매번 계산한다).
+ *
+ * 내림차순으로 읽고 **처음 걸리는 한 칸**만 적용한다 — 누적이 아니다. HP 25%면 −2이지 −3이
+ * 아니다. 표로 두는 이유는 문턱이 늘어날 때 판정하는 자리가 하나로 남게 하기 위해서다.
+ * @type {{ratio: number, penalty: number}[]}
+ */
+export const INJURY_PENALTY_STEPS = [{ ratio: 0.5, penalty: 1 }, { ratio: 0.25, penalty: 2 }];
