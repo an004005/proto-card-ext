@@ -9,7 +9,7 @@
 //
 // UI 레이아웃(HUD/구역 라벨/미니맵/선택 노드 패널/범례·로그 접기)은 게임 UI 목업 디자인/
 // map-redesign의 개선안을 반영해 재구성했다 — 명령·판정 로직은 이전과 동일, 표현 계층만 변경.
-import { html, useState, useEffect, useRef, useMemo } from '../lib.js';
+import { html, useState, useEffect, useRef, useLayoutEffect, useMemo } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
 import { mapViewSignal, mapDebugRevealSignal, DEFAULT_MAP_VIEW } from '../state/mapViewState.js';
@@ -188,6 +188,37 @@ function PendingTaskPanel({ run, runCommand }) {
 }
 
 /**
+ * 현재 노드 패널의 접이식 묶음 하나. 이 자리에서 할 수 있는 일이 열 몇 가지라 한 줄로 쌓으면
+ * 사이드바를 끝까지 굴려야 무엇이 있는지 알 수 있다 — 성격이 같은 것끼리 묶고, 자주 안 쓰는
+ * 묶음은 접어 둔다. 안에 그릴 것이 하나도 없으면 머리도 그리지 않는다(빈 제목만 남으면
+ * "여기 뭔가 있는데 안 보인다"로 읽힌다).
+ * @param {{title: string, open: boolean, onToggle: () => void, children?: any}} props
+ */
+function PanelGroup({ title, open, onToggle, children }) {
+  const list = (Array.isArray(children) ? children : [children]).flat(Infinity)
+    .filter((child) => child !== null && child !== undefined && child !== false && child !== '');
+  if (list.length === 0) return null;
+  return html`
+    <div>
+      <div
+        role="button" tabindex="0"
+        style=${{
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer',
+    fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase',
+    color: 'var(--color-neutral-700)', borderBottom: '1px solid var(--color-divider)',
+    paddingBottom: '3px', marginBottom: open ? '7px' : '0',
+  }}
+        onClick=${onToggle}
+        onKeyDown=${(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onToggle(); } }}
+      >
+        <span>${title}</span><span>${open ? '▾' : '▸'}</span>
+      </div>
+      ${open ? html`<div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>${list}</div>` : null}
+    </div>
+  `;
+}
+
+/**
  * 유료 버튼 라벨의 유일한 규칙 — `이름 · N칸 · 소음 M`. 0인 통화는 적지 않는다.
  * 버튼마다 다른 순서로 적으면 두 버튼을 나란히 놓고 비교할 수 없다.
  * @param {import('../engine/actionCosts.js').ActionForecast} forecast @param {string} label
@@ -323,6 +354,9 @@ const ROUTE_COLOR = '#15803d';
 /** 고지대만 쓰는 연보라. 어두운 카드 위에서 읽히는 유일한 값이라 토큰 대신 이 리터럴을 쓴다
  * (지도 선의 #7c3aed는 밝은 배경용이고, 검은 카드 위에서는 거의 안 보인다). */
 const HIGH_GROUND_COLOR = '#c4b5fd';
+/** 지도 위 자리에 붙는 호버 카드의 너비 — 좌우 뒤집기 판정이 이 값을 쓴다.
+ * NodeTooltipCard와 EdgeTooltipCard의 기본 너비가 같아 하나면 된다. */
+const HOVER_CARD_WIDTH = 300;
 
 /** 노드 유형별 표시 이름. 도면을 읽는 언어이므로 툴팁·패널·범례가 모두 이 표를 쓴다. */
 const NODE_TYPE_LABELS = {
@@ -515,6 +549,8 @@ const ZOOM_MIN = 0.5;
 // 100여 노드가 한 캔버스에 들어가면 한 방의 글자·표식이 몇 픽셀밖에 안 된다. 3배로는 그것을
 // 읽을 수 없어 상한을 6배까지 올렸다 — 휠 한 칸(1.1배)과 +/− 버튼은 그대로다.
 const ZOOM_MAX = 6;
+// 노드 안에 유형 첫 글자(복/사/대/봉/설/감/은/비)를 적기 시작하는 배율 — 이보다 작으면 글자가 도형을 덮는다.
+const NODE_TYPE_LETTER_MIN_SCALE = 2.2;
 // 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — CAMERA_HACK_DURATION(15칸)보다
 // 조금 길게 잡아, 그 이후는 조용한 이력 표기로 낮춘다(계속 안 사라지면 지금도 쫓기는 중처럼 읽힘).
 const CAMERA_DETECTION_BANNER_WINDOW = 20;
@@ -1003,9 +1039,15 @@ export function MapScreen() {
   const setView = (next) => {
     mapViewSignal.value = typeof next === 'function' ? next(mapViewSignal.value) : next;
   };
-  // {x, y, text} 또는 {x, y, node} | null — 커스텀 툴팁(브라우저 기본 title의 지연 없이 즉시 표시).
+  // 커스텀 툴팁(브라우저 기본 title의 지연 없이 즉시 표시). 두 종류가 있다:
+  // - {anchor: {x, y}, node?} — 노드·통로처럼 지도 위에 자리가 있는 것. anchor는 **캔버스 좌표**라
+  //   호버 중에 지도를 끌어도 카드가 그 자리에 붙어 있고, 커서보다 한 프레임 늦게 따라오지 않는다.
+  // - {x, y, text} — 임플란트 화살표처럼 지도 위 자리가 없는 것. 그때만 커서를 따라간다.
   // node는 describeNode의 구조화된 설명이고, 그때는 NodeTooltipCard로 그린다.
   const [hover, setHover] = useState(null);
+  const mapAreaRef = useRef(null); // 캔버스 좌표를 화면 좌표로 바꿀 때 기준이 되는 지도 영역
+  const hoverCardRef = useRef(null);
+  const [hoverCardPos, setHoverCardPos] = useState({ left: -9999, top: -9999 });
   const [hoveredNodeId, setHoveredNodeId] = useState(null); // 노드 호버 시 연결 엣지 강조용
   const [hoveredEdgeId, setHoveredEdgeId] = useState(null); // 통로 호버 시 그 통로를 굵게 — 카드가 어느 선을 말하는지 보여야 한다
   const [selectedNodeId, setSelectedNodeId] = useState(null); // 클릭해 "선택 노드" 패널에 고정한 노드
@@ -1020,6 +1062,9 @@ export function MapScreen() {
   const [farmPlan, setFarmPlan] = useState(null);
   const [edgeApproachMode, setEdgeApproachMode] = useState('normal'); // 특수 엣지 개방의 접근 방식(안전/표준/강행)
   const [capabilityOpen, setCapabilityOpen] = useState(false); // Capability 블록은 기본 접힘 — 행동이 위로 온다
+  // 현재 노드 패널의 세 묶음. 수습·장비는 매 칸 쓰는 것이 아니라 기본으로 접어 둔다.
+  const [panelGroupsOpen, setPanelGroupsOpen] = useState({ actions: true, devices: true, cleanup: false });
+  const togglePanelGroup = (key) => setPanelGroupsOpen((open) => ({ ...open, [key]: !open[key] }));
   const [farmToast, setFarmToast] = useState(null);
   const dragRef = useRef({ dragging: false, lastX: 0, lastY: 0, moved: false });
   const nodeRefs = useRef({}); // nodeId -> 히트 영역 엘리먼트(화살표 이동이 포커스를 옮길 때 쓴다)
@@ -1064,6 +1109,30 @@ export function MapScreen() {
   useEffect(() => () => {
     if (hoverFrameRef.current.id && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(hoverFrameRef.current.id);
   }, []);
+
+  // 지도 위에 자리가 있는 호버(노드·통로)는 그 자리에 붙인다. 캔버스 좌표 → 화면 좌표 변환은
+  // SVG의 뷰박스 맞춤(fit)과 팬/줌(view)을 차례로 적용한 것이며, 오른쪽으로 삐져나가면 왼쪽으로
+  // 뒤집고 위아래는 화면 안으로 민다(Tooltip.js와 같은 규칙).
+  useLayoutEffect(() => {
+    if (!hover?.anchor || !mapAreaRef.current) return;
+    const rect = mapAreaRef.current.getBoundingClientRect();
+    const fit = Math.min(rect.width / CANVAS_WIDTH, rect.height / CANVAS_HEIGHT) || 1;
+    const screenX = rect.left + (rect.width - CANVAS_WIDTH * fit) / 2
+      + fit * (view.x + CANVAS_CENTER + view.scale * (hover.anchor.x - CANVAS_CENTER));
+    const screenY = rect.top + (rect.height - CANVAS_HEIGHT * fit) / 2
+      + fit * (view.y + CANVAS_CENTER + view.scale * (hover.anchor.y - CANVAS_CENTER));
+    const width = HOVER_CARD_WIDTH;
+    const gap = (NODE_RADIUS + 12) * fit * view.scale;
+    const viewportWidth = (typeof window !== 'undefined' && window.innerWidth) || 1280;
+    const viewportHeight = (typeof window !== 'undefined' && window.innerHeight) || 800;
+    const height = hoverCardRef.current ? hoverCardRef.current.getBoundingClientRect().height : 0;
+    let left = screenX + gap;
+    if (left + width > viewportWidth - 8) left = screenX - gap - width;
+    setHoverCardPos({
+      left: Math.max(8, left),
+      top: Math.max(8, Math.min(viewportHeight - height - 8, screenY - 12)),
+    });
+  }, [hover, view.x, view.y, view.scale]);
 
   if (!run) return null;
 
@@ -1175,20 +1244,28 @@ export function MapScreen() {
         .map((e) => e.id),
     )
     : null;
-  // 선택 노드까지의 최단 경로. 지금 실제로 지날 수 있는 통로만 센다(잠긴 문 제외, 일방통행은
+  // 어떤 노드까지의 최단 경로. 지금 실제로 지날 수 있는 통로만 센다(잠긴 문 제외, 일방통행은
   // 생성 방향만, 고지대는 넘을 수 있을 때만) — 통행 규칙은 graphUtils.baselineWalkArcs 한 곳에
   // 있고 여기서는 옵션만 준다. 지도에 없는 노드(미발견 비인가 통로)를 거치는 길은 플레이어가
   // 아직 모르는 정보라 제외한다. 훅이 아니라 순수 계산이므로 조기 반환 뒤에 있어도 안전하다.
-  const routeToSelected = (() => {
-    if (!selectedNodeId || selectedNodeId === run.playerNodeId || !chartedNodeIds.has(selectedNodeId)) return null;
+  // 선택한 노드(실선)와 호버 중인 노드(미리보기 점선)가 같은 계산을 쓴다.
+  const routeTo = (nodeId) => {
+    if (!nodeId || nodeId === run.playerNodeId || !chartedNodeIds.has(nodeId)) return null;
     const chartedEdges = run.graph.edges.filter((edge) => chartedNodeIds.has(edge.from) && chartedNodeIds.has(edge.to));
     const arcs = baselineWalkArcs(chartedEdges, {
       openedEdgeIds: run.openedEdgeIds, allowHighGround: canClimbHighGround(capabilities.mobility), withEdgeIds: true,
     });
-    return shortestPathOverArcs(arcs, run.playerNodeId, selectedNodeId);
-  })();
+    return shortestPathOverArcs(arcs, run.playerNodeId, nodeId);
+  };
+  const routeToSelected = routeTo(selectedNodeId);
   const routeEdgeIds = routeToSelected ? new Set(routeToSelected.edgeIds) : null;
   const routeNodeIds = routeToSelected ? new Set(routeToSelected.nodeIds) : null;
+  // 노드를 고르기 전에도 "저기까지 몇 칸인가"를 보여준다 — 고른 뒤에는 실선 경로 하나만 남기고
+  // 미리보기를 그리지 않는다(두 경로가 겹치면 어느 쪽이 확정인지 읽히지 않는다).
+  const routePreview = !selectedNodeId && hoveredNodeId ? routeTo(hoveredNodeId) : null;
+  const previewEdgeIds = routePreview ? new Set(routePreview.edgeIds) : null;
+  // 경로 위 노드의 순번(1..N) — 플레이어가 선 자리는 세지 않는다.
+  const routeHopByNode = new Map((routeToSelected?.nodeIds || []).slice(1).map((id, index) => [id, index + 1]));
 
   /**
    * 커맨드를 보내고, 스냅샷이 그대로면 실패 사유를 말한다. "행동 실패 — 조건을 확인하세요"만
@@ -1260,7 +1337,9 @@ export function MapScreen() {
     if (!isTrueAdjacent(run, nodeId)) return;
     if (encounterBlocks(run)) { setError('조우 중이라 막혔습니다 — 회피하거나 전투에 들어가세요.'); return; }
     runCommand({ type: 'MOVE_TO_NODE', nodeId });
-    setSelectedNodeId(null);
+    // 경로를 따라 걷는 동안에는 선택을 놓지 않는다 — 놓아 버리면 한 칸 갈 때마다 목적지를
+    // 다시 찍어야 한다. 목적지에 도착했을 때만 선택을 비운다(그 자리가 곧 현재 노드다).
+    if (nodeId === selectedNodeId) setSelectedNodeId(null);
   };
 
   const handleEdgeClick = (edge) => {
@@ -1311,9 +1390,10 @@ export function MapScreen() {
   // onMouseMove가 수십 번 오는데, 그때마다 100여 노드 지도를 다시 그리면 눈에 띄게 끊긴다.
   const showHover = (ev, text) => scheduleHover({ x: ev.clientX, y: ev.clientY, text });
   /** 노드와 통로는 문장이 아니라 카드다(NodeTooltipCard / EdgeTooltipCard) — 지도 임플란트
-   * 화살표처럼 성격이 하나뿐인 표식만 그대로 문자열을 쓴다. */
-  const showNodeHover = (ev, description, hint) => scheduleHover({ x: ev.clientX, y: ev.clientY, node: description, hint });
-  const showEdgeHover = (ev, description) => scheduleHover({ x: ev.clientX, y: ev.clientY, edge: description });
+   * 화살표처럼 성격이 하나뿐인 표식만 그대로 문자열을 쓴다. 두 카드의 자리는 커서가 아니라
+   * 그 대상의 **캔버스 좌표**다(anchor) — 노드는 제 자리에, 통로는 가운데에 붙는다. */
+  const showNodeHover = (pos, description, hint) => scheduleHover({ anchor: { x: pos.x, y: pos.y }, node: description, hint });
+  const showEdgeHover = (pos, description) => scheduleHover({ anchor: { x: pos.x, y: pos.y }, edge: description });
   const hideHover = () => scheduleHover(null);
   const recenterAt = (canvasX, canvasY) => setView((v) => ({ ...v, x: -(canvasX - CANVAS_CENTER) * v.scale, y: -(canvasY - CANVAS_CENTER) * v.scale }));
   /** 패널 줄을 눌렀을 때 지도를 그 노드로 옮긴다 — 위치를 말로만 읽어 주면 결국 눈으로 찾아야 한다. */
@@ -1470,7 +1550,7 @@ export function MapScreen() {
       ` : null}
 
       <div style=${{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <div style=${{ position: 'relative', flex: 1, background: 'var(--color-bg)' }}
+        <div ref=${mapAreaRef} style=${{ position: 'relative', flex: 1, background: 'var(--color-bg)' }}
           onMouseDown=${handleCanvasMouseDown}
           onMouseMove=${handleCanvasMouseMove}
           onMouseUp=${handleCanvasMouseUp}
@@ -1575,6 +1655,7 @@ export function MapScreen() {
                   const highGround = e.features.includes('highGround');
                   const highlighted = !!highlightedEdgeIds?.has(e.id) || e.id === hoveredEdgeId;
                   const onRoute = !!routeEdgeIds?.has(e.id);
+                  const onPreviewRoute = !!previewEdgeIds?.has(e.id);
                   const dashed = special && !opened;
                   const clickable = openable || !!pickable;
                   // 복도끼리 잇는 엣지는 그 구역 평면도의 뼈대다. 굵게 그려야 격자·사슬·방사·탑
@@ -1593,18 +1674,20 @@ export function MapScreen() {
                     <g key=${e.id}>
                       ${highlighted ? html`<path d=${pathD} fill="none" stroke="var(--color-accent-300)" stroke-width="9" pointer-events="none"></path>` : null}
                       ${onRoute ? html`<path class="map-route-edge" d=${pathD} fill="none" stroke=${ROUTE_COLOR} stroke-width="7" stroke-linecap="round" opacity="0.85" pointer-events="none"></path>` : null}
+                      ${onPreviewRoute ? html`<path class="map-route-preview" d=${pathD} fill="none" stroke=${ROUTE_COLOR} stroke-width="5" stroke-linecap="round" stroke-dasharray="6 4" opacity="0.35" pointer-events="none"></path>` : null}
                       <path d=${pathD} fill="none" stroke=${stroke} stroke-width=${clickable ? 4 : isSpine ? 3 : 1.2} stroke-dasharray=${barrier ? '2 3' : dashed ? '5 3' : undefined} opacity=${isSpine || clickable || special ? 1 : 0.6} pointer-events="none"></path>
                       ${oneWay ? html`<polygon points="-7,-5 7,0 -7,5" fill=${stroke} transform=${`translate(${midX},${midY}) rotate(${angleDeg})`} pointer-events="none"></polygon>` : null}
+                      ${/* 카드가 통로 가운데(midX, midY)에 붙으므로 커서를 따라다닐 필요가 없다 —
+                          매 프레임 호버를 다시 예약하던 onMouseMove를 걷어냈다. */ null}
                       <path
                         d=${pathD} fill="none" stroke="transparent" stroke-width="16"
                         data-edge-id=${e.id}
                         style=${{ cursor: clickable ? 'pointer' : 'default' }}
                         onClick=${() => handleEdgeClick(e)}
-                        onMouseEnter=${(ev) => { showEdgeHover(ev, edgeDescription); setHoveredEdgeId(e.id); }}
-                        onMouseMove=${(ev) => showEdgeHover(ev, edgeDescription)}
+                        onMouseEnter=${() => { showEdgeHover({ x: midX, y: midY }, edgeDescription); setHoveredEdgeId(e.id); }}
                         onMouseLeave=${() => { hideHover(); setHoveredEdgeId(null); }}
                         tabindex=${clickable ? 0 : undefined}
-                        onFocus=${(ev) => { showEdgeHover(ev, edgeDescription); setHoveredEdgeId(e.id); }}
+                        onFocus=${() => { showEdgeHover({ x: midX, y: midY }, edgeDescription); setHoveredEdgeId(e.id); }}
                         onBlur=${() => { hideHover(); setHoveredEdgeId(null); }}
                         onKeyDown=${(ev) => { if (clickable && (ev.key === 'Enter' || ev.key === ' ')) handleEdgeClick(e); }}
                       ></path>
@@ -1654,6 +1737,17 @@ export function MapScreen() {
                         opacity: nodeOpacity(displayKnowledge),
                         'pointer-events': 'none',
                       })}
+                    ${/* 확대하면 도형만으로는 유형이 잘 안 읽힌다 — 그때만 유형 첫 글자를 안에 적는다.
+                        현재 위치와 탈출구는 이미 자기 표식(A/B/K)을 달고 있으므로 건너뛴다. */ null}
+                    ${view.scale >= NODE_TYPE_LETTER_MIN_SCALE && !exit && n.id !== run.playerNodeId ? html`
+                      <text x=${pos.x} y=${pos.y + 3} text-anchor="middle" font-size="7" font-weight="800" fill="var(--color-neutral-700)" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">${(NODE_TYPE_LABELS[n.type] || n.type).charAt(0)}</text>
+                    ` : null}
+                    ${routeHopByNode.get(n.id) ? html`
+                      <g pointer-events="none">
+                        <circle cx=${pos.x + NODE_RADIUS + 4} cy=${pos.y - NODE_RADIUS - 4} r="9" fill=${ROUTE_COLOR}></circle>
+                        <text x=${pos.x + NODE_RADIUS + 4} y=${pos.y - NODE_RADIUS - 1} text-anchor="middle" font-size="8" font-weight="800" fill="var(--color-bg)">${routeHopByNode.get(n.id)}</text>
+                      </g>
+                    ` : null}
                     ${n.isGateway ? html`<text x=${pos.x - 13} y=${pos.y + 13} text-anchor="middle" font-size="11" font-weight="900" fill="var(--color-neutral-700)" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">⇄</text>` : null}
                     ${exit ? html`<text x=${pos.x} y=${pos.y + 5} text-anchor="middle" font-size="12" font-weight="800" fill="var(--color-bg)" pointer-events="none">${exit.kind === 'key' ? 'K' : exit.exitId}</text>` : null}
                     ${hasThreat ? (() => {
@@ -1688,11 +1782,10 @@ export function MapScreen() {
                       style=${{ cursor: 'pointer' }}
                       onClick=${() => handleNodeSelect(n.id)}
                       onDblClick=${() => handleNodeDoubleClick(n.id)}
-                      onMouseEnter=${(ev) => { showNodeHover(ev, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
-                      onMouseMove=${(ev) => showNodeHover(ev, nodeDescription, nodeHint)}
+                      onMouseEnter=${() => { showNodeHover(pos, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
                       onMouseLeave=${() => { hideHover(); setHoveredNodeId(null); }}
                       tabindex=${n.id === focusedNodeId ? 0 : -1}
-                      onFocus=${(ev) => { showNodeHover(ev, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
+                      onFocus=${() => { showNodeHover(pos, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
                       onBlur=${() => { hideHover(); setHoveredNodeId(null); }}
                       onKeyDown=${(ev) => handleNodeKeyDown(ev, n.id)}
                     ></circle>
@@ -1751,21 +1844,22 @@ export function MapScreen() {
           </div>
 
           ${hover && hover.node ? html`
-            <div style=${{
-              position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
+            <div ref=${hoverCardRef} style=${{
+              position: 'fixed', left: `${hoverCardPos.left}px`, top: `${hoverCardPos.top}px`, zIndex: 100,
               boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
             }}>
               <${NodeTooltipCard} description=${hover.node} text=${describeNodeText(hover.node)} hint=${hover.hint || '클릭해 선택'} />
             </div>
           ` : null}
           ${hover && hover.edge ? html`
-            <div style=${{
-              position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
+            <div ref=${hoverCardRef} style=${{
+              position: 'fixed', left: `${hoverCardPos.left}px`, top: `${hoverCardPos.top}px`, zIndex: 100,
               boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
             }}>
               <${EdgeTooltipCard} description=${hover.edge} text=${describeEdgeText(hover.edge)} />
             </div>
           ` : null}
+          ${/* 지도 위에 자리가 없는 표식(임플란트 화살표)만 커서를 따라간다. */ null}
           ${hover && !hover.node && !hover.edge ? html`
             <div style=${{
               position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
@@ -1889,6 +1983,60 @@ export function MapScreen() {
                     ? `최단 경로: ${routeToSelected.edgeIds.length}칸 이동 · 지도에 표시`
                     : '최단 경로: 지금 지날 수 있는 길이 없음(잠긴 문·일방통행 역방향·넘을 수 없는 고지대·아직 지도에 없는 노드)'}
                 </div>
+                ${/* 칸 수 하나로는 "어디를 지나가는가"를 알 수 없다 — 지나는 방과 위협을 순서대로
+                    적고, 줄을 누르면 지도가 그 자리로 간다. */ null}
+                ${routeToSelected ? (() => {
+                  const specialCounts = {};
+                  for (const edgeId of routeToSelected.edgeIds) {
+                    const edge = run.graph.edges.find((e) => e.id === edgeId);
+                    if (!edge) continue;
+                    if (edge.features.includes('highGround')) specialCounts['고지대'] = (specialCounts['고지대'] || 0) + 1;
+                    if (edge.features.includes('oneWay') || edge.bidirectional === false) specialCounts['일방통행'] = (specialCounts['일방통행'] || 0) + 1;
+                  }
+                  const specialText = Object.entries(specialCounts).map(([label, count]) => `${label} ${count}`).join(' · ');
+                  return html`
+                    <div class="map-route-list" style=${{ display: 'flex', flexDirection: 'column', gap: '1px', marginBottom: '8px' }}>
+                      ${routeToSelected.nodeIds.slice(1).map((id, index) => {
+                        const node = run.graph.nodes.find((n) => n.id === id);
+                        const threatened = (threatsByNode[id] || []).length > 0;
+                        return html`
+                          <div
+                            key=${id} role="button" tabindex="0"
+                            style=${{ fontSize: '10.5px', color: 'var(--color-neutral-700)', cursor: 'pointer' }}
+                            onClick=${() => focusOnNode(id)}
+                            onKeyDown=${(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); focusOnNode(id); } }}
+                          >
+                            ${index + 1}. ${NODE_TYPE_LABELS[node?.type] || node?.type || id} · ${SECTOR_NAMES[node?.sectorId] || ''}
+                            ${threatened ? html`<span style=${{ color: 'var(--color-accent-2-700)', fontWeight: 800 }}> · ▲ 위협</span>` : null}
+                            ${node?.isGateway ? ' · 관문' : ''}
+                          </div>
+                        `;
+                      })}
+                      ${specialText ? html`<div style=${{ fontSize: '10.5px', color: '#7c3aed', fontWeight: 700, marginTop: '2px' }}>경로의 특수 통로: ${specialText}</div>` : null}
+                    </div>
+                  `;
+                })() : null}
+                ${/* 인접 노드는 이미 "이 노드로 이동"이 있으므로 그때는 이 버튼을 내지 않는다 —
+                    같은 한 칸을 두 버튼이 걸면 어느 쪽이 무엇인지 읽히지 않는다. */ null}
+                ${routeToSelected && routeToSelected.nodeIds.length > 1 && !isTrueAdjacent(run, selectedNodeId) ? (() => {
+                  const nextNodeId = routeToSelected.nodeIds[1];
+                  const nextNode = run.graph.nodes.find((n) => n.id === nextNodeId);
+                  const nextEdge = findTraversableEdge(run, nextNodeId);
+                  const nextTraversable = nextEdge ? canTraverseEdge(run, nextEdge, capabilities.mobility) : false;
+                  const blockedByTask = !!run.pendingTask;
+                  return html`
+                    <${Tooltip} align="left" width=${260} content=${encounterBlocked ? ENCOUNTER_BLOCK_NOTE
+                      : blockedByTask ? TASK_BLOCK_NOTE
+                      : `경로의 첫 칸(${NODE_TYPE_LABELS[nextNode?.type] || nextNodeId})으로 한 칸 이동합니다. 선택은 그대로 남으므로 같은 버튼을 눌러 계속 걸을 수 있습니다.`}>
+                      <button
+                        class="btn btn-primary"
+                        style=${{ fontSize: '12px', width: '100%', marginBottom: '8px' }}
+                        disabled=${!nextTraversable || encounterBlocked || blockedByTask}
+                        onClick=${() => handleMove(nextNodeId)}
+                      >경로 따라 한 칸 이동 (다음: ${NODE_TYPE_LABELS[nextNode?.type] || nextNodeId})</button>
+                    <//>
+                  `;
+                })() : null}
               ` : null}
               ${/* 이동 가능 여부는 "관측이 최신인가"가 아니라 "통로로 이어져 있는가"다 — 대기로
                     인접 관측이 낡아도 옆 방으로 걸어갈 수 있다. */ null}
@@ -1907,6 +2055,7 @@ export function MapScreen() {
 
               ${(!selectedNodeId || selectedNodeId === run.playerNodeId) ? html`
                 <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <${PanelGroup} title="여기서 할 수 있는 것" open=${panelGroupsOpen.actions} onToggle=${() => togglePanelGroup('actions')}>
                   <${PendingTaskPanel} run=${run} runCommand=${runCommand} />
                   <div>
                     <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>오버라이드 칩</div>
@@ -1986,137 +2135,6 @@ export function MapScreen() {
                       </div>
                     `;
                   })()}
-
-                  ${currentInterface ? html`
-                    <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>카메라 접속 인터페이스</div>
-                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
-                        ${currentInterfaceHacked
-    ? '접속 완료 · 이 구역의 발견한 모든 해킹 지점에 원격 접속할 수 있습니다.'
-    : `미해킹 · 이 노드에서 먼저 접속 인터페이스를 해킹해야 구역 원격 접속이 열립니다. Hacking ${capabilities.hacking}의 직접 사거리는 ${cameraRange}홉입니다.`}
-                      </div>
-                      ${!currentInterfaceHacked ? html`
-                        <${ActionButton}
-                          run=${run} actionId="hackInterface" opts=${{ value: capabilities.hacking }}
-                          label="접속 인터페이스 해킹"
-                          tip=${`이 노드의 접속 인터페이스를 장악하면, 이 구역에서 이미 발견한 카메라·발전기에 거리와 무관하게 원격 접속할 수 있습니다. 인터페이스는 구역 카메라 버스이기도 해서, 장악하는 순간 여기서 ${interfaceCameraRevealHops(capabilities.hacking)}홉 안(같은 구역)의 카메라 위치가 지도에 드러납니다.`}
-                          onClick=${() => runCommand({ type: 'HACK_ACCESS_INTERFACE', interfaceId: currentInterface.id })}
-                        />
-                      ` : null}
-                      ${hackableCameras.length > 0 ? hackableCameras.map((camera) => html`
-                        <${ActionButton}
-                          key=${camera.id} run=${run} actionId="hackCamera" opts=${{ value: capabilities.hacking }}
-                          label=${`카메라 해킹 — ${whereIs(camera.nodeId)}${currentInterfaceHacked ? ' · 구역 원격' : ''}`}
-                          tip=${`그 카메라를 ${CAMERA_HACK_DURATION}칸 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다.`}
-                          onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}
-                        />
-                      `) : null}
-                      ${hackableGenerators.map((generator) => html`
-                        <${ActionButton}
-                          key=${generator.id} run=${run} actionId="disableGeneratorHack" opts=${{ value: capabilities.hacking }}
-                          label=${`배터리 발전기 ${currentInterfaceHacked ? '원격' : '직접'} 무력화 — ${whereIs(generator.nodeId)}`}
-                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다."
-                          onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}
-                        />
-                      `)}
-                    </div>
-                  ` : null}
-
-                  ${!currentInterface && (hackableCameras.length > 0 || hackableGenerators.length > 0) ? html`
-                    <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>직접 해킹</div>
-                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>Hacking ${capabilities.hacking} · 현재 노드는 Hacking 1부터, 이후 레벨마다 직접 사거리가 1홉씩 늘어납니다.</div>
-                      ${hackableCameras.map((camera) => html`
-                        <${ActionButton}
-                          key=${camera.id} run=${run} actionId="hackCamera" opts=${{ value: capabilities.hacking }}
-                          label=${`카메라 해킹 — ${whereIs(camera.nodeId)}`}
-                          tip=${`그 카메라를 ${CAMERA_HACK_DURATION}칸 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다.`}
-                          onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}
-                        />
-                      `)}
-                      ${hackableGenerators.map((generator) => html`
-                        <${ActionButton}
-                          key=${generator.id} run=${run} actionId="disableGeneratorHack" opts=${{ value: capabilities.hacking }}
-                          label=${`배터리 발전기 해킹 무력화 — ${whereIs(generator.nodeId)}`}
-                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다."
-                          onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}
-                        />
-                      `)}
-                    </div>
-                  ` : null}
-
-                  ${currentCamera ? html`
-                    <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#dc2626', marginBottom: '4px' }}>현재 노드 카메라</div>
-                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
-                        ${(run.disabledCameraIds || []).includes(currentCamera.id)
-    ? '파괴됨 · 더 이상 감지하지 않습니다.'
-    : `해킹은 ${CAMERA_HACK_DURATION}칸 동안 정찰을 제공하고, 파괴는 영구적으로 감지를 막지만 소음을 발생시킵니다.`}
-                      </div>
-                      ${!(run.disabledCameraIds || []).includes(currentCamera.id) ? html`
-                        <${ActionButton}
-                          run=${run} actionId="destroyCamera" opts=${{ value: capabilities.force }}
-                          label="카메라 파괴"
-                          tip="이 노드의 카메라를 영구히 부숩니다. 해킹과 달리 되살아나지 않지만 소음이 크고, Force가 모자라면 장착 무기의 내구도까지 깎입니다."
-                          onClick=${() => runCommand({ type: 'DESTROY_CAMERA', cameraId: currentCamera.id })}
-                        />
-                      ` : null}
-                    </div>
-                  ` : null}
-
-                  ${currentGenerator ? html`
-                    <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#ca8a04', marginBottom: '4px' }}>배터리 발전기</div>
-                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>${run.disabledGeneratorIds.includes(currentGenerator.id) ? '무력화됨 — 이 구역 적의 시작 갑옷 보너스가 없습니다.' : '가동 중 — 이 구역 모든 적은 전투 시작 시 갑옷 5를 얻습니다.'}</div>
-                      ${!run.disabledGeneratorIds.includes(currentGenerator.id) ? html`
-                        <${ActionButton}
-                          run=${run} actionId="disableGeneratorForce" opts=${{ value: capabilities.force }}
-                          label="Force로 발전기 무력화"
-                          tip="발전기를 부숴 이 구역 적의 전투 시작 갑옷 5를 없앱니다. 해킹과 달리 이 노드에 서 있어야 하고 소음이 큽니다."
-                          onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: currentGenerator.id, capabilityKind: 'force' })}
-                        />` : null}
-                    </div>
-                  ` : null}
-
-                  ${currentLandmark ? (() => {
-                    // 엔진과 같은 식으로 센다(runEngine.hackControlRoom: max(1, 해킹)). 화면만
-                    // max(0, …)으로 자르면 해킹 0으로 장악했을 때 1레벨이 잠긴 것처럼 보인다.
-                    const level = Math.min(3, Math.max(1, capabilities.hacking));
-                    const rows = [
-                      { level: 1, label: '순찰경로 영구 표시' },
-                      // 잠긴 줄은 아직 값이 정해지지 않았다 — `경계도 -0`이라고 적으면 도달해도
-                      // 아무 일도 없는 것처럼 읽힌다. 그 줄에는 공식을 그대로 보인다.
-                      { level: 2, label: level >= 2 ? `경계도 -${level - 1}` : '경계도 −(해킹−1)' },
-                      { level: 3, label: '인접 구역 경계도 -1' },
-                    ];
-                    return html`
-                      <div>
-                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>구역 통제실</div>
-                        <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>
-                          현재 해킹 ${capabilities.hacking} — 실행하면 도달한 레벨까지 전부 적용됩니다(상위 레벨이 하위 효과 포함).
-                        </div>
-                        <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
-                          ${rows.map((row) => html`
-                            <div key=${row.level} style=${{
-                              display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', padding: '4px 6px',
-                              background: row.level <= level ? 'var(--color-accent-100)' : 'var(--color-neutral-100)',
-                              color: row.level <= level ? 'var(--color-accent-700)' : 'var(--color-neutral-600)',
-                            }}>
-                              <span>해킹 ${row.level}</span><span>${row.label}${row.level > level ? ' (잠김)' : ''}</span>
-                            </div>
-                          `)}
-                        </div>
-                        <${ActionButton}
-                          run=${run} actionId="controlRoom" opts=${{ value: capabilities.hacking }}
-                          label="통제실 장악"
-                          disabled=${controlRoomAlreadySeized}
-                          disabledNote=${controlRoomAlreadySeized ? '이 구역 통제실은 이미 장악했습니다 — 장악은 구역당 한 번뿐입니다.' : ''}
-                          tip="구역 랜드마크 노드에서만, 구역당 한 번만 시도할 수 있습니다. 접속 인터페이스 해킹과는 별개입니다. Hacking이 모자라도 시도할 수 있지만, 그때 얻는 것은 1레벨(순찰경로 공개)까지입니다."
-                          onClick=${() => runCommand({ type: 'HACK_CONTROL_ROOM' })}
-                        />
-                      </div>
-                    `;
-                  })() : null}
 
                   ${run.contract && run.contract.status !== 'completed' ? (() => {
                     const contract = run.contract;
@@ -2199,84 +2217,6 @@ export function MapScreen() {
                       </div>
                     `;
                   })() : null}
-
-                  ${(() => {
-                    // §4단계 수습 수단(D12) + 시체 처리(D13). 액션마다 블록을 새로 만들면 사이드
-                    // 패널이 넘치므로, 지금 이 노드에서 실제로 할 수 있는 것만 한 블록에 모은다.
-                    const canClean = currentTraces.length > 0;
-                    const canCut = !!currentInterface && !powerCutSectorIds.has(currentSectorId);
-                    const canBroadcast = !!currentInterface && (currentSectorAlert?.level || 0) > 0;
-                    // 가짜 소음(D)은 자리를 가리지 않는다 — 접속 인터페이스도 경계도도 필요 없다.
-                    const noiseRange = fakeNoiseRange(capabilities.deception);
-                    const canFakeNoise = noiseRange > 0;
-                    if (!currentCorpse && !canClean && !canCut && !canBroadcast && !canFakeNoise) return null;
-                    const cut = (run.powerCuts || []).find((c) => c.sectorId === currentSectorId && c.expiresAt > run.time);
-                    return html`
-                      <div>
-                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-negative, #dd2b0f)', marginBottom: '4px' }}>수습</div>
-                        ${cut ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>전원 차단 중 — ${leftTicksText(cut.expiresAt, run.time)}. 그동안 이 구역 경계도가 오르지 않습니다(전자 자물쇠도 해킹 불가).</div>` : null}
-                        ${currentCorpse ? html`
-                          <${ActionButton}
-                            run=${run} actionId="corpse"
-                            label="시체 처리"
-                            tip="여기 남은 시체를 치웁니다. 두고 가면 위협이 밟는 순간 신고되어 이 구역 경계도가 오르고 조사가 몰립니다."
-                            onClick=${() => runCommand({ type: 'DISPOSE_CORPSE' })}
-                          />
-                        ` : null}
-                        ${canClean ? html`
-                          <${ActionButton}
-                            run=${run} actionId="cleanTraces" opts=${{ value: capabilities.perception }}
-                            label=${`흔적 정리(${currentTraces.length}개)`}
-                            tip=${`이 노드에 남은 흔적 ${currentTraces.length}개를 지웁니다. 강한 흔적은 발견되면 경계도를 올리므로, 원인을 미리 없애는 수단입니다. Perception이 높을수록 짧아지고, 그동안 무방비입니다.`}
-                            onClick=${() => runCommand({ type: 'CLEAN_TRACES' })}
-                          />
-                        ` : null}
-                        ${canCut ? html`
-                          <${ActionButton}
-                            run=${run} actionId="cutPower" opts=${{ value: capabilities.force }}
-                            label="전원 차단"
-                            tip="배전을 끊어 이 구역 경계도 상승을 한동안 멈춥니다. 낮추는 게 아니라 미루는 것입니다. 큰 소음이 나고, 그동안 이 구역 전자 자물쇠는 해킹으로 열 수 없습니다(Force로 뜯는 것은 됩니다)."
-                            onClick=${() => runCommand({ type: 'CUT_POWER' })}
-                          />
-                        ` : null}
-                        ${canBroadcast ? broadcastTargetSectorIds.map((target) => {
-                          // 상한(3)에 찬 구역으로는 넘길 수 없다 — 넘기면 +1이 잘려 경계도가
-                          // 사라지고, 옮기는 수단이 지우는 수단이 된다(총량 보존, ADR-0073).
-                          const full = (run.sectorAlerts[target]?.level || 0) >= 3;
-                          const tip = full
-                            ? `${SECTOR_NAMES[target]}은 이미 경계도 3입니다 — 더 받을 수 없어 넘길 수 없습니다.`
-                            : `이 구역 경계도를 1 낮추고 ${SECTOR_NAMES[target]}에 그만큼 넘깁니다. 총량은 그대로이고, 그쪽으로 위협의 시선까지 옮겨갑니다. 이 구역의 경계 게이지는 0이 됩니다.`;
-                          return html`
-                            <${ActionButton}
-                              key=${target} run=${run} actionId="falseBroadcast" opts=${{ value: capabilities.deception }} disabled=${full}
-                              label=${`가짜 목표 → ${SECTOR_NAMES[target]}`}
-                              tip=${`${tip} 대상 구역 경계도는 현재 ${run.sectorAlerts[target]?.level || 0}/3(게이지 ${run.sectorAlerts[target]?.pressure || 0}/${ALERT_GAUGE_CAPACITY})입니다.`}
-                              onClick=${() => runCommand({ type: 'BROADCAST_FALSE_TARGET', targetSectorId: target })}
-                            />
-                          `;
-                        }) : null}
-                        ${canFakeNoise ? html`
-                          <${ActionButton}
-                            run=${run} actionId="fakeNoise" opts=${{ value: capabilities.deception }}
-                            label=${noisePicker ? '가짜 소음 — 대상 선택 중' : `가짜 소음 (${noiseRange}홉 이내)`}
-                            tip=${`${noiseRange}홉 이내의 노드 하나에 강도 ${capabilities.deception >= 3 ? 2 : 1}짜리 소음을 심습니다. 위협은 진짜 소음과 구별하지 못하고 그쪽으로 조사하러 갑니다. 경계도는 옮기지 않습니다 — 시선만 끕니다. 소음은 완료 시각에 납니다.`}
-                            onClick=${() => setNoisePicker((v) => !v)}
-                          />
-                        ` : null}
-                        ${noisePicker ? html`
-                          <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', marginTop: '6px' }}>
-                            ${candidateNodesInRange(run.graph, run.playerNodeId, noiseRange).map((node) => html`
-                              <button key=${node.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
-                                onClick=${() => { setNoisePicker(false); runCommand({ type: 'PLANT_FAKE_NOISE', targetNodeId: node.id }); }}>
-                                ${whereIs(node.id)}
-                              </button>
-                            `)}
-                            <button class="btn btn-secondary" style=${{ fontSize: '10px', padding: '2px 7px' }} onClick=${() => setNoisePicker(false)}>취소</button>
-                          </div>
-                        ` : null}
-                      </div>
-                    `;
-                  })()}
 
                   ${currentOpportunities.length > 0 ? html`
                     <div>
@@ -2413,6 +2353,219 @@ export function MapScreen() {
                     </div>
                   ` : null}
 
+                  <//>
+                  <${PanelGroup} title="장치·시설" open=${panelGroupsOpen.devices} onToggle=${() => togglePanelGroup('devices')}>
+                  ${currentInterface ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>카메라 접속 인터페이스</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
+                        ${currentInterfaceHacked
+    ? '접속 완료 · 이 구역의 발견한 모든 해킹 지점에 원격 접속할 수 있습니다.'
+    : `미해킹 · 이 노드에서 먼저 접속 인터페이스를 해킹해야 구역 원격 접속이 열립니다. Hacking ${capabilities.hacking}의 직접 사거리는 ${cameraRange}홉입니다.`}
+                      </div>
+                      ${!currentInterfaceHacked ? html`
+                        <${ActionButton}
+                          run=${run} actionId="hackInterface" opts=${{ value: capabilities.hacking }}
+                          label="접속 인터페이스 해킹"
+                          tip=${`이 노드의 접속 인터페이스를 장악하면, 이 구역에서 이미 발견한 카메라·발전기에 거리와 무관하게 원격 접속할 수 있습니다. 인터페이스는 구역 카메라 버스이기도 해서, 장악하는 순간 여기서 ${interfaceCameraRevealHops(capabilities.hacking)}홉 안(같은 구역)의 카메라 위치가 지도에 드러납니다.`}
+                          onClick=${() => runCommand({ type: 'HACK_ACCESS_INTERFACE', interfaceId: currentInterface.id })}
+                        />
+                      ` : null}
+                      ${hackableCameras.length > 0 ? hackableCameras.map((camera) => html`
+                        <${ActionButton}
+                          key=${camera.id} run=${run} actionId="hackCamera" opts=${{ value: capabilities.hacking }}
+                          label=${`카메라 해킹 — ${whereIs(camera.nodeId)}${currentInterfaceHacked ? ' · 구역 원격' : ''}`}
+                          tip=${`그 카메라를 ${CAMERA_HACK_DURATION}칸 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다.`}
+                          onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}
+                        />
+                      `) : null}
+                      ${hackableGenerators.map((generator) => html`
+                        <${ActionButton}
+                          key=${generator.id} run=${run} actionId="disableGeneratorHack" opts=${{ value: capabilities.hacking }}
+                          label=${`배터리 발전기 ${currentInterfaceHacked ? '원격' : '직접'} 무력화 — ${whereIs(generator.nodeId)}`}
+                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다."
+                          onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}
+                        />
+                      `)}
+                    </div>
+                  ` : null}
+
+                  ${!currentInterface && (hackableCameras.length > 0 || hackableGenerators.length > 0) ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>직접 해킹</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>Hacking ${capabilities.hacking} · 현재 노드는 Hacking 1부터, 이후 레벨마다 직접 사거리가 1홉씩 늘어납니다.</div>
+                      ${hackableCameras.map((camera) => html`
+                        <${ActionButton}
+                          key=${camera.id} run=${run} actionId="hackCamera" opts=${{ value: capabilities.hacking }}
+                          label=${`카메라 해킹 — ${whereIs(camera.nodeId)}`}
+                          tip=${`그 카메라를 ${CAMERA_HACK_DURATION}칸 동안 무력화하고, 그동안 카메라 주변 노드를 실시간으로 관측합니다.`}
+                          onClick=${() => runCommand({ type: 'HACK_CAMERA', cameraId: camera.id })}
+                        />
+                      `)}
+                      ${hackableGenerators.map((generator) => html`
+                        <${ActionButton}
+                          key=${generator.id} run=${run} actionId="disableGeneratorHack" opts=${{ value: capabilities.hacking }}
+                          label=${`배터리 발전기 해킹 무력화 — ${whereIs(generator.nodeId)}`}
+                          tip="이 구역 적이 전투 시작 시 받는 갑옷 5를 없앱니다."
+                          onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: generator.id, capabilityKind: 'hacking' })}
+                        />
+                      `)}
+                    </div>
+                  ` : null}
+
+                  ${currentCamera ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#dc2626', marginBottom: '4px' }}>현재 노드 카메라</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
+                        ${(run.disabledCameraIds || []).includes(currentCamera.id)
+    ? '파괴됨 · 더 이상 감지하지 않습니다.'
+    : `해킹은 ${CAMERA_HACK_DURATION}칸 동안 정찰을 제공하고, 파괴는 영구적으로 감지를 막지만 소음을 발생시킵니다.`}
+                      </div>
+                      ${!(run.disabledCameraIds || []).includes(currentCamera.id) ? html`
+                        <${ActionButton}
+                          run=${run} actionId="destroyCamera" opts=${{ value: capabilities.force }}
+                          label="카메라 파괴"
+                          tip="이 노드의 카메라를 영구히 부숩니다. 해킹과 달리 되살아나지 않지만 소음이 크고, Force가 모자라면 장착 무기의 내구도까지 깎입니다."
+                          onClick=${() => runCommand({ type: 'DESTROY_CAMERA', cameraId: currentCamera.id })}
+                        />
+                      ` : null}
+                    </div>
+                  ` : null}
+
+                  ${currentGenerator ? html`
+                    <div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#ca8a04', marginBottom: '4px' }}>배터리 발전기</div>
+                      <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>${run.disabledGeneratorIds.includes(currentGenerator.id) ? '무력화됨 — 이 구역 적의 시작 갑옷 보너스가 없습니다.' : '가동 중 — 이 구역 모든 적은 전투 시작 시 갑옷 5를 얻습니다.'}</div>
+                      ${!run.disabledGeneratorIds.includes(currentGenerator.id) ? html`
+                        <${ActionButton}
+                          run=${run} actionId="disableGeneratorForce" opts=${{ value: capabilities.force }}
+                          label="Force로 발전기 무력화"
+                          tip="발전기를 부숴 이 구역 적의 전투 시작 갑옷 5를 없앱니다. 해킹과 달리 이 노드에 서 있어야 하고 소음이 큽니다."
+                          onClick=${() => runCommand({ type: 'DISABLE_GENERATOR', generatorId: currentGenerator.id, capabilityKind: 'force' })}
+                        />` : null}
+                    </div>
+                  ` : null}
+
+                  ${currentLandmark ? (() => {
+                    // 엔진과 같은 식으로 센다(runEngine.hackControlRoom: max(1, 해킹)). 화면만
+                    // max(0, …)으로 자르면 해킹 0으로 장악했을 때 1레벨이 잠긴 것처럼 보인다.
+                    const level = Math.min(3, Math.max(1, capabilities.hacking));
+                    const rows = [
+                      { level: 1, label: '순찰경로 영구 표시' },
+                      // 잠긴 줄은 아직 값이 정해지지 않았다 — `경계도 -0`이라고 적으면 도달해도
+                      // 아무 일도 없는 것처럼 읽힌다. 그 줄에는 공식을 그대로 보인다.
+                      { level: 2, label: level >= 2 ? `경계도 -${level - 1}` : '경계도 −(해킹−1)' },
+                      { level: 3, label: '인접 구역 경계도 -1' },
+                    ];
+                    return html`
+                      <div>
+                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>구역 통제실</div>
+                        <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>
+                          현재 해킹 ${capabilities.hacking} — 실행하면 도달한 레벨까지 전부 적용됩니다(상위 레벨이 하위 효과 포함).
+                        </div>
+                        <div style=${{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '6px' }}>
+                          ${rows.map((row) => html`
+                            <div key=${row.level} style=${{
+                              display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', padding: '4px 6px',
+                              background: row.level <= level ? 'var(--color-accent-100)' : 'var(--color-neutral-100)',
+                              color: row.level <= level ? 'var(--color-accent-700)' : 'var(--color-neutral-600)',
+                            }}>
+                              <span>해킹 ${row.level}</span><span>${row.label}${row.level > level ? ' (잠김)' : ''}</span>
+                            </div>
+                          `)}
+                        </div>
+                        <${ActionButton}
+                          run=${run} actionId="controlRoom" opts=${{ value: capabilities.hacking }}
+                          label="통제실 장악"
+                          disabled=${controlRoomAlreadySeized}
+                          disabledNote=${controlRoomAlreadySeized ? '이 구역 통제실은 이미 장악했습니다 — 장악은 구역당 한 번뿐입니다.' : ''}
+                          tip="구역 랜드마크 노드에서만, 구역당 한 번만 시도할 수 있습니다. 접속 인터페이스 해킹과는 별개입니다. Hacking이 모자라도 시도할 수 있지만, 그때 얻는 것은 1레벨(순찰경로 공개)까지입니다."
+                          onClick=${() => runCommand({ type: 'HACK_CONTROL_ROOM' })}
+                        />
+                      </div>
+                    `;
+                  })() : null}
+
+                  <//>
+                  <${PanelGroup} title="수습·장비" open=${panelGroupsOpen.cleanup} onToggle=${() => togglePanelGroup('cleanup')}>
+                  ${(() => {
+                    // §4단계 수습 수단(D12) + 시체 처리(D13). 액션마다 블록을 새로 만들면 사이드
+                    // 패널이 넘치므로, 지금 이 노드에서 실제로 할 수 있는 것만 한 블록에 모은다.
+                    const canClean = currentTraces.length > 0;
+                    const canCut = !!currentInterface && !powerCutSectorIds.has(currentSectorId);
+                    const canBroadcast = !!currentInterface && (currentSectorAlert?.level || 0) > 0;
+                    // 가짜 소음(D)은 자리를 가리지 않는다 — 접속 인터페이스도 경계도도 필요 없다.
+                    const noiseRange = fakeNoiseRange(capabilities.deception);
+                    const canFakeNoise = noiseRange > 0;
+                    if (!currentCorpse && !canClean && !canCut && !canBroadcast && !canFakeNoise) return null;
+                    const cut = (run.powerCuts || []).find((c) => c.sectorId === currentSectorId && c.expiresAt > run.time);
+                    return html`
+                      <div>
+                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-negative, #dd2b0f)', marginBottom: '4px' }}>수습</div>
+                        ${cut ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>전원 차단 중 — ${leftTicksText(cut.expiresAt, run.time)}. 그동안 이 구역 경계도가 오르지 않습니다(전자 자물쇠도 해킹 불가).</div>` : null}
+                        ${currentCorpse ? html`
+                          <${ActionButton}
+                            run=${run} actionId="corpse"
+                            label="시체 처리"
+                            tip="여기 남은 시체를 치웁니다. 두고 가면 위협이 밟는 순간 신고되어 이 구역 경계도가 오르고 조사가 몰립니다."
+                            onClick=${() => runCommand({ type: 'DISPOSE_CORPSE' })}
+                          />
+                        ` : null}
+                        ${canClean ? html`
+                          <${ActionButton}
+                            run=${run} actionId="cleanTraces" opts=${{ value: capabilities.perception }}
+                            label=${`흔적 정리(${currentTraces.length}개)`}
+                            tip=${`이 노드에 남은 흔적 ${currentTraces.length}개를 지웁니다. 강한 흔적은 발견되면 경계도를 올리므로, 원인을 미리 없애는 수단입니다. Perception이 높을수록 짧아지고, 그동안 무방비입니다.`}
+                            onClick=${() => runCommand({ type: 'CLEAN_TRACES' })}
+                          />
+                        ` : null}
+                        ${canCut ? html`
+                          <${ActionButton}
+                            run=${run} actionId="cutPower" opts=${{ value: capabilities.force }}
+                            label="전원 차단"
+                            tip="배전을 끊어 이 구역 경계도 상승을 한동안 멈춥니다. 낮추는 게 아니라 미루는 것입니다. 큰 소음이 나고, 그동안 이 구역 전자 자물쇠는 해킹으로 열 수 없습니다(Force로 뜯는 것은 됩니다)."
+                            onClick=${() => runCommand({ type: 'CUT_POWER' })}
+                          />
+                        ` : null}
+                        ${canBroadcast ? broadcastTargetSectorIds.map((target) => {
+                          // 상한(3)에 찬 구역으로는 넘길 수 없다 — 넘기면 +1이 잘려 경계도가
+                          // 사라지고, 옮기는 수단이 지우는 수단이 된다(총량 보존, ADR-0073).
+                          const full = (run.sectorAlerts[target]?.level || 0) >= 3;
+                          const tip = full
+                            ? `${SECTOR_NAMES[target]}은 이미 경계도 3입니다 — 더 받을 수 없어 넘길 수 없습니다.`
+                            : `이 구역 경계도를 1 낮추고 ${SECTOR_NAMES[target]}에 그만큼 넘깁니다. 총량은 그대로이고, 그쪽으로 위협의 시선까지 옮겨갑니다. 이 구역의 경계 게이지는 0이 됩니다.`;
+                          return html`
+                            <${ActionButton}
+                              key=${target} run=${run} actionId="falseBroadcast" opts=${{ value: capabilities.deception }} disabled=${full}
+                              label=${`가짜 목표 → ${SECTOR_NAMES[target]}`}
+                              tip=${`${tip} 대상 구역 경계도는 현재 ${run.sectorAlerts[target]?.level || 0}/3(게이지 ${run.sectorAlerts[target]?.pressure || 0}/${ALERT_GAUGE_CAPACITY})입니다.`}
+                              onClick=${() => runCommand({ type: 'BROADCAST_FALSE_TARGET', targetSectorId: target })}
+                            />
+                          `;
+                        }) : null}
+                        ${canFakeNoise ? html`
+                          <${ActionButton}
+                            run=${run} actionId="fakeNoise" opts=${{ value: capabilities.deception }}
+                            label=${noisePicker ? '가짜 소음 — 대상 선택 중' : `가짜 소음 (${noiseRange}홉 이내)`}
+                            tip=${`${noiseRange}홉 이내의 노드 하나에 강도 ${capabilities.deception >= 3 ? 2 : 1}짜리 소음을 심습니다. 위협은 진짜 소음과 구별하지 못하고 그쪽으로 조사하러 갑니다. 경계도는 옮기지 않습니다 — 시선만 끕니다. 소음은 완료 시각에 납니다.`}
+                            onClick=${() => setNoisePicker((v) => !v)}
+                          />
+                        ` : null}
+                        ${noisePicker ? html`
+                          <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', marginTop: '6px' }}>
+                            ${candidateNodesInRange(run.graph, run.playerNodeId, noiseRange).map((node) => html`
+                              <button key=${node.id} class="btn btn-secondary" style=${{ fontSize: '10.5px' }}
+                                onClick=${() => { setNoisePicker(false); runCommand({ type: 'PLANT_FAKE_NOISE', targetNodeId: node.id }); }}>
+                                ${whereIs(node.id)}
+                              </button>
+                            `)}
+                            <button class="btn btn-secondary" style=${{ fontSize: '10px', padding: '2px 7px' }} onClick=${() => setNoisePicker(false)}>취소</button>
+                          </div>
+                        ` : null}
+                      </div>
+                    `;
+                  })()}
+
                   ${fieldEquipment.length > 0 ? html`
                     <div>
                       <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>현장 장비</div>
@@ -2488,6 +2641,7 @@ export function MapScreen() {
                       </div>
                     </div>
                   ` : null}
+                  <//>
                 </div>
               ` : null}
             ` : null}
