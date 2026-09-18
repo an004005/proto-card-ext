@@ -147,6 +147,24 @@ test('조우가 막는 동안에는 정찰·대기만이 아니라 이동 버튼
   assert.equal(moveButton.getAttribute('disabled'), 'true', '조우 중인데 이동 버튼이 열려 있다');
 });
 
+test('열세 조우 패널은 지금 되는 것과 막힌 것을 나란히 적는다', () => {
+  // 열세는 버튼이 하나도 없는 안내문이라, 무엇이 아직 되는지를 말해 주지 않으면 플레이어는
+  // 아무것도 못 하는 상태로 오해한다. 판정 규칙은 facilityReducer.isBlockedByEncounter다.
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const threat = Object.values(base.threats)[0];
+  const run = {
+    ...base,
+    threats: { ...base.threats, [threat.id]: { ...threat, nodeId: base.playerNodeId } },
+    encounter: { threatId: threat.id, nodeId: base.playerNodeId, tier: 'disadvantage', graceUsed: false },
+  };
+
+  const text = renderMap(run);
+  assert.ok(text.includes('지금 할 수 있는 것'), '허용·막힘 목록의 제목이 있어야 한다');
+  assert.ok(text.includes('유료 행동 1회'), '열세에서 남은 행동권이 적혀 있어야 한다');
+  assert.ok(text.includes('허용') && text.includes('막힘'), '두 칸의 라벨이 모두 있어야 한다');
+});
+
 test('작업 중단·조우·교전 상태가 모두 채워져 있어도 지도 화면이 그려진다', () => {
   const { graph } = generateFacilityGraph(11);
   const base = createRunState(graph, 11);

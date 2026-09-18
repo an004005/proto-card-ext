@@ -39,6 +39,9 @@ export function combatTimeSpentText(turn, roundCost) {
 export function CombatScreen() {
   const [draggingCard, setDraggingCard] = useState(null);
   const [showInventory, setShowInventory] = useState(false);
+  // 디버그 상자는 기본적으로 닫혀 있다 — 플레이 로그는 상시 화면 한 귀퉁이를 차지할 만큼
+  // 자주 보는 것이 아니고, 그 자리는 적 카드가 써야 한다.
+  const [showDebug, setShowDebug] = useState(false);
   const [openPile, setOpenPile] = useState(null); // null | 'draw' | 'discard'
   const combat = combatStateSignal.value;
   const animation = combatAnimationSignal.value;
@@ -106,8 +109,8 @@ export function CombatScreen() {
           ${urgent.join(' · ')} — 턴 하나에 맵 ${COMBAT_ROUND_TIME_COST}칸이 나갑니다.
         </div>
       ` : null}
-      <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+      <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
           <h3 style=${{ margin: 0 }}>전투 — ${enemyNames}</h3>
           ${run ? html`<${MapClock} run=${run} countdowns=${countdowns} compact=${true} />` : null}
           <${Tooltip} width=${260} content=${`전투는 1라운드마다 맵 시간 ${COMBAT_ROUND_TIME_COST}칸이 흐릅니다. 위 시계의 마감은 그동안에도 다가옵니다.`}>
@@ -125,20 +128,22 @@ export function CombatScreen() {
             </select>
           </label>
         </div>
-        ${COMBAT_NOISE_ENABLED ? html`<${NoiseGauge} gauge=${combatContext?.noiseGauge ?? 0} intensity=${combatContext?.noiseIntensity ?? 0} />` : null}
-        <div style=${{ border: '2px solid var(--color-divider)', padding: 'var(--space-2) var(--space-3)', width: '280px', fontSize: '11px' }}>
-          <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-            <span class="tag tag-outline">DEBUG · 디버그</span>
-            <${HistoryControls} />
-          </div>
-          <${PlayLog} />
+        <div style=${{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          ${COMBAT_NOISE_ENABLED ? html`<${NoiseGauge} gauge=${combatContext?.noiseGauge ?? 0} intensity=${combatContext?.noiseIntensity ?? 0} />` : null}
+          <button
+            class="btn btn-secondary"
+            style=${{ fontSize: '10px', padding: '4px 10px', letterSpacing: '0.08em', borderColor: showDebug ? 'var(--color-accent)' : 'var(--color-divider)', color: showDebug ? 'var(--color-accent)' : 'inherit' }}
+            onClick=${() => setShowDebug((v) => !v)}
+          >DEBUG</button>
         </div>
       </div>
 
-      <div style=${{ display: 'flex', gap: 'var(--space-4)', justifyContent: 'center', alignItems: 'stretch' }}>
+      ${/* 아레나 — 헤더와 손패 사이를 전부 쓴다. 플레이어가 왼쪽, 적이 오른쪽, 가운데 구분선.
+            예전에는 둘 다 화면 위쪽에 붙은 작은 카드였고 아래 60%가 비어 있었다. */ null}
+      <div style=${{ flex: 1, minHeight: 0, display: 'flex', gap: 'var(--space-6)', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
         <${PlayerStatusBar} player=${player} overloadActive=${combat.overloadActive} canToggleOverload=${combat.phase === 'player_turn'} animation=${animation?.actor === 'player' ? animation : null} />
         <div style=${{ width: '2px', background: 'var(--color-divider)', alignSelf: 'stretch' }}></div>
-        <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', maxHeight: '100%', overflowY: 'auto' }}>
           ${enemies.map((enemy) => html`
             <${EnemyRow}
               key=${enemy.id}
@@ -150,8 +155,36 @@ export function CombatScreen() {
             />
           `)}
         </div>
+        ${showDebug ? html`
+          <div style=${{
+            position: 'absolute', top: 0, right: 0, zIndex: 5, width: '300px', fontSize: '11px',
+            border: '2px solid var(--color-divider)', background: 'var(--color-bg)', boxShadow: 'var(--shadow-lg)',
+            padding: 'var(--space-2) var(--space-3)', display: 'flex', flexDirection: 'column', gap: '8px',
+          }}>
+            <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span class="tag tag-outline">DEBUG · 디버그</span>
+              <${HistoryControls} />
+            </div>
+            <${PlayLog} />
+            ${/* 디버그: 정상 승리와 같은 처리 경로(checkWinLoss -> finalizeIfCombatEnded)를 타므로
+                  보상·시체·라운드 정산이 실제 승리와 동일하게 일어난다. */ null}
+            <${Tooltip} width=${230} content="디버그: 살아 있는 적을 전부 쓰러뜨린 것으로 치고 정상 승리 처리(보상 생성·시체 남기기·라운드 정산)를 그대로 진행합니다.">
+              <button
+                class="btn btn-secondary"
+                style=${{
+                  width: '100%', fontSize: '11px', fontWeight: 800, padding: '4px 10px', letterSpacing: '0.03em',
+                  borderColor: 'var(--color-accent-2-700)', color: 'var(--color-accent-2-700)',
+                }}
+                disabled=${playbackActive}
+                onClick=${() => dispatch({ type: 'DEBUG_WIN_COMBAT' })}
+              >DEBUG 즉시 승리</button>
+            <//>
+          </div>
+        ` : null}
       </div>
 
+      ${/* 행동 줄 — 손패 바로 위. 소모품·충격 코어·이탈이 손에서 멀리 떨어져 있으면 카드를 내는
+            동안 존재 자체가 잊힌다. 턴 종료 버튼은 손패 바로 아래에 이미 붙어 있어 그대로 둔다. */ null}
       <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
         ${consumableSlots.filter(Boolean).map((item) => {
           const def = CONSUMABLE_DEFINITIONS[item.defId];
@@ -184,19 +217,6 @@ export function CombatScreen() {
             onClick=${() => dispatch({ type: 'USE_OVERRIDE_CHIP' })}
           >충격 코어 · 칩 ×${overrideChips}</button>
         <//>
-        ${/* 디버그: 정상 승리와 같은 처리 경로(checkWinLoss -> finalizeIfCombatEnded)를 타므로
-              보상·시체·라운드 정산이 실제 승리와 동일하게 일어난다. */ null}
-        <${Tooltip} width=${230} content="디버그: 살아 있는 적을 전부 쓰러뜨린 것으로 치고 정상 승리 처리(보상 생성·시체 남기기·라운드 정산)를 그대로 진행합니다.">
-          <button
-            class="btn btn-secondary"
-            style=${{
-              fontSize: '11px', fontWeight: 800, padding: '4px 10px', letterSpacing: '0.03em',
-              borderColor: 'var(--color-accent-2-700)', color: 'var(--color-accent-2-700)',
-            }}
-            disabled=${playbackActive}
-            onClick=${() => dispatch({ type: 'DEBUG_WIN_COMBAT' })}
-          >DEBUG 즉시 승리</button>
-        <//>
         ${disengage ? html`
           <div style=${{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginLeft: 'auto', fontSize: '11px' }}>
             ${disengage.escapeIntent
@@ -221,7 +241,7 @@ export function CombatScreen() {
 
       <div class="hr" style=${{ margin: 0 }}></div>
 
-      <div style=${{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 'var(--space-3)', flex: 1 }}>
+      <div style=${{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 'var(--space-3)', flex: '0 0 auto' }}>
         <${TargetingOverlay} active=${needsEnemyTarget} />
         <div style=${{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', justifyContent: 'center' }}>
           <${DrawPileBox} count=${pileCounts.draw} onClick=${() => setOpenPile('draw')} />

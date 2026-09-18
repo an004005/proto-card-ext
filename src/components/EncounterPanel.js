@@ -26,6 +26,57 @@ function countedNames(names) {
 // 청구가 갈라진다.
 const EVADE_TICKS = actionTimeCost('evade');
 
+/**
+ * 지금 이 층에서 무엇이 되고 무엇이 막히는지. 판정 자체는 facilityReducer.isBlockedByEncounter가
+ * 한다 — 'even'과 'forced'만 유료 행동을 통째로 막고, 'advantage'와 'disadvantage'는 막지
+ * 않는다(열세는 행동 1회 뒤 다시 판정될 뿐이다). 이 표는 그 규칙을 사람 말로 옮긴 것이므로,
+ * 저 함수가 바뀌면 여기도 같이 고친다.
+ */
+const TIER_ALLOWANCE = {
+  advantage: {
+    allowed: '이동 · 정찰 · 대기 · 파밍 · 장비 사용 — 모든 행동',
+    blocked: '없음',
+  },
+  disadvantage: {
+    allowed: '유료 행동 1회(이동·정찰·대기·파밍·개방 중 하나) · 무료 조작(인벤토리·카드 확인)',
+    blocked: '두 번째 유료 행동(다시 판정됨)',
+  },
+  even: {
+    allowed: '회피 · 속이기 · 교전 · 무료 조작',
+    blocked: '이동·정찰·대기·파밍·개방',
+  },
+  forced: {
+    allowed: '회피 · 속이기 · 교전 · 무료 조작',
+    blocked: '이동·정찰·대기·파밍·개방',
+  },
+};
+
+/** 조우 층 설명 밑에 붙는 두 칸짜리 요약 — "그래서 지금 뭘 누를 수 있는가"에 답한다. */
+function AllowanceList({ tier }) {
+  const entry = TIER_ALLOWANCE[tier];
+  if (!entry) return null;
+  const labelStyle = {
+    fontSize: '10px', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase',
+    color: 'var(--color-neutral-600)', marginBottom: '3px',
+  };
+  return html`
+    <div style=${{ marginTop: '12px', borderTop: '1px solid var(--color-divider)', paddingTop: '10px' }}>
+      <div style=${labelStyle}>지금 할 수 있는 것</div>
+      <div style=${{ display: 'flex', gap: '12px', marginTop: '6px' }}>
+        <div style=${{ flex: 1 }}>
+          <div style=${{ ...labelStyle, color: 'var(--color-neutral-700)' }}>허용</div>
+          <div style=${{ fontSize: '10.5px', lineHeight: 1.45 }}>${entry.allowed}</div>
+        </div>
+        <div style=${{ width: '1px', background: 'var(--color-divider)' }}></div>
+        <div style=${{ flex: 1 }}>
+          <div style=${{ ...labelStyle, color: 'var(--color-negative, #dc2626)' }}>막힘</div>
+          <div style=${{ fontSize: '10.5px', lineHeight: 1.45, color: 'var(--color-neutral-700)' }}>${entry.blocked}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 const TIER_INFO = {
   advantage: { label: '우위', color: '#15803d', bg: '#f0fdf4' },
   even: { label: '동률', color: '#b45309', bg: '#fffbeb' },
@@ -169,6 +220,8 @@ export function EncounterPanel({ run, capabilities }) {
           <div style=${{ fontSize: '11px', color: 'var(--color-negative, #dc2626)', textAlign: 'center', fontWeight: 700 }}>기습당함 — 적이 먼저 행동합니다.</div>
         </div>
       ` : null}
+
+      <${AllowanceList} tier=${encounter.tier} />
       </div>`}
     </div>
   `;

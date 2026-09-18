@@ -14,9 +14,9 @@ export function EnemyRow({ enemy, targetable = false, onDrop, playerVulnerable =
   return html`
     <div
       style=${{
-        width: '220px',
+        width: '260px',
         border: `2px solid ${hovering ? 'var(--color-accent-600)' : canDrop ? 'var(--color-accent)' : 'var(--color-divider)'}`,
-        padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: '8px',
+        padding: 'var(--space-4)', display: 'flex', flexDirection: 'column', gap: '10px',
         background: 'var(--color-surface)', opacity: dead ? 0.4 : 1, position: 'relative',
       }}
       class=${animation?.kind === 'attack' ? 'combatant-attack' : undefined}
@@ -26,9 +26,10 @@ export function EnemyRow({ enemy, targetable = false, onDrop, playerVulnerable =
       onDrop=${canDrop ? (e) => { e.preventDefault(); e.stopPropagation(); setHovering(false); onDrop(enemy); } : undefined}
     >
       ${animation ? html`<div class="action-cue">${animation.label}</div>` : null}
-      <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      ${/* 이름과 인텐트 배지는 한 줄에 두되, 배지가 길어지면 아래 줄로 넘긴다 — 잘리는 것보다 낫다. */ null}
+      <div style=${{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
         <span style=${{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <span style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '14px' }}>${enemy.name}</span>
+          <span style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '15px' }}>${enemy.name}</span>
           ${enemy.isMachine ? html`<span class="tag tag-outline" style=${{ fontSize: '9px', padding: '1px 5px' }}>기계</span>` : null}
         </span>
         ${!dead && enemy.intent ? html`<${IntentIcon} intent=${enemy.intent} enemyStatuses=${enemy.statuses} playerVulnerable=${playerVulnerable} />` : null}
