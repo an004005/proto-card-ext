@@ -396,6 +396,20 @@ function nodeFill(knowledge, hasThreat, isExit) {
   return hasThreat ? 'var(--color-negative, #dd2b0f)' : 'var(--color-bg)';
 }
 
+/**
+ * 노드 위 ▲ 표식의 색·굵기·꼬리. 실시간으로 본 위협 목록만 모드를 말할 수 있고, 시야 밖의
+ * 마지막 확인 정보(threats === null)는 예전 표식 그대로 둔다.
+ * @param {{mode: string}[]|null|undefined} threats
+ * @returns {{fill: string, weight: number, suffix: string}}
+ */
+function threatMarker(threats) {
+  const plain = { fill: 'var(--color-accent-2-700, #dd2b0f)', weight: 400, suffix: '' };
+  if (!threats || threats.length === 0) return plain;
+  if (threats.some((t) => t.mode === 'pursuit')) return { fill: 'var(--color-negative, #dd2b0f)', weight: 900, suffix: '!' };
+  if (threats.every((t) => t.mode === 'patrol')) return plain;
+  return { ...plain, weight: 800 }; // investigate · alert · exit_guard — 색은 그대로, 굵기만
+}
+
 function nodeOpacity(knowledge) {
   if (knowledge === 'stale') return 0.55;
   return 1;
@@ -963,6 +977,24 @@ export function MapScreen() {
     setSelectedNodeId(nodeId);
   };
 
+  /**
+   * 지금 그 노드로 바로 넘어갈 수 있는가. 더블클릭 이동과 호버 카드의 힌트가 같은 판정을 써야
+   * 한다 — 힌트가 "더블클릭해 이동"이라고 적어 놓고 눌러도 아무 일이 없으면 화면이 거짓말이다.
+   */
+  const canMoveNow = (nodeId) => {
+    if (!isTrueAdjacent(run, nodeId)) return false;
+    if (encounterBlocks(run)) return false;
+    const edge = findTraversableEdge(run, nodeId);
+    return !!edge && canTraverseEdge(run, edge, capabilities.mobility);
+  };
+
+  /** 인접하고 지날 수 있는 노드는 더블클릭만으로 넘어간다 — 선택 → 패널 버튼 두 걸음을 아낀다. */
+  const handleNodeDoubleClick = (nodeId) => {
+    if (dragRef.current.moved) return; // 지도 드래그 끝에 이어진 클릭은 무시
+    if (!canMoveNow(nodeId)) return;
+    handleMove(nodeId);
+  };
+
   const handleMove = (nodeId) => {
     if (!isTrueAdjacent(run, nodeId)) return;
     if (encounterBlocks(run)) { setError('조우 중이라 막혔습니다 — 회피하거나 전투에 들어가세요.'); return; }
@@ -1018,7 +1050,7 @@ export function MapScreen() {
   // onMouseMove가 수십 번 오는데, 그때마다 100여 노드 지도를 다시 그리면 눈에 띄게 끊긴다.
   const showHover = (ev, text) => scheduleHover({ x: ev.clientX, y: ev.clientY, text });
   /** 노드 호버만은 문장이 아니라 카드다(NodeTooltipCard) — 엣지·화살표는 그대로 문자열을 쓴다. */
-  const showNodeHover = (ev, description) => scheduleHover({ x: ev.clientX, y: ev.clientY, node: description });
+  const showNodeHover = (ev, description, hint) => scheduleHover({ x: ev.clientX, y: ev.clientY, node: description, hint });
   const hideHover = () => scheduleHover(null);
   const recenterAt = (canvasX, canvasY) => setView((v) => ({ ...v, x: -(canvasX - CANVAS_CENTER) * v.scale, y: -(canvasY - CANVAS_CENTER) * v.scale }));
   /** 패널 줄을 눌렀을 때 지도를 그 노드로 옮긴다 — 위치를 말로만 읽어 주면 결국 눈으로 찾아야 한다. */
@@ -1220,6 +1252,10 @@ export function MapScreen() {
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>†</span>전투에서 이긴 자리에 남은 시체. 위협이 밟으면 신고되어 경계 게이지가 오른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#b45309', fontWeight: 800 }}>˙N</span>내가 남긴 흔적 수. 강한 흔적이 발견되면 경계 게이지가 오른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▲N</span>포착된 위협 그룹 수(시야 밖에서는 그룹 수 없이 ▲만)</div>
+                <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>위협 표식 — 실시간으로 볼 때만 모드가 붙는다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)' }}>▲N</span>순찰 — 정해진 길을 돈다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)', fontWeight: 800 }}>▲N</span>조사/경계 — 무언가를 보고 움직이는 중</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>▲N!</span>추적 — 나를 쫓고 있다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '2px dashed var(--color-accent-2-700)' }}></span>미개방 특수 엣지(인접 시 클릭해 개방)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '3px dotted var(--color-neutral-900)' }}></span>임시 장벽 활성(적 이동 차단, 시한부)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▶</span>일방통행 엣지(화살표 방향으로만 이동 가능)</div>
@@ -1333,6 +1369,7 @@ export function MapScreen() {
                     : scoutedGradeOf(run, n.id, opportunity.id)?.tier)
                   : null;
                 const nodeDescription = describeNode(run, n, threatsByNode, exitByNode, debugReveal, viewCapabilities.stealth, viewCapabilities.perception);
+                const nodeHint = canMoveNow(n.id) ? '클릭해 선택 · 더블클릭해 이동' : '클릭해 선택';
                 const isSelected = n.id === selectedNodeId || (!selectedNodeId && n.id === run.playerNodeId);
                 const activelyObserved = activeReconNodeIds.has(n.id);
                 const camera = cameraByNode[n.id];
@@ -1354,7 +1391,14 @@ export function MapScreen() {
                       })}
                     ${n.isGateway ? html`<text x=${pos.x - 13} y=${pos.y + 13} text-anchor="middle" font-size="11" font-weight="900" fill="var(--color-neutral-700)" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">⇄</text>` : null}
                     ${exit ? html`<text x=${pos.x} y=${pos.y + 5} text-anchor="middle" font-size="12" font-weight="800" fill="var(--color-bg)" pointer-events="none">${exit.kind === 'key' ? 'K' : exit.exitId}</text>` : null}
-                    ${hasThreat ? html`<text x=${pos.x} y=${pos.y - NODE_RADIUS - 8} text-anchor="middle" font-size="13" fill="var(--color-accent-2-700, #dd2b0f)" opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">▲${threatCount ?? ''}</text>` : null}
+                    ${hasThreat ? (() => {
+                      // 실시간으로 보고 있는 노드에서는 "몇 마리"만이 아니라 "지금 무엇을 하는
+                      // 중인가"가 이동 결정을 바꾼다 — 순찰 옆은 지나갈 수 있어도 추적 중인
+                      // 무리 옆은 지나갈 수 없다. 시야 밖의 낡은 관측은 모드를 모르므로 그대로
+                      // 둔다(아는 척하면 안 된다).
+                      const marker = threatMarker(live ? threatsByNode[n.id] : null);
+                      return html`<text x=${pos.x} y=${pos.y - NODE_RADIUS - 8} text-anchor="middle" font-size="13" font-weight=${marker.weight} fill=${marker.fill} opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">▲${threatCount ?? ''}${marker.suffix}</text>`;
+                    })() : null}
                     ${opportunity && opportunity.grade === 'prize'
                       ? html`<text x=${pos.x + 9} y=${pos.y - 6} text-anchor="middle" font-size="11" font-weight="900" fill=${prizeTier === 'elite' ? '#b45309' : 'var(--color-accent-2-700)'} pointer-events="none">◆</text>`
                       : (opportunity ? html`<circle cx=${pos.x + 9} cy=${pos.y - 9} r="3.5" fill="var(--color-accent-2-700)" stroke="var(--color-bg)" stroke-width="1" pointer-events="none"></circle>` : null)}
@@ -1378,11 +1422,12 @@ export function MapScreen() {
                       data-node-id=${n.id}
                       style=${{ cursor: 'pointer' }}
                       onClick=${() => handleNodeSelect(n.id)}
-                      onMouseEnter=${(ev) => { showNodeHover(ev, nodeDescription); setHoveredNodeId(n.id); }}
-                      onMouseMove=${(ev) => showNodeHover(ev, nodeDescription)}
+                      onDblClick=${() => handleNodeDoubleClick(n.id)}
+                      onMouseEnter=${(ev) => { showNodeHover(ev, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
+                      onMouseMove=${(ev) => showNodeHover(ev, nodeDescription, nodeHint)}
                       onMouseLeave=${() => { hideHover(); setHoveredNodeId(null); }}
                       tabindex=${n.id === focusedNodeId ? 0 : -1}
-                      onFocus=${(ev) => { showNodeHover(ev, nodeDescription); setHoveredNodeId(n.id); }}
+                      onFocus=${(ev) => { showNodeHover(ev, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
                       onBlur=${() => { hideHover(); setHoveredNodeId(null); }}
                       onKeyDown=${(ev) => handleNodeKeyDown(ev, n.id)}
                     ></circle>
@@ -1445,7 +1490,7 @@ export function MapScreen() {
               position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
               boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
             }}>
-              <${NodeTooltipCard} description=${hover.node} text=${describeNodeText(hover.node)} hint="클릭해 선택" />
+              <${NodeTooltipCard} description=${hover.node} text=${describeNodeText(hover.node)} hint=${hover.hint || '클릭해 선택'} />
             </div>
           ` : null}
           ${hover && !hover.node ? html`

@@ -25,8 +25,8 @@ export function deadlineStyle(ticks) {
 }
 
 /**
- * 지금 가장 먼저 닥치는 마감 하나. 줄 맨 앞에 한 번 더 적기 위한 것이다 — 세 숫자를 매번
- * 눈으로 비교하게 하면 가장 급한 것을 놓친다.
+ * 지금 가장 먼저 닥치는 마감 하나. 줄 맨 앞에 굵게 한 번만 적는다 — 세 숫자를 매번 눈으로
+ * 비교하게 하면 가장 급한 것을 놓치고, 같은 마감을 두 번 적으면 줄만 길어진다.
  * @param {{collapseIn: number, exits: {exitId: string, closed: boolean, inTicks: number, text: string}[]}} countdowns
  * @returns {{label: string, ticks: number}}
  */
@@ -49,14 +49,18 @@ export function MapClock({ run, countdowns = runCountdowns(run), compact = false
       <div style=${{ display: 'flex', alignItems: 'center', gap: '6px', padding: compact ? 0 : '0 var(--space-3)', borderRight: compact ? undefined : '1px solid var(--color-divider)', fontSize: '13px' }}>
         <${IconClock} />
         <span>
-          <span style=${deadlineStyle(nearest.ticks)}>가장 이른 마감 ${nearest.label} <strong>${nearest.ticks}</strong>칸</span>
+          <span style=${{ fontWeight: 800, ...deadlineStyle(nearest.ticks) }}>${nearest.label} <strong>${nearest.ticks}</strong>칸</span>
           <span style=${{ marginLeft: '8px', color: 'var(--color-neutral-600)' }}>시각 ${run.time} / ${RUN_COLLAPSE_TIME}</span>
-          <span style=${{ marginLeft: '8px', ...deadlineStyle(countdowns.collapseIn) }}>붕괴까지 <strong>${countdowns.collapseIn}</strong>칸</span>
-          ${countdowns.exits.map((exit) => html`
+          ${nearest.label === '붕괴' ? null : html`
+            <span style=${{ marginLeft: '8px', ...deadlineStyle(countdowns.collapseIn) }}>붕괴까지 <strong>${countdowns.collapseIn}</strong>칸</span>
+          `}
+          ${/* 가장 이른 마감으로 이미 적은 출구는 다시 적지 않는다. 다만 가동·개방 대기·열림
+              중인 출구는 남은 칸이 "폐쇄까지"와 다른 사실이므로 그때는 그대로 둔다. */ null}
+          ${countdowns.exits.map((exit) => (!exit.closed && exit.status === 'closed' && nearest.label === `출구 ${exit.exitId} 폐쇄` ? null : html`
             <span key=${exit.exitId} style=${{ marginLeft: '8px', ...(exit.closed ? { color: 'var(--color-neutral-500)' } : deadlineStyle(exit.inTicks)) }}>
               ${exit.exitId} ${exit.text}
             </span>
-          `)}
+          `))}
         </span>
       </div>
     <//>

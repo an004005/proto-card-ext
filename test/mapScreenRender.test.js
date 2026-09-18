@@ -66,9 +66,10 @@ test('초기 상태(pendingTask·lastTaskOutcome·engagedThreatId가 전부 null
 
   const text = renderMap(run);
   assert.ok(text.includes('붕괴까지'), '상단 카운터가 보여야 한다');
-  assert.ok(text.includes('폐쇄까지') || text.includes('폐쇄됨'), '출구 폐쇄 카운터가 보여야 한다');
+  assert.ok(text.includes('출구 A 폐쇄'), '가장 이른 마감이 굵게 한 번 보여야 한다');
   assert.ok(text.includes(`시각 ${run.time} / ${RUN_COLLAPSE_TIME}`), 'HUD에 현재 시각이 상시 보여야 한다');
-  assert.ok(text.includes('가장 이른 마감'), '가장 가까운 마감이 줄 맨 앞에 한 번 더 보여야 한다');
+  assert.ok(!text.includes('가장 이른 마감'), '접두어 없이 마감 자체를 적는다');
+  assert.ok(!text.includes('폐쇄까지'), '가장 이른 마감으로 적은 출구를 뒤에서 또 세면 안 된다');
   assert.ok(text.includes('앞으로 15칸'), '타임라인 블록이 보여야 한다');
   assert.ok(text.includes('기본 정찰 · 4칸'), '예고가 붙은 행동 버튼이 보여야 한다');
 });
@@ -224,6 +225,66 @@ test('그려진 화면에는 포인트 시절의 세 자리 시간 숫자가 없
   for (const forbidden of ['시간 100', '시간 120', '시간 130', '시간 150', '시간 180', '시간 200', '300시간', '시간 +40', '시간 -40', '포인트']) {
     assert.ok(!text.includes(forbidden), `옛 단위가 남아 있다: ${forbidden}`);
   }
+});
+
+test('인접한 노드를 더블클릭하면 그 자리에서 이동한다', async () => {
+  // 선택 → 패널에서 이동 버튼 찾기는 인접 한 칸을 옮기는 데 두 걸음이다. 지도 위에서 바로
+  // 끝낼 수 있어야 한다.
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const run = { ...base, threats: {} };
+  const root = mountMap(run);
+
+  const hitOf = (nodeId) => queryAll(root, (node) => node.localName === 'circle' && node.getAttribute('data-node-id') === nodeId)[0];
+  const neighbors = run.graph.edges
+    .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
+    .map((e) => (e.from === run.playerNodeId ? e.to : e.from));
+
+  let moved = null;
+  for (const nodeId of neighbors) {
+    if (!hitOf(nodeId)) continue;
+    fire(hitOf(nodeId), 'click'); // 실제 브라우저처럼 단일 클릭이 먼저 온다(선택)
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    if (fire(hitOf(nodeId), 'dblclick') === 0) continue;
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    if (snapshotSignal.value.facilityRunState.playerNodeId === nodeId) { moved = nodeId; break; }
+  }
+  assert.ok(moved, '지날 수 있는 인접 노드를 더블클릭하면 그리로 옮겨 가야 한다');
+  resetMapView();
+});
+
+test('지날 수 있는 인접 노드의 호버 카드는 더블클릭 이동을 안내한다', async () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const root = mountMap({ ...base, threats: {} });
+  const run = snapshotSignal.value.facilityRunState;
+  const neighbor = run.graph.edges
+    .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
+    .map((e) => (e.from === run.playerNodeId ? e.to : e.from))
+    .find((id) => queryAll(root, (node) => node.localName === 'circle' && node.getAttribute('data-node-id') === id)[0]);
+  const hit = queryAll(root, (node) => node.localName === 'circle' && node.getAttribute('data-node-id') === neighbor)[0];
+
+  fire(hit, 'mouseenter', { clientX: 10, clientY: 10 });
+  await new Promise((resolve) => { setTimeout(resolve, 30); });
+  assert.ok(root.textContent.includes('더블클릭해 이동'), '인접·통과 가능한 노드에는 더블클릭 안내가 붙어야 한다');
+  resetMapView();
+});
+
+test('추적 중인 위협은 지도 표식에 !가 붙는다', () => {
+  // ▲2만으로는 "저기 둘이 있다"까지만 안다. 그 둘이 나를 쫓는 중인지 순찰 중인지가 이동
+  // 결정을 바꾸므로 표식이 그것을 말해야 한다.
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const edge = base.graph.edges.find((e) => e.from === base.playerNodeId || e.to === base.playerNodeId);
+  const neighbor = edge.from === base.playerNodeId ? edge.to : edge.from;
+  const threat = Object.values(base.threats)[0];
+
+  const patrolling = renderMap({ ...base, threats: { [threat.id]: { ...threat, nodeId: neighbor, mode: 'patrol' } } });
+  assert.ok(patrolling.includes('▲1'), '실시간으로 본 인접 노드에는 그룹 수가 붙는다');
+  assert.ok(!patrolling.includes('▲1!'), '순찰 중인데 추적 표식이 붙었다');
+
+  const pursuing = renderMap({ ...base, threats: { [threat.id]: { ...threat, nodeId: neighbor, mode: 'pursuit' } } });
+  assert.ok(pursuing.includes('▲1!'), '추적 중인 위협은 !로 구분되어야 한다');
 });
 
 test('노드 카드는 유형·현장 기회·장치를 각각 한 줄로 적는다', () => {
