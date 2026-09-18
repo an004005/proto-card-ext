@@ -352,7 +352,7 @@ test('무료 조작은 0칸이다 — 인벤토리 정리·아이템 버리기·
 
 // 「무료 조작」 목록에 '전투 진입 선택'이 들어 있었지만 사실이 아니다 — 우위 조우의 기습
 // 진입만 0칸이고, 열세에서 밀려난 강제 전투 진입은 적 선공 구간을 칸으로 청구한다.
-test('강제 전투 진입은 무료가 아니다 — 적 선공 구간 3칸을 청구한다', () => {
+test('강제 전투 진입은 무료가 아니다 — 적 선공 구간을 청구한다', () => {
   const base = quietRun(4);
   const template = Object.values(createRunState(base.graph, 4).threats)[0];
   const threat = { ...template, nodeId: base.playerNodeId, nextMoveAt: 10000 };
@@ -366,7 +366,7 @@ test('강제 전투 진입은 무료가 아니다 — 적 선공 구간 3칸을 
   assert.equal(fought.currentScreen, 'combat');
   assert.equal(
     fought.facilityRunState.time, base.time + COMBAT_ENEMY_AMBUSH_TIME_COST,
-    '강제 전투 진입은 적 선공 구간 3칸을 청구한다',
+    '강제 전투 진입은 적 선공 구간을 청구한다',
   );
 
   // 대조군: 우위 조우의 기습 진입은 진짜 0칸이다(스턴은 시간을 줄이지도 늘리지도 않는다).

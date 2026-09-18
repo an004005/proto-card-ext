@@ -682,9 +682,9 @@ export const ENCOUNTER_EVADE_TIME = 1;
 // ---- 전투 라운드 정산 (planned §8) ----
 
 /** 전투 1라운드(플레이어 행동 구간 + 적 반응)에 드는 맵 칸. 적 수나 카드 수로 늘어나지 않는다. */
-export const COMBAT_ROUND_TIME_COST = 3;
+export const COMBAT_ROUND_TIME_COST = 1;
 /** 적 기습으로 생기는 추가 선공 구간. 라운드 비용과 별도로 한 번 청구된다. */
-export const COMBAT_ENEMY_AMBUSH_TIME_COST = 3;
+export const COMBAT_ENEMY_AMBUSH_TIME_COST = 1;
 
 // ---- Capability 행동표 tier 1 (§6.3) — MVP는 tier 1 접근만 구현한다. 더 높은 tier(예: Force
 // 2~4의 바리케이드 파괴·구조물 붕괴)는 이후 단계 과제로 남긴다.

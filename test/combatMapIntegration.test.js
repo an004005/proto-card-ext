@@ -149,7 +149,7 @@ test('전투 1라운드는 3칸이고, 라운드마다 정확히 한 번만 정�
   const won = finalizeIfCombatEnded(withPhase(started, 'victory'));
   assert.equal(won.facilityRunState.time, COMBAT_ROUND_TIME_COST);
 
-  // 세 번째 라운드에 끝나면 총 9칸 — 턴 종료 두 번(각 3칸) + 마지막 라운드 3칸.
+  // 세 번째 라운드에 끝나면 라운드 비용 세 번 — 턴 종료 두 번 + 마지막 라운드 한 번.
   let s = startedCombat();
   s = finishTaskSnapshot(gameReducer(s, { type: 'END_TURN' }));
   assert.equal(s.facilityRunState.time, COMBAT_ROUND_TIME_COST);
@@ -210,14 +210,16 @@ test('교전 중인 위협은 맵에서 멈추고 외부 위협은 계속 움직
   const after = finishTaskSnapshot(gameReducer(primed, { type: 'END_TURN' })).facilityRunState;
   assert.equal(after.threats[engagedId].nodeId, before, '교전 중인 위협은 제자리다');
   assert.equal(after.threats[engagedId].nextMoveAt, 1, '예약도 그대로 멈춰 있다');
-  assert.notEqual(after.threats[outsider.id].nodeId, outsider.nodeId, '외부 위협은 그 3칸 동안 진행한다');
+  assert.notEqual(after.threats[outsider.id].nodeId, outsider.nodeId, '외부 위협은 그 라운드 동안 진행한다');
 });
 
 test('정산 도중 붕괴 시각을 넘기면 승리했더라도 붕괴가 우선한다', () => {
   const started = startedCombat();
   const nearEnd = {
     ...started,
-    facilityRunState: { ...started.facilityRunState, time: RUN_COLLAPSE_TIME - 2 },
+    // 라운드 하나를 정산하면 정확히 붕괴 시각을 넘기는 자리. 상수에서 거꾸로 잡아야
+    // 라운드 단가가 바뀌어도 이 테스트가 재는 것이 그대로 남는다.
+    facilityRunState: { ...started.facilityRunState, time: RUN_COLLAPSE_TIME - COMBAT_ROUND_TIME_COST + 1 },
   };
   const won = finalizeIfCombatEnded(withPhase(nearEnd, 'victory'));
   assert.equal(won.facilityRunState.phase, 'collapsed');
