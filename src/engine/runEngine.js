@@ -44,6 +44,7 @@ import {
   EVIDENCE_TIER_RAISING_ALERT, REINFORCEMENT_INTERVAL, REINFORCEMENT_LOCKDOWN_INTERVAL,
   WAIT_TICK_TIME, ENCOUNTER_EVADE_TIME, BASIC_RECON_HOP_RANGE, CONTRACT_DETONATE_MIN_HOPS,
   PERCEPTION_INFO_TABLE, FREE_OBSERVATION_DETAIL_LEVEL, PERCEPTION_WAIT_OBSERVATION_MIN,
+  HUNTER_MOVE_INTERVAL, HUNTER_LOSE_TICKS, HUNTER_SIGHT_HOPS, HUNTER_STEALTH_THRESHOLD,
 } from '../data/facilityLayout.js';
 import { adjacentSectorIds } from './facilityGraph.js';
 
@@ -173,6 +174,13 @@ export function createRunState(graph, seed, runConfig = {}) {
     lastActionResult: null,
     exits: /** @type {any} */ (exits),
     threats,
+    // 추적자(ADR-0092). 경계도 3단계에 오른 구역이 하나씩 내보내며, 그 구역이 3 아래로
+    // 내려가면 목록에서도 빠져 다시 3이 될 때 새로 나온다.
+    hunterSpawnedSectorIds: [],
+    hunterLog: [],
+    // 추적자 관측 판정이 읽는 실효 Stealth. 리듀서가 매 행동 앞에서 찍어 준다 — runEngine은
+    // 로드아웃을 보지 못하므로, 카메라 판정이 stealth를 인자로 받는 것과 같은 구조다.
+    playerStealth: 0,
     noiseEvents: [],
     falseTargets: [],
     evidence: [],
@@ -929,6 +937,211 @@ function spawnReinforcement(state, sectorId) {
   };
 }
 
+// ---- 추적자 (ADR-0092) ----
+//
+// 경계도 3단계가 그 구역에 풀어놓는 개체 하나. 다른 위협과 달리 순찰 경로도 소음도 보지 않고
+// 플레이어만 본다. 그래서 이동·목표·관측을 updateThreat의 표가 아니라 여기 따로 둔다 — 그 표에
+// 예외를 끼워 넣으면 "이 마커는 왜 여기 서 있나"를 한 자리에서 읽을 수 없게 된다.
+
+/** @param {import('./types.js').ThreatRuntimeState} threat */
+export function isHunter(threat) {
+  return threat?.kind === 'hunter';
+}
+
+/** 그 구역에 지금 살아 있는 추적자. @param {import('./types.js').FacilityRunState} state @param {string} sectorId */
+function hunterOfSector(state, sectorId) {
+  return Object.values(state.threats).find((t) => isHunter(t) && t.sectorId === sectorId) || null;
+}
+
+/**
+ * 추적자가 지금 플레이어를 보고 있는가. 일반 위협의 1홉 시야(threatObservesPlayer)와 같은
+ * 규칙이되 거리가 HUNTER_SIGHT_HOPS로 넓고, 실효 Stealth가 임계 이상이면 그 안에서도 놓친다 —
+ * 은신 빌드가 추적자를 떨어뜨릴 수 있는 유일한 손잡이다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} hunter
+ */
+function hunterObservesPlayer(state, hunter) {
+  const playerNodeId = state.playerNodeId;
+  if (!playerNodeId) return false;
+  if ((state.playerStealth ?? 0) >= HUNTER_STEALTH_THRESHOLD) return false;
+  if (hunter.nodeId === playerNodeId) return true;
+  const hops = bfsHopDistances(edgesForThreatMovement(state), hunter.nodeId);
+  return (hops.get(playerNodeId) ?? Infinity) <= HUNTER_SIGHT_HOPS;
+}
+
+/**
+ * 추적자 한 마리의 한 칸. 보면 플레이어 노드를 목표로 최단 경로로 좁히고, 못 보면 마지막으로
+ * 본 자리로 가서 그 인접을 순회한다. 이동 간격은 경계도·봉쇄와 무관하게 고정이다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} hunter
+ * @param {number} tickTime
+ * @returns {{threat: import('./types.js').ThreatRuntimeState, state: import('./types.js').FacilityRunState}}
+ */
+function updateHunter(state, hunter, tickTime) {
+  const sees = hunterObservesPlayer(state, hunter);
+  /** @type {import('./types.js').ThreatRuntimeState} */
+  let next = sees
+    ? {
+      ...hunter,
+      lostTicks: 0,
+      lastObservedPlayerAt: tickTime,
+      lastKnownPlayerNodeId: state.playerNodeId,
+      target: { kind: /** @type {const} */ ('player'), nodeId: /** @type {string} */ (state.playerNodeId) },
+    }
+    : { ...hunter, lostTicks: (hunter.lostTicks || 0) + 1 };
+
+  // 못 보는 동안의 목표는 마지막으로 본 자리다. 거기 이미 서 있으면 인접을 한 칸씩 훑는다 —
+  // 그 자리에 멈춰 서 있으면 20칸 동안 아무 일도 일어나지 않아 "놓치기까지 M칸"이 그냥 대기가 된다.
+  if (!sees) {
+    const anchor = next.lastKnownPlayerNodeId;
+    if (!anchor) {
+      next.target = { kind: /** @type {const} */ ('patrol'), nodeId: next.nodeId };
+    } else if (next.nodeId !== anchor) {
+      next.target = { kind: /** @type {const} */ ('player'), nodeId: anchor };
+    } else {
+      const adjacency = buildAdjacency(edgesForThreatMovement(state));
+      const ring = [...(adjacency.get(anchor) || [])].sort();
+      const sweepIndex = ring.length ? (next.patrolIndex + 1) % ring.length : 0;
+      next.patrolIndex = sweepIndex;
+      next.target = { kind: /** @type {const} */ ('patrol'), nodeId: ring.length ? ring[sweepIndex] : anchor };
+    }
+  }
+
+  if (tickTime < next.nextMoveAt) return { threat: next, state };
+
+  const stepped = stepToward(edgesForThreatMovement(state), next.nodeId, next.target.nodeId, state.rngState);
+  next.nodeId = stepped.nodeId;
+  next.nextMoveAt = tickTime + HUNTER_MOVE_INTERVAL;
+  // 순회 중 마지막으로 본 자리를 떠났다면 다음 칸에 다시 그리로 돌아오도록 앵커는 그대로 둔다.
+  let nextState = { ...state, rngState: stepped.rngState };
+  nextState = discoverAtNode(nextState, next.nodeId, sectorOfNode(next.nodeId));
+  return { threat: next, state: nextState };
+}
+
+/**
+ * 경계도 3단계 도달 시의 스폰과, 세 무력화 조건의 제거를 한 자리에서 본다. 매 칸 경계에서
+ * 돌며, 스폰은 **단계가 3으로 올라선 그 순간** 한 번뿐이다(`hunterSpawnedSectorIds`) — 매 칸
+ * "3이면 없으면 만든다"로 두면 전투로 쓰러뜨린 다음 칸에 곧바로 새 추적자가 서 있다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {number} tickTime
+ * @returns {import('./types.js').FacilityRunState}
+ */
+function syncHunters(state, tickTime) {
+  let next = state;
+  let threats = next.threats;
+  let spawned = next.hunterSpawnedSectorIds || [];
+  let log = next.hunterLog || [];
+  let changed = false;
+
+  for (const sectorId of next.graph.sectorIds) {
+    const level = next.sectorAlerts[sectorId]?.level ?? 0;
+    const hunter = Object.values(threats).find((t) => isHunter(t) && t.sectorId === sectorId) || null;
+    const seized = (next.revealedPatrolRouteSectorIds || []).includes(sectorId);
+
+    if (level < 3) {
+      // 단계가 내려가면 이 구역은 다시 "3이 되는 순간"을 가질 수 있다.
+      if (spawned.includes(sectorId)) { spawned = spawned.filter((id) => id !== sectorId); changed = true; }
+      if (hunter) {
+        delete (threats = { ...threats })[hunter.id];
+        log = [...log, { at: tickTime, sectorId, reason: /** @type {const} */ ('alertFell'), text: '추적자가 철수했다 — 구역 경계도가 3단계 아래로 내려갔다.' }];
+        changed = true;
+      }
+      continue;
+    }
+
+    if (hunter && seized) {
+      delete (threats = { ...threats })[hunter.id];
+      log = [...log, { at: tickTime, sectorId, reason: /** @type {const} */ ('controlRoom'), text: '추적자가 철수했다 — 구역 통제실을 장악했다.' }];
+      changed = true;
+      continue;
+    }
+    if (hunter && (hunter.lostTicks || 0) >= HUNTER_LOSE_TICKS) {
+      delete (threats = { ...threats })[hunter.id];
+      log = [...log, { at: tickTime, sectorId, reason: /** @type {const} */ ('lost'), text: '추적자가 흔적을 놓쳤다 — 20칸 동안 나를 보지 못했다.' }];
+      changed = true;
+      continue;
+    }
+    if (hunter || spawned.includes(sectorId)) continue;
+    // 통제실을 이미 장악한 구역에는 애초에 내보내지 않는다.
+    if (seized) continue;
+
+    const origin = hunterSpawnNode(next, sectorId);
+    if (!origin) continue;
+    threats = { ...threats, [`hunter_${sectorId}`]: makeHunter(next, sectorId, origin, tickTime) };
+    spawned = [...spawned, sectorId];
+    changed = true;
+  }
+
+  if (!changed) return next;
+  return { ...next, threats, hunterSpawnedSectorIds: spawned, hunterLog: log };
+}
+
+/**
+ * 랜드마크 노드에서 나온다. 랜드마크가 없는 구역이면 관문.
+ *
+ * 플레이어가 서 있는 자리에는 내보내지 않는다 — 증원과 같은 규칙이다(등 뒤에서 생기지 않는다).
+ * 특히 랜드마크는 통제실을 장악하러 서 있는 그 자리라, 거기 세우면 추적자를 떼는 유일한 능동
+ * 수단(통제실 장악)이 시작하는 순간 전투로 끊긴다. 다른 자리도 없으면 이번 칸은 건너뛴다.
+ * @param {import('./types.js').FacilityRunState} state @param {string} sectorId
+ */
+function hunterSpawnNode(state, sectorId) {
+  const landmark = state.graph.landmarks.find((l) => l.sectorId === sectorId);
+  if (landmark && landmark.nodeId !== state.playerNodeId) return landmark.nodeId;
+  const gateway = state.graph.nodes.find((n) => n.sectorId === sectorId && n.isGateway && n.id !== state.playerNodeId);
+  return gateway ? gateway.id : null;
+}
+
+/**
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} sectorId
+ * @param {string} nodeId
+ * @param {number} tickTime
+ * @returns {import('./types.js').ThreatRuntimeState}
+ */
+function makeHunter(state, sectorId, nodeId, tickTime) {
+  return {
+    id: `hunter_${sectorId}`,
+    kind: 'hunter',
+    alwaysVisible: true,
+    sectorId: /** @type {import('./types.js').FacilitySectorId} */ (sectorId),
+    size: 1,
+    monsterIds: ['hunter'],
+    patrolRoute: [nodeId],
+    patrolIndex: 0,
+    nodeId,
+    mode: 'pursuit',
+    alert: 3,
+    nextMoveAt: tickTime + HUNTER_MOVE_INTERVAL,
+    lastKnownPlayerNodeId: state.playerNodeId || null,
+    lastObservedPlayerAt: null,
+    pursuitStrength: 3,
+    target: null,
+    investigationMemory: null,
+    lostTicks: 0,
+  };
+}
+
+/**
+ * 위협 패널이 읽는 추적자 한 줄의 재료. 추적자는 관측과 무관하게 항상 보이므로 정보 깊이를
+ * 거치지 않는다 — 이 개체를 못 본 척하는 것이 이 규칙의 유일한 예외다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @returns {{id: string, sectorId: string, nodeId: string, hopsFromPlayer: number|null, ticksUntilLost: number}[]}
+ */
+export function describeHunters(state) {
+  const hops = state.playerNodeId
+    ? bfsHopDistances(edgesForThreatMovement(state), state.playerNodeId)
+    : null;
+  return Object.values(state.threats)
+    .filter(isHunter)
+    .map((hunter) => ({
+      id: hunter.id,
+      sectorId: hunter.sectorId,
+      nodeId: hunter.nodeId,
+      hopsFromPlayer: hops ? (hops.get(hunter.nodeId) ?? null) : null,
+      ticksUntilLost: Math.max(0, HUNTER_LOSE_TICKS - (hunter.lostTicks || 0)),
+    }));
+}
+
 /**
  * 구역별 증원 시계(D14). 경계도가 오른 구역은 다음 교대를 현재 시각으로 당긴다 — 경계도
  * 상승이 곧 증원이라는 D14의 계기를, 정원을 넘기지 않으면서 지킨다. 경계도가 올랐는지는
@@ -1162,11 +1375,19 @@ function worldTick(state, tickTime) {
   // Each threat sees the previous threats' already-updated state (sectorAlerts/rngState threaded
   // through workingState) but not their moves within this same tick — §5.2 doesn't require
   // ordering between markers, only that each picks a target and moves at most once per tick.
-  let workingState = state;
-  for (const threat of Object.values(state.threats)) {
+  // 경계도 3단계의 추적자는 위협 이동보다 **먼저** 정리한다 — 스폰된 추적자는 그 칸에 바로
+  // 한 번 판정을 받고, 무력화된 추적자는 그 칸에 더 걷지 않는다(ADR-0092).
+  let workingState = syncHunters(state, tickTime);
+  for (const threat of Object.values(workingState.threats)) {
     // 교전 중인 위협은 맵에서 멈춘다(planned §8) — 전투의 3칸 동안 외부 위협만 진행한다.
     if (state.engagedThreatId === threat.id) {
       nextThreats[threat.id] = threat;
+      continue;
+    }
+    if (isHunter(threat)) {
+      const { threat: hunted, state: afterHunter } = updateHunter(workingState, threat, tickTime);
+      nextThreats[threat.id] = hunted;
+      workingState = { ...afterHunter, threats: { ...afterHunter.threats, [threat.id]: hunted } };
       continue;
     }
     const { threat: updated, state: afterThreat } = updateThreat(workingState, threat, tickTime);

@@ -9,7 +9,7 @@ import {
   disableGenerator, useConcealment, hackControlRoom,
   computeThreatPerception, computeEncounterTier, explainEffectiveStealth, deceiveThreat,
   acquireContractGoods, destroyContractTarget, detonateContractCharge, acquireContractIntel, transmitContractIntel,
-  disposeCorpse, scheduleTask, taskCompleted, waitOneTick, evadeThreat,
+  disposeCorpse, scheduleTask, taskCompleted, waitOneTick, evadeThreat, isHunter,
 } from './runEngine.js';
 import { WAIT_BATCH_MAX_TICKS } from '../data/facilityLayout.js';
 import { actionTimeCost } from './actionCosts.js';
@@ -74,6 +74,11 @@ function triggerCombatIfNeeded(snapshot) {
     perceptionAtJudgement: perception,
   };
 
+  // 추적자는 판정을 거치지 않는다(ADR-0092). 이 개체는 "들킬 것인가"를 묻는 상대가 아니라
+  // 이미 나를 특정해 걸어온 것이므로, 같은 노드에 닿는 순간이 곧 전투다 — 회피도 속이기도 없다.
+  if (isHunter(threat)) {
+    return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier: /** @type {const} */ ('forced'), graceUsed: true, ...judgement } } };
+  }
   if (tier !== 'disadvantage') {
     return { ...snapshot, facilityRunState: { ...clearedRun, encounter: { threatId: threat.id, nodeId: trigger.nodeId, tier, graceUsed: false, ...judgement } } };
   }
@@ -153,7 +158,12 @@ function withFacilityRunState(snapshot, fn, { usesCapability = true } = {}) {
   if (snapshot.currentScreen !== 'map' || !snapshot.facilityRunState) return snapshot;
   if (isBlockedByEncounter(snapshot)) return snapshot;
   const ps = snapshot.playerState;
-  const synced = snapshot.facilityRunState;
+  // 추적자의 관측 판정(ADR-0092)은 실효 Stealth를 봐야 하는데 runEngine은 로드아웃을 보지 못한다.
+  // 모든 시설맵 액션이 이 함수 하나를 지나므로, 여기서 한 번 찍어 두면 빠뜨리는 자리가 없다.
+  const synced = {
+    ...snapshot.facilityRunState,
+    playerStealth: explainEffectiveStealth(effectiveCapabilities(snapshot).stealth, snapshot.facilityRunState).total,
+  };
   // runEngine.js 함수들은 잘못된 호출(자격 미충족/이미 소진 등)에 RuleViolation을 던진다 —
   // UI가 유효한 액션만 노출하는 게 정상 경로지만, 리듀서는 항상 total function이어야 하므로
   // 그것만 흡수한다. TypeError 같은 진짜 버그까지 여기서 삼키면 "버튼을 눌러도 아무 일도

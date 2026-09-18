@@ -625,3 +625,29 @@ test('현재 노드 패널은 세 묶음으로 접히고, 수습·장비 머리�
   await new Promise((resolve) => { setTimeout(resolve, 0); });
   assert.ok(!root.textContent.includes('시체 처리'), '다시 누르면 접혀야 한다');
 });
+
+test('추적자는 관측하지 못한 구역에 있어도 지도와 위협 패널에 항상 그려진다 (ADR-0092)', () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  // 플레이어에게서 가장 먼 구역의 랜드마크에 세운다 — 인접 관측도 정찰도 닿지 않는 자리다.
+  const farSector = graph.sectorIds.find((id) => id !== base.playerNodeId.split('_')[0]);
+  const landmark = graph.landmarks.find((l) => l.sectorId === farSector);
+  const run = {
+    ...base,
+    threats: {
+      [`hunter_${farSector}`]: {
+        id: `hunter_${farSector}`, kind: 'hunter', alwaysVisible: true,
+        sectorId: farSector, size: 1, monsterIds: ['hunter'],
+        patrolRoute: [landmark.nodeId], patrolIndex: 0, nodeId: landmark.nodeId,
+        mode: 'pursuit', alert: 3, nextMoveAt: base.time + 2,
+        lastKnownPlayerNodeId: null, lastObservedPlayerAt: null, pursuitStrength: 3,
+        target: null, investigationMemory: null, lostTicks: 4,
+      },
+    },
+    sectorAlerts: { ...base.sectorAlerts, [farSector]: { level: 3, pressure: 0, resolvedEventIds: [] } },
+  };
+
+  const text = mountMap(run).textContent;
+  assert.ok(text.includes('추적자'), '미관측 구역의 추적자도 지도·패널에 이름이 보여야 한다');
+  assert.ok(text.includes('놓치기까지 16칸'), '남은 칸이 위협 패널 첫 줄에 보여야 한다');
+});

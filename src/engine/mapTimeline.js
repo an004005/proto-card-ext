@@ -10,7 +10,7 @@
 
 import {
   RUN_COLLAPSE_TIME, SECTOR_NAMES, THREAT_MOVE_INTERVAL, SECTOR_ALERT_MOVE_INTERVAL,
-  SECTOR_ALERT_FAST_MOVE_LEVEL, LOCKDOWN_THREAT_MOVE_INTERVAL,
+  SECTOR_ALERT_FAST_MOVE_LEVEL, LOCKDOWN_THREAT_MOVE_INTERVAL, HUNTER_MOVE_INTERVAL,
 } from '../data/facilityLayout.js';
 import { bfsHopDistances } from './graphUtils.js';
 import { describeThreatDecay, detailIncludes } from './runEngine.js';
@@ -109,7 +109,9 @@ export function describeNodeLocation(run, nodeId, hops) {
 export function observableThreats(run) {
   const visible = reconNodeIds(run);
   for (const nodeId of adjacentNodeIds(run)) visible.add(nodeId);
-  return Object.values(run.threats).filter((threat) => visible.has(threat.nodeId));
+  // 추적자(ADR-0092)는 관측 규칙의 유일한 예외다 — 어디 있든 항상 보인다. 안 보이는 추적자는
+  // "언제 닿는가"를 셀 수 없게 만들어, 끈질김이 압박이 아니라 갑작스러운 사고가 되어버린다.
+  return Object.values(run.threats).filter((threat) => threat.alwaysVisible || visible.has(threat.nodeId));
 }
 
 /** 정찰(기본 정찰 2홉·해킹한 카메라)이 지금 비추고 있는 노드.
@@ -190,6 +192,8 @@ export function observableThreatMoves(run) {
  * @returns {number}
  */
 function threatMoveInterval(run, threat) {
+  // 추적자만은 경계도 가속·봉쇄와 무관하게 고정 간격이다(ADR-0092).
+  if (threat.kind === 'hunter') return HUNTER_MOVE_INTERVAL;
   const alertLevel = run.sectorAlerts?.[threat.sectorId]?.level ?? 0;
   const table = run.lockdown ? LOCKDOWN_THREAT_MOVE_INTERVAL : THREAT_MOVE_INTERVAL;
   let interval = table[threat.mode] ?? table.patrol;

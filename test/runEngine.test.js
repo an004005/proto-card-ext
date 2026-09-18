@@ -757,7 +757,9 @@ test('hackControlRoom level 2 lowers this sector alert by (hacking - 1), and lev
   for (const [id, t] of Object.entries(state.threats)) {
     threats[id] = { ...t, nodeId: farNode.id, mode: 'pursuit', pursuitStrength: 3, lastKnownPlayerNodeId: farNode.id };
   }
-  state = { ...state, threats };
+  // 경계도 3단계는 추적자를 내보낸다(ADR-0092). 이 테스트가 보는 것은 경계도 산수이므로 그
+  // 구역들을 "이미 한 번 내보낸" 것으로 표시해 둔다 — 추적자 규칙은 hunter.test.js가 본다.
+  state = { ...state, threats, hunterSpawnedSectorIds: [landmark.sectorId, neighbors[0]] };
 
   const level2 = finishTask(hackControlRoom(state, 2));
   assert.equal(level2.sectorAlerts[landmark.sectorId].level, 2); // 3 - (2-1) = 2

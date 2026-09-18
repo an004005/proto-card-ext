@@ -20,7 +20,7 @@ import {
   canTraverseEdge, cameraHackRange, isCameraHackActive, getSectorLandmarkArrowTarget, isNodeCharted,
   moveTimeCost, observationSuspended, prizeGradeKnown, contractDetonationRange, canTransmitContractIntelHere,
   explainEffectiveStealth, detailIncludes, highGroundMobility, nodeContentsAt,
-  deviceStatus, canClimbHighGround, interfaceCameraRevealHops,
+  deviceStatus, canClimbHighGround, interfaceCameraRevealHops, describeHunters, isHunter,
 } from '../engine/runEngine.js';
 import { ladderNote, StepBadge } from './ladderDisplay.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
@@ -636,6 +636,9 @@ function describeThreatsHere(run, node, liveThreats) {
     const observed = describeObservedThreat(run, threat);
     // 관측 기록보다 깊은 것은 그리지 않는다(정보 깊이 표) — 없는 항목은 null로 오므로 거른다.
     const parts = [];
+    // 추적자만은 예외다(ADR-0092). 이름을 감추면 카드가 "규모 1 · 추적"이라고만 말해, 회피가
+    // 통하는 보통 마커와 구별되지 않는다 — 회피 버튼을 찾다 한 칸을 버리게 된다.
+    if (isHunter(threat)) parts.push('추적자');
     if (observed.composition && observed.composition.length > 0) parts.push(countedNames(observed.composition));
     if (observed.size !== null) parts.push(`규모 ${observed.size}`);
     if (observed.mode !== null) parts.push(THREAT_MODE_LABELS[observed.mode] || observed.mode);
@@ -1432,7 +1435,11 @@ export function MapScreen() {
     eq.instanceId, FIELD_ACTION_LABELS[eq.contract.fieldAction.kind] || eq.contract.fieldAction.kind,
   ]));
   const timeline = upcomingEvents(run, TIMELINE_HORIZON, { cooldownLabels });
-  const threatMoves = observableThreatMoves(run);
+  // 추적자는 관측 규칙을 타지 않는다(ADR-0092) — 위협 패널의 첫 줄과 지도 표식을 여기서 만들고,
+  // 아래 일반 위협 목록에서는 빼서 같은 개체가 두 번 읽히지 않게 한다.
+  const hunterMarks = describeHunters(run);
+  const hunterIds = new Set(hunterMarks.map((h) => h.id));
+  const threatMoves = observableThreatMoves(run).filter((threat) => !hunterIds.has(threat.id));
   const staleSightings = staleThreatSightings(run);
   const interruption = interruptionNotice(run);
   const waitNotice = waitBatchNotice(run);
@@ -1599,6 +1606,7 @@ export function MapScreen() {
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)' }}>▲N</span>순찰 — 정해진 길을 돈다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)', fontWeight: 800 }}>▲N</span>조사/경계 — 무언가를 보고 움직이는 중</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>▲N!</span>추적 — 나를 쫓고 있다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>◆ 추적자</span>경계도 3단계가 내보낸 개체. 안개와 무관하게 항상 보이고, 회피·속이기 없이 전투만 남는다. 20칸 동안 나를 보지 못하거나, 그 구역 경계도가 3 아래로 내려가거나, 통제실을 장악하면 물러난다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '2px dashed var(--color-accent-2-700)' }}></span>미개방 특수 엣지(인접 시 클릭해 개방)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '3px dotted var(--color-neutral-900)' }}></span>임시 장벽 활성(적 이동 차단, 시한부)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▶</span>일방통행 엣지(화살표 방향으로만 이동 가능)</div>
@@ -1792,6 +1800,22 @@ export function MapScreen() {
                   </g>
                 `;
               })}
+              ${/* 추적자(ADR-0092)는 관측·안개·도면 여부와 무관하게 **항상** 그린다. 노드 루프
+                  바깥의 독립 레이어인 이유가 그것이다 — 루프는 도면에 없는 노드를 건너뛰므로,
+                  거기 그리면 추적자가 비인가 통로로 들어선 순간 지도에서 사라진다. 어디 있는지
+                  모르는 추적자는 "언제 닿는가"를 셀 수 없게 만들어 압박이 아니라 사고가 된다. */ null}
+              <g pointer-events="none">
+                ${hunterMarks.map((hunter) => {
+                  const pos = positions[hunter.nodeId];
+                  if (!pos) return null;
+                  return html`
+                    <g key=${hunter.id}>
+                      <text x=${pos.x} y=${pos.y + NODE_RADIUS + 12} text-anchor="middle" font-size="12" font-weight="900" fill="var(--color-negative, #dd2b0f)">◆</text>
+                      <text x=${pos.x} y=${pos.y + NODE_RADIUS + 22} text-anchor="middle" font-size="9" font-weight="800" fill="var(--color-negative, #dd2b0f)">추적자</text>
+                    </g>
+                  `;
+                })}
+              </g>
               ${landmarkArrowTarget ? (() => {
                 const from = positions[run.playerNodeId];
                 const to = positions[landmarkArrowTarget.nodeId];
@@ -1940,7 +1964,23 @@ export function MapScreen() {
 
           <div style=${{ padding: 'var(--space-3) var(--space-4)', borderBottom: '1px solid var(--color-divider)' }}>
             <h4 style=${{ margin: '0 0 6px' }}>위협</h4>
-            ${threatMoves.length === 0 && staleSightings.length === 0
+            ${/* 추적자는 언제나 첫 줄이다 — 다른 마커가 몇이든 이 개체가 몇 홉에 있고 몇 칸 뒤에
+                흔적을 놓치는가가 다음 한 칸의 결정을 가장 크게 바꾼다(ADR-0092). */ null}
+            ${hunterMarks.map((hunter) => html`
+              <${Tooltip} key=${hunter.id} align="left" width=${260} content=${`경계도 3단계가 내보낸 개체입니다. 조우 회피도 속이기도 통하지 않고, 같은 노드에 닿으면 곧바로 전투입니다. 2칸마다 한 번 움직이며(경계도·봉쇄와 무관), ${hunter.ticksUntilLost}칸 동안 나를 보지 못하면 물러납니다. 구역 경계도를 3 아래로 내리거나 그 구역 통제실을 장악해도 물러납니다.`}>
+                <div
+                  style=${{ fontSize: '10.5px', color: 'var(--color-negative, #dd2b0f)', fontWeight: 900, width: 'fit-content', cursor: 'pointer', marginBottom: '3px' }}
+                  onMouseEnter=${() => setHoveredNodeId(hunter.nodeId)}
+                  onMouseLeave=${() => setHoveredNodeId(null)}
+                  onClick=${() => focusOnNode(hunter.nodeId)}
+                >
+                  ◆ 추적자 · ${SECTOR_NAMES[hunter.sectorId] || hunter.sectorId} · 나와 ${hunter.hopsFromPlayer ?? '?'}홉 · 놓치기까지 ${hunter.ticksUntilLost}칸
+                </div>
+              <//>
+            `)}
+            ${hunterMarks.length > 0 && threatMoves.length === 0 && staleSightings.length === 0
+    ? null
+    : threatMoves.length === 0 && staleSightings.length === 0
     ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)' }}>지금 보고 있는 위협이 없습니다.</div>`
     : html`<div style=${{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
               ${threatMoves.map((threat) => html`

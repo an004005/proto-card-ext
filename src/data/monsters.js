@@ -156,6 +156,17 @@ export const MONSTER_DEFINITIONS = {
     ],
   },
 
+  // 경계도 3단계가 구역에 풀어놓는 개체(ADR-0092). 정예급보다 한 급 위다 — 조우 회피도
+  // 속이기도 통하지 않으므로, 만나면 반드시 이 체력을 넘겨야 한다.
+  hunter: {
+    id: 'hunter', name: '추적자', hp: 55, isMachine: true, tier: 'elite', perception: 3,
+    sequence: [
+      { id: 'hunter_volley', mapNoise: 2, damage: 9, hits: 2 },
+      { id: 'hunter_brace', mapNoise: 0, damage: 0, effects: [{ kind: 'block', value: 8, target: 'self' }] },
+      { id: 'hunter_suppress', mapNoise: 1, damage: 6, effects: [{ kind: 'applyStatus', status: 'weak', amount: 2, target: 'player' }] },
+    ],
+  },
+
   // ---- 보스 (매 런 무작위 1종, mapLayout.BOSS_ENCOUNTER_TEMPLATES) ----
   ceremonial_beast: {
     id: 'ceremonial_beast', name: '의식의 짐승', hp: 252, isMachine: false, tier: 'boss', perception: 1,

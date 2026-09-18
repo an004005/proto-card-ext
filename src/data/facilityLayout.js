@@ -446,6 +446,25 @@ export const ALERT_PRESSURE = {
   botchedAction: 4,
 };
 
+// ---- 추적자 (ADR-0092) ----
+//
+// 경계도 3단계는 예전에는 "위협이 조금 더 빨리 걷는다"로만 읽혔다. 최대 단계에 도달해도 지도
+// 위에서 달라지는 것이 이동 간격 하나뿐이라, 마지막 단계가 그 앞 단계와 같은 종류의 압박이었다.
+// 3단계에서는 **이름을 가진 하나**가 나온다 — 구역을 순찰하는 무리가 아니라 나를 향해 걷는 개체다.
+//
+// 추적자는 경계도 가속·봉쇄와 무관하게 고정 간격으로 움직인다. 다른 위협처럼 표를 따르게 하면
+// 봉쇄와 경계도가 겹칠 때 추적자만 두 배로 빨라져 "몇 칸 뒤에 닿는가"를 셀 수 없어진다 —
+// 이 개체의 압박은 속도가 아니라 **끈질김**이다.
+export const HUNTER_MOVE_INTERVAL = 2;
+/** 위협 마커 perception(computeThreatPerception이 여기에 alert을 더한다)이 아니라 추적자 마커 자체의 지각. */
+export const HUNTER_PERCEPTION = 3;
+/** 이만큼 연속으로 플레이어를 관측하지 못하면 흔적을 놓치고 물러난다. 관측하면 0으로 되돌아간다. */
+export const HUNTER_LOSE_TICKS = 20;
+/** 추적자의 시야 — 일반 위협의 1홉보다 넓다. 이 홉 안에 있으면 본다. */
+export const HUNTER_SIGHT_HOPS = 2;
+/** 실효 Stealth가 이 값 이상이면 시야 안에 있어도 추적자가 놓친다(카메라 임계와 같은 눈금). */
+export const HUNTER_STEALTH_THRESHOLD = 3;
+
 // 시체(D13) — 전투에서 이긴 노드에 남는다. 위협이 밟으면 신고되어 경계도가 오르고 그 지점으로
 // 조사가 몰린다. 치우는 것은 선택이며 기본은 그냥 두고 가는 것이다.
 export const CORPSE_DISPOSAL_TIME = 3;

@@ -228,7 +228,10 @@
  * @typedef {Object} ThreatRuntimeState
  * @property {string} id
  * @property {FacilitySectorId} sectorId
- * @property {2|3|4} size
+ * @property {1|2|3|4} size
+ * @property {'hunter'} [kind] 추적자(ADR-0092)만 붙는 표식. 없으면 일반 위협 마커다.
+ * @property {boolean} [alwaysVisible] 관측과 무관하게 지도·위협 패널에 항상 그려지는가(추적자).
+ * @property {number} [lostTicks] 추적자가 연속으로 플레이어를 관측하지 못한 칸 수(HUNTER_LOSE_TICKS).
  * @property {string[]} patrolRoute
  * @property {number} patrolIndex
  * @property {string} nodeId 현재 위치.
@@ -322,6 +325,9 @@
  * @property {{kind: 'farm', nodeId: string, opportunityId: string, status: 'completed'|'ambushed', completedAt: number, loot?: {kind: string, equipmentId?: string, defId?: string, value?: number, amount?: number}|null}|null} lastActionResult
  * @property {Record<'A'|'key', ExitRuntimeState>} exits
  * @property {Record<string, ThreatRuntimeState>} threats
+ * @property {string[]} [hunterSpawnedSectorIds] 경계도 3단계에 올라 추적자를 이미 한 번 내보낸 구역(ADR-0092). 단계가 3 아래로 내려가면 빠진다.
+ * @property {{at: number, sectorId: string, reason: 'lost'|'alertFell'|'controlRoom', text: string}[]} [hunterLog] 추적자가 무력화된 이력 한 줄씩.
+ * @property {number} [playerStealth] 리듀서가 매 행동 앞에서 찍어 주는 실효 Stealth — 추적자 관측 판정이 읽는다.
  * @property {NoiseEvent[]} noiseEvents
  * @property {FalseTarget[]} falseTargets
  * @property {Evidence[]} evidence
