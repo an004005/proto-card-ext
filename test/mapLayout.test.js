@@ -24,6 +24,26 @@ test('정리된 배치는 결정적이고 모든 노드가 캔버스 여백 안�
   }
 });
 
+test('같은 그래프 객체는 배치를 한 번만 계산한다 — 두 번째 호출이 같은 객체를 돌려준다', () => {
+  const { graph } = generateFacilityGraph(11);
+  const first = layoutPositions(graph);
+  const second = layoutPositions(graph);
+  assert.equal(first, second, '같은 그래프에는 캐시된 같은 객체가 와야 한다');
+});
+
+test('다른 그래프는 캐시를 공유하지 않는다', () => {
+  const a = generateFacilityGraph(11).graph;
+  const b = generateFacilityGraph(13).graph;
+  const positionsA = layoutPositions(a);
+  const positionsB = layoutPositions(b);
+  assert.notEqual(positionsA, positionsB, '서로 다른 그래프가 같은 객체를 받았다');
+  assert.notDeepEqual(
+    a.nodes.map((n) => positionsA[n.id]),
+    b.nodes.map((n) => positionsB[n.id]),
+    '서로 다른 그래프인데 배치가 똑같다',
+  );
+});
+
 test('정리 후에는 노드가 서로 포개지지 않고, 통로 위에 얹힌 노드가 순수 축척보다 크게 줄어든다', () => {
   for (const seed of SEEDS) {
     const { graph } = generateFacilityGraph(seed);
