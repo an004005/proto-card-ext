@@ -10,6 +10,9 @@
  * @property {number} cost
  * @property {Object} effect
  * @property {string} effect.kind
+ * @property {number} [effect.amount] healPercent(0~1)·aoeDamage·addOverrideChips 전용.
+ * @property {number} [effect.vulnerable] aoeDebuff 전용.
+ * @property {number} [effect.weak] aoeDebuff 전용.
  * @property {string} description
  * @property {MapTags} mapTags docs/card-map-tag-mapping.md.
  */

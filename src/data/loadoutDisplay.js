@@ -12,7 +12,27 @@ import { MAX_WEAPON_SLOTS, EMPTY_SLOT_FILLER_COUNT } from '../engine/equipmentEn
 
 /** @typedef {import('../engine/types.js').Loadout} Loadout */
 /** @typedef {import('../engine/types.js').Inventory} Inventory */
+/** @typedef {import('../engine/types.js').Item} Item */
 
+/**
+ * @typedef {Object} EquipDef 장비 정의에서 이 화면이 읽는 부분만.
+ * @property {string} name
+ * @property {string} [description]
+ * @property {{defId: string, count: number}[]} [cardList]
+ */
+
+/**
+ * @typedef {Object} EquipCategory 소모품 칸만 defs/pool/slotType/max가 없다(퀵슬롯은 따로 만든다).
+ * @property {'weapon'|'top'|'bottom'|'module'|'implant'|'consumable'} key
+ * @property {string} label
+ * @property {Object.<string, EquipDef>|null} defs
+ * @property {string[]|null} pool
+ * @property {'weapon'|'top'|'bottom'|'module'|'implant'|null} slotType
+ * @property {number|null} max
+ * @property {string} iconColor
+ */
+
+/** @type {EquipCategory[]} */
 export const CATEGORIES = [
   { key: 'weapon', label: '무기', defs: WEAPON_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.weapons, ...FARMING_ONLY_POOL.weapons], slotType: 'weapon', max: 2, iconColor: 'var(--color-accent)' },
   { key: 'top', label: '상의', defs: ARMOR_TOP_DEFINITIONS, pool: [...WAREHOUSE_STARTING_POOL.tops, ...FARMING_ONLY_POOL.tops], slotType: 'top', max: 1, iconColor: 'var(--color-neutral-700)' },
@@ -26,8 +46,8 @@ export const CATEGORIES = [
  * weapon/top/bottom/module은 §신규 인스턴스화로 Item 전체를 반환하고(내구도 포함), 임플란트만
  * 여전히 defId 문자열을 반환한다(인스턴스화 대상 제외).
  * @param {Loadout} loadout
- * @param {Object} cat
- * @returns {(import('../engine/types.js').Item|string)[]}
+ * @param {EquipCategory} cat
+ * @returns {(Item|string)[]}
  */
 export function getSelectedIds(loadout, cat) {
   if (cat.key === 'weapon') return loadout.weapons;
@@ -48,25 +68,31 @@ export function cardCountOf(def) {
 }
 
 /**
- * @param {Object} cat
+ * @param {EquipCategory} cat 소모품이 아닌 칸만 — defs/max가 있는 카테고리다.
  * @param {Loadout} loadout
  * @returns {Object[]}
  */
 export function buildSlots(cat, loadout) {
   const entries = getSelectedIds(loadout, cat);
   const isImplant = cat.key === 'implant';
+  // 소모품 칸은 buildConsumableSlots가 따로 만들므로 여기 오는 카테고리는 defs/max를 갖는다.
+  const defs = cat.defs ?? {};
+  const max = cat.max ?? 0;
+  /** @type {Object[]} */
   const slots = [];
-  for (let i = 0; i < cat.max; i++) {
-    const entry = entries[i];
-    const equipmentId = isImplant ? entry : entry?.equipmentId;
-    const def = equipmentId ? cat.defs[equipmentId] : null;
+  for (let i = 0; i < max; i++) {
+    const raw = entries[i];
+    // 임플란트 칸만 defId 문자열이고 나머지는 Item이다(getSelectedIds 주석).
+    const entry = isImplant ? undefined : /** @type {Item|undefined} */ (raw);
+    const equipmentId = isImplant ? /** @type {string|undefined} */ (raw) : entry?.equipmentId;
+    const def = equipmentId ? defs[equipmentId] : null;
     slots.push({
       key: `${cat.key}${i}`,
       catKey: cat.key,
       equipmentId: equipmentId || null,
       itemId: isImplant ? null : (entry?.id || null),
       durability: isImplant ? undefined : entry?.durability,
-      category: cat.max > 1 ? `${cat.label}${i + 1}` : cat.label,
+      category: max > 1 ? `${cat.label}${i + 1}` : cat.label,
       filled: !!def,
       name: def?.name,
       cardCount: cardCountOf(def),
@@ -116,9 +142,12 @@ export function buildAllEquipSlots(loadout) {
  * @returns {{name: string, color: string, cards: {name: string, defId: string}[]}[]}
  */
 export function buildDeckGroups(loadout) {
+  /** @type {{name: string, color: string, cards: {name: string, defId: string}[]}[]} */
   const groups = [];
+  /** @param {string} name @param {string} color @param {{defId: string, count: number}[]|undefined} cardList */
   const pushGroup = (name, color, cardList) => {
     if (!cardList) return;
+    /** @type {{name: string, defId: string}[]} */
     const cards = [];
     for (const entry of cardList) {
       const cardDef = CARD_DEFINITIONS[entry.defId];
@@ -127,10 +156,11 @@ export function buildDeckGroups(loadout) {
     }
     if (cards.length) groups.push({ name, color, cards });
   };
-  loadout.weapons.forEach((item) => WEAPON_DEFINITIONS[item.equipmentId] && pushGroup(WEAPON_DEFINITIONS[item.equipmentId].name, 'var(--color-accent)', WEAPON_DEFINITIONS[item.equipmentId].cardList));
-  if (loadout.top) pushGroup(ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId].name, 'var(--color-neutral-700)', ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId].cardList);
-  if (loadout.bottom) pushGroup(ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId].name, 'var(--color-neutral-700)', ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId].cardList);
-  loadout.modules.forEach((item) => MODULE_DEFINITIONS[item.equipmentId] && pushGroup(MODULE_DEFINITIONS[item.equipmentId].name, 'var(--color-accent-2-700)', MODULE_DEFINITIONS[item.equipmentId].cardList));
+  // 장착 슬롯의 Item은 언제나 kind:'equipment'라 equipmentId를 갖는다 — `?? ''`는 타입만 좁힌다.
+  loadout.weapons.forEach((item) => WEAPON_DEFINITIONS[item.equipmentId ?? ''] && pushGroup(WEAPON_DEFINITIONS[item.equipmentId ?? ''].name, 'var(--color-accent)', WEAPON_DEFINITIONS[item.equipmentId ?? ''].cardList));
+  if (loadout.top) pushGroup(ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId ?? ''].name, 'var(--color-neutral-700)', ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId ?? ''].cardList);
+  if (loadout.bottom) pushGroup(ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId ?? ''].name, 'var(--color-neutral-700)', ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId ?? ''].cardList);
+  loadout.modules.forEach((item) => MODULE_DEFINITIONS[item.equipmentId ?? ''] && pushGroup(MODULE_DEFINITIONS[item.equipmentId ?? ''].name, 'var(--color-accent-2-700)', MODULE_DEFINITIONS[item.equipmentId ?? ''].cardList));
 
   // 무기/상의/하의 미장착 슬롯 보충 카드(맨손공격/어설픈 회피) — equipmentEngine.buildDeckFromLoadout과 동일 규칙.
   const emptyWeaponSlots = Math.max(0, MAX_WEAPON_SLOTS - loadout.weapons.length);

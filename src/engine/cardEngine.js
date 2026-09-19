@@ -22,6 +22,7 @@ function nextInstanceId() {
  * @returns {CardInstance}
  */
 export function createCardInstance(defId, itemId, equipmentInstanceId) {
+  /** @type {CardInstance} */
   const instance = { instanceId: nextInstanceId(), defId };
   if (itemId) instance.itemId = itemId;
   if (equipmentInstanceId) instance.equipmentInstanceId = equipmentInstanceId;

@@ -56,7 +56,8 @@ export function listEquipmentByAxis(axis) {
   return getAllEquipmentIds().filter((id) => axisOfEquipment(id) === axis);
 }
 
-/** 후보 동일성 판정 키 — 같은 장비/같은 소모품이 두 번 나오면 "선택"이 아니게 된다. */
+/** 후보 동일성 판정 키 — 같은 장비/같은 소모품이 두 번 나오면 "선택"이 아니게 된다.
+ * @param {FarmChoiceOption} option */
 function optionKey(option) {
   if (option.kind === 'equipment') return `equipment:${option.equipmentId}`;
   if (option.kind === 'consumable') return `consumable:${option.defId}`;

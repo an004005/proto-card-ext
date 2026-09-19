@@ -40,17 +40,17 @@ export function buildDeckFromLoadout(loadout) {
   const weapons = loadout.weapons || [];
   const entries = [];
   for (const item of weapons) {
-    const def = WEAPON_DEFINITIONS[item.equipmentId];
+    const def = WEAPON_DEFINITIONS[item.equipmentId ?? ''];
     if (def) entries.push(...expandCardList(def.cardList, item.id));
   }
   // 무기·모듈과 같은 가드다 — 카탈로그에 없는 equipmentId(옛 세이브, 손으로 만든 스냅샷)가
   // 오면 덱 구성이 통째로 터지는 대신 그 칸만 비운다.
-  const topDef = loadout.top ? ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId] : null;
-  if (topDef) entries.push(...expandCardList(topDef.cardList, loadout.top.id));
-  const bottomDef = loadout.bottom ? ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId] : null;
-  if (bottomDef) entries.push(...expandCardList(bottomDef.cardList, loadout.bottom.id));
+  const topDef = loadout.top ? ARMOR_TOP_DEFINITIONS[loadout.top.equipmentId ?? ''] : null;
+  if (loadout.top && topDef) entries.push(...expandCardList(topDef.cardList, loadout.top.id));
+  const bottomDef = loadout.bottom ? ARMOR_BOTTOM_DEFINITIONS[loadout.bottom.equipmentId ?? ''] : null;
+  if (loadout.bottom && bottomDef) entries.push(...expandCardList(bottomDef.cardList, loadout.bottom.id));
   for (const item of loadout.modules || []) {
-    const def = MODULE_DEFINITIONS[item.equipmentId];
+    const def = MODULE_DEFINITIONS[item.equipmentId ?? ''];
     if (!def) continue;
     for (const cardEntry of def.cardList) {
       const cardDef = CARD_DEFINITIONS[cardEntry.defId];
@@ -79,10 +79,11 @@ export function buildDeckFromLoadout(loadout) {
 export function computeDamagedStatusCardEntries(loadout) {
   const instances = [
     ...(loadout.weapons || []), loadout.top, loadout.bottom, ...(loadout.modules || []),
-  ].filter(Boolean);
+  ].filter((it) => !!it);
   const entries = [];
   for (const item of instances) {
-    const count = Math.max(0, DAMAGED_STATUS_CARD_THRESHOLD - item.durability);
+    // 장비 Item은 언제나 durability를 갖는다 — `?? MAX_DURABILITY`는 타입만 좁힌다(count 0).
+    const count = Math.max(0, DAMAGED_STATUS_CARD_THRESHOLD - (item.durability ?? MAX_DURABILITY));
     for (let i = 0; i < count; i++) entries.push({ defId: DAMAGED_STATUS_CARD_DEF_ID });
   }
   return entries;
@@ -102,20 +103,24 @@ export function applyDurabilityDecay(loadout, decayInstanceIds) {
   const decayCounts = new Map();
   for (const id of decayInstanceIds) decayCounts.set(id, (decayCounts.get(id) || 0) + 1);
 
+  /** @type {Item[]} */
   const destroyedItems = [];
+  /** @type {{itemId: string, equipmentId: string, from: number, to: number}[]} */
   const changes = [];
   /** @param {Item} item @returns {?Item} null if destroyed */
   const decay = (item) => {
     const loss = decayCounts.get(item.id);
     if (!loss) return item;
-    const to = Math.max(0, item.durability - loss);
-    changes.push({ itemId: item.id, equipmentId: item.equipmentId, from: item.durability, to });
+    // decay는 카드가 나온 장비에만 불리므로 durability/equipmentId가 반드시 있다.
+    const from = item.durability ?? MAX_DURABILITY;
+    const to = Math.max(0, from - loss);
+    changes.push({ itemId: item.id, equipmentId: item.equipmentId ?? '', from, to });
     if (to <= 0) { destroyedItems.push({ ...item, durability: 0 }); return null; }
     return { ...item, durability: to };
   };
 
-  const weapons = (loadout.weapons || []).map(decay).filter(Boolean);
-  const modules = (loadout.modules || []).map(decay).filter(Boolean);
+  const weapons = (loadout.weapons || []).map(decay).filter((it) => !!it);
+  const modules = (loadout.modules || []).map(decay).filter((it) => !!it);
   const top = loadout.top ? decay(loadout.top) : loadout.top;
   const bottom = loadout.bottom ? decay(loadout.bottom) : loadout.bottom;
 
@@ -128,12 +133,12 @@ export function applyDurabilityDecay(loadout, decayInstanceIds) {
  * @returns {number}
  */
 export function computeMaxLoadBonus(loadout) {
-  return (loadout.weapons || []).reduce((sum, item) => sum + (WEAPON_DEFINITIONS[item.equipmentId]?.maxLoadBonus || 0), 0);
+  return (loadout.weapons || []).reduce((sum, item) => sum + (WEAPON_DEFINITIONS[item.equipmentId ?? '']?.maxLoadBonus || 0), 0);
 }
 
 /**
  * @param {Loadout} loadout
- * @returns {Object[]} the `effect` object of each equipped implant
+ * @returns {import('../data/implants.js').ImplantEffect[]} the `effect` object of each equipped implant
  */
 function implantEffects(loadout) {
   return (loadout.implantIds || []).map((id) => IMPLANT_DEFINITIONS[id]).filter(Boolean).flatMap((d) => d.effects);
@@ -141,18 +146,18 @@ function implantEffects(loadout) {
 
 /** @param {Loadout} loadout @returns {number} */
 export function computeMaxHpBonus(loadout) {
-  return implantEffects(loadout).filter((e) => e.kind === 'maxHpBonus').reduce((s, e) => s + e.amount, 0);
+  return implantEffects(loadout).filter((e) => e.kind === 'maxHpBonus').reduce((s, e) => s + (e.amount ?? 0), 0);
 }
 
 /** @param {Loadout} loadout @returns {number} */
 export function computeInventoryCapacityBonus(loadout) {
-  return implantEffects(loadout).filter((e) => e.kind === 'inventoryBonus').reduce((s, e) => s + e.amount, 0);
+  return implantEffects(loadout).filter((e) => e.kind === 'inventoryBonus').reduce((s, e) => s + (e.amount ?? 0), 0);
 }
 
 /**
  * @param {Loadout} loadout
  * @param {string} kind
- * @returns {?Object}
+ * @returns {?import('../data/implants.js').ImplantEffect}
  */
 export function getImplantEffect(loadout, kind) {
   return implantEffects(loadout).find((e) => e.kind === kind) || null;

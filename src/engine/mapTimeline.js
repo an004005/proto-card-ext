@@ -146,7 +146,7 @@ function adjacentNodeIds(run) {
  */
 export function describeObservedThreat(run, threat) {
   const detailLevel = run.observations?.[threat.nodeId]?.detailLevel ?? FREE_OBSERVATION_DETAIL_LEVEL;
-  const monsterIds = /** @type {string[]} */ (/** @type {any} */ (threat).monsterIds || []);
+  const monsterIds = threat.monsterIds || [];
   const route = threat.patrolRoute || [];
   const patrolNext = route.length ? route[(threat.patrolIndex + 1) % route.length] : null;
   return {
@@ -212,7 +212,7 @@ function threatMoveInterval(run, threat) {
  * 않는다(추적으로 바뀌면 더 빨라진다).
  * @param {FacilityRunState} run
  * @param {number} timeCost
- * @returns {{id: string, nodeId: string, mode: string, count: number, offsets: number[]}[]}
+ * @returns {{id: string, nodeId: string, mode: string|null, count: number, offsets: number[]}[]}
  */
 export function threatMovesDuring(run, timeCost) {
   if (!Number.isFinite(timeCost) || timeCost <= 0) return [];

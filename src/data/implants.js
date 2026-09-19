@@ -2,10 +2,18 @@
 // for the whole run; the warehouse is inaccessible mid-run so they never change once a run starts.
 
 /**
+ * @typedef {Object} ImplantEffect 임플란트 효과 한 줄 — kind가 어느 필드를 쓰는지 정한다.
+ * @property {string} kind
+ * @property {number} [amount] maxHpBonus/inventoryBonus/extraDrawPerTurn/turnStartAoeDamage.
+ * @property {number} [vulnerable] combatStartDebuffAll 전용.
+ * @property {number} [weak] combatStartDebuffAll 전용.
+ */
+
+/**
  * @typedef {Object} ImplantDef
  * @property {string} id
  * @property {string} name
- * @property {Object[]} effects
+ * @property {ImplantEffect[]} effects
  * @property {string} description
  */
 

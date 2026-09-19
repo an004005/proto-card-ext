@@ -62,6 +62,8 @@ import {
   FALLBACK_TOPOLOGY_SEED_SEARCH_LIMIT,
 } from '../data/facilityLayout.js';
 
+/** @typedef {import('./types.js').FacilitySectorId} FacilitySectorId */
+
 /**
  * 이 런이 쓸 구역을 뽑는다(ADR-0081, ADR-0083, ADR-0089). 추첨은 **계약 제안을 만들 때 제안마다
  * 한 번씩** 돈다 — 제안은 여덟 구역 전부에서 나오고(contractReducer.offerContracts), 각 제안의
@@ -99,7 +101,7 @@ export function selectRunSectorIds(rngState, contractSectorId = undefined) {
 
 /**
  * 링에서 맞닿은 구역 쌍 — 관문 엣지와 구역 간 특수 엣지가 여기에만 놓인다.
- * @param {readonly string[]} sectorIds 링 순서
+ * @param {readonly FacilitySectorId[]} sectorIds 링 순서
  * @returns {[string, string][]}
  */
 export function sectorRingPairs(sectorIds) {
@@ -135,7 +137,7 @@ function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
 /**
  * @typedef {Object} Topology
- * @property {string[]} sectorIds 이 런의 구역 — 링 순서.
+ * @property {FacilitySectorId[]} sectorIds 이 런의 구역 — 링 순서.
  * @property {import('./types.js').FacilityNode[]} nodes
  * @property {import('./types.js').FacilityEdge[]} edges 특수 엣지까지 얹은 완성 간선 목록.
  * @property {Record<string, string[]>} nodeIdsBySector
@@ -161,7 +163,7 @@ function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
  * run's sectors therefore form a ring, so no gateway edge is a bridge and the route around the
  * ring stays open in both directions.
  * @param {import('./rng.js').RngState} rngState
- * @param {readonly string[]} sectorIds 이 런의 구역 — 링 순서.
+ * @param {readonly FacilitySectorId[]} sectorIds 이 런의 구역 — 링 순서.
  */
 export function buildBaseGraph(rngState, sectorIds) {
   let state = rngState;
@@ -303,7 +305,7 @@ function deriveGraphMeta(nodes, edges) {
  * @param {import('./types.js').FacilityNode[]} nodes
  * @param {import('./types.js').FacilityEdge[]} edges 특수 엣지까지 얹은 완성 그래프.
  * @param {import('./rng.js').RngState} rngState
- * @param {readonly string[]} sectorIds
+ * @param {readonly FacilitySectorId[]} sectorIds
  * @param {string} [contractSectorId] 이번 계약의 목표 구역. 출구 A는 여기 놓이지 않는다.
  */
 function placeStartAndExits(nodes, edges, rngState, sectorIds, contractSectorId = undefined) {
@@ -399,7 +401,7 @@ function placeStartAndExits(nodes, edges, rngState, sectorIds, contractSectorId 
  * Returns `{ok:false}` if this rngState's graph can't satisfy the connectivity/path requirements —
  * caller retries with the returned rngState.
  * @param {import('./rng.js').RngState} rngState
- * @param {readonly string[]} sectorIds
+ * @param {readonly FacilitySectorId[]} sectorIds
  * @param {string} [contractSectorId]
  * @returns {{ok: false, rngState: import('./rng.js').RngState} | {ok: true, topology: Topology, rngState: import('./rng.js').RngState}}
  */
@@ -442,7 +444,7 @@ function tryBuildTopology(rngState, sectorIds, contractSectorId = undefined) {
 // 구역 조합마다 fallback 도면이 다르므로 조합을 키로 캐싱한다.
 /** @type {Map<string, Topology>} */
 const cachedFallbackTopologies = new Map();
-/** @param {readonly string[]} sectorIds @param {string} [contractSectorId] */
+/** @param {readonly FacilitySectorId[]} sectorIds @param {string} [contractSectorId] */
 function getFallbackTopology(sectorIds, contractSectorId = undefined) {
   // 출구 A의 자리가 계약 구역에 따라 달라지므로 캐시 키에도 계약 구역이 들어간다.
   const key = [...sectorIds, contractSectorId ?? '-'].join('|');
@@ -478,7 +480,7 @@ function getFallbackTopology(sectorIds, contractSectorId = undefined) {
  * @param {Set<string>} existingPairs
  * @param {Map<string, number>} baseDegree
  * @param {import('./rng.js').RngState} rngState
- * @param {readonly string[]} sectorIds
+ * @param {readonly FacilitySectorId[]} sectorIds
  */
 function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySector, groupByNodeId, byId, existingPairs, baseDegree, rngState, sectorIds) {
   let state = rngState;
@@ -497,6 +499,7 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
 
     const { value: category, state: sCat } = weightedPick(state, SPECIAL_EDGE_CATEGORY_WEIGHTS);
     state = sCat;
+    /** @type {import('./types.js').SpecialEdgeFeature[]} */
     const features = [category];
     // 막힌 통로에만 자물쇠 종류가 붙는다. 일방통행과 고지대는 잠긴 것이 아니라 지형이다.
     if (category === 'blocked') {
@@ -524,7 +527,7 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
       y: points.reduce((sum, p) => sum + p.y, 0) / points.length,
     };
   }
-  /** 기준점에 가까운 순으로 후보 k개. @param {string[]} pool @param {{x: number, y: number}} origin */
+  /** 기준점에 가까운 순으로 후보 k개. @param {string[]} pool @param {{x: number, y: number}} origin @param {number} k @param {string} [exclude] */
   const nearest = (pool, origin, k, exclude) => pool
     .filter((id) => id !== exclude)
     .map((id) => ({ id, d: distance(/** @type {{x:number,y:number}} */ (byId.get(id)), origin) }))
@@ -617,10 +620,11 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
 }
 
 /**
+ * @param {Record<string, string[]>} landmarkIdsBySector
  * @param {Record<string, string[]>} nodeIdsBySector
  * @param {string[]} excludeNodeIds
  * @param {import('./rng.js').RngState} rngState
- * @param {readonly string[]} sectorIds
+ * @param {readonly FacilitySectorId[]} sectorIds
  */
 function placeLandmarks(landmarkIdsBySector, nodeIdsBySector, excludeNodeIds, rngState, sectorIds) {
   let state = rngState;
@@ -704,7 +708,7 @@ function placeConcealment(nodes, rngState) {
  * least one of each device without preventing both devices from sharing a node.
  * @param {import('./types.js').FacilityNode[]} nodes
  * @param {import('./rng.js').RngState} rngState
- * @param {readonly string[]} sectorIds
+ * @param {readonly FacilitySectorId[]} sectorIds
  */
 function placeSecurityDevices(nodes, rngState, sectorIds) {
   let state = rngState;
@@ -731,7 +735,11 @@ function placeSecurityDevices(nodes, rngState, sectorIds) {
 }
 
 /** One battery generator is installed in each powered sector the run actually drew — a run that
- * drew neither 동력동 nor 실험동 has no generator to cut, and 전원 차단 is simply off the table. */
+ * drew neither 동력동 nor 실험동 has no generator to cut, and 전원 차단 is simply off the table.
+ * @param {Record<string, string[]>} nodeIdsBySector
+ * @param {import('./rng.js').RngState} rngState
+ * @param {readonly FacilitySectorId[]} sectorIds
+ */
 function placeGenerators(nodeIdsBySector, rngState, sectorIds) {
   let state = rngState;
   const generators = [];
@@ -749,7 +757,7 @@ function placeGenerators(nodeIdsBySector, rngState, sectorIds) {
  * @param {Record<string, string[]>} nodeIdsBySector
  * @param {string} startNodeId
  * @param {import('./rng.js').RngState} rngState
- * @param {readonly string[]} sectorIds
+ * @param {readonly FacilitySectorId[]} sectorIds
  */
 function placeThreats(allEdges, nodeIdsBySector, startNodeId, rngState, sectorIds) {
   let state = rngState;
@@ -881,7 +889,7 @@ function placeContent(topology, rngState) {
  * §4.1: generate the full facility graph for a seed. Deterministic — the same seed and the same
  * sector list always produce the same graph, threats, opportunities, and key-eligible rolls.
  * @param {number} seed
- * @param {readonly string[]} [sectorIds] 이 런의 구역(링 순서). 생략하면 같은 시드에서
+ * @param {readonly FacilitySectorId[]} [sectorIds] 이 런의 구역(링 순서). 생략하면 같은 시드에서
  *   selectRunSectorIds로 뽑는다 — 측정 스크립트와 테스트가 시드 하나만으로 한 런을 그대로
  *   재현할 수 있게 하려는 것이다. 실제 플레이 경로는 ACCEPT_CONTRACT가 뽑아 스냅샷에 담아 둔 목록을 넘긴다.
  * @param {string} [contractSectorId] 수락한 계약의 목표 구역 — 출구 A가 여기 놓이지 않게 한다(ADR-0083).

@@ -47,6 +47,7 @@ export function rollLootDurability(rngState) {
 export function rollEquipmentOptions(allEquipmentIds, rngState) {
   const pool = allEquipmentIds.slice();
   let rng = rngState;
+  /** @type {RewardOption[]} */
   const options = [];
   const count = Math.min(REWARD_OPTIONS_PER_SLOT, pool.length);
   for (let i = 0; i < count; i++) {
@@ -64,6 +65,7 @@ export function rollEquipmentOptions(allEquipmentIds, rngState) {
  */
 export function rollConsumableOptions(rngState) {
   let rng = rngState;
+  /** @type {RewardOption[]} */
   const options = [];
   const used = new Set();
   let attempts = 0;
@@ -89,6 +91,7 @@ export function rollConsumableOptions(rngState) {
 export function rollCurrencyOrJunkOptions(tier, itemWeights, itemKind, valueRange, rngState) {
   let rng = rngState;
   const range = valueRange[tier];
+  /** @type {RewardOption[]} */
   const options = [];
   for (let i = 0; i < REWARD_OPTIONS_PER_SLOT; i++) {
     const itemPick = weightedPick(rng, itemWeights);
@@ -114,6 +117,7 @@ export function rollCurrencyOrJunkOptions(tier, itemWeights, itemKind, valueRang
  */
 export function rollRewardSlots(tier, allEquipmentIds, rngState) {
   let rng = rngState;
+  /** @type {RewardSlot[]} */
   const slots = [];
 
   const equipRoll = rollEquipmentOptions(allEquipmentIds, rng);

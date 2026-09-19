@@ -54,7 +54,8 @@ export function confirmRewards(snapshot) {
       inventory = addItem(inventory, createItem('equipment', { equipmentId: opt.equipmentId, durability: rolled.value }));
     } else if (opt.kind === 'currency') inventory = addItem(inventory, createItem('currency', { value: opt.value }));
     else if (opt.kind === 'junk') inventory = addItem(inventory, createItem('junk', { value: opt.value }));
-    else if (opt.kind === 'ammo') inventory = addAmmo(inventory, opt.amount);
+    // kind별로 채워지는 필드가 갈리므로(RewardOption) `?? 0`은 타입만 좁힌다.
+    else if (opt.kind === 'ammo') inventory = addAmmo(inventory, opt.amount ?? 0);
     else if (opt.kind === 'consumable') inventory = addItem(inventory, createItem('consumable', { defId: opt.defId }));
   }
 

@@ -112,9 +112,11 @@ export function addAmmo(inventory, amount) {
   const items = inventory.items.map((it) => ({ ...it }));
   for (let i = 0; i < items.length && remaining > 0; i++) {
     const it = items[i];
-    if (it.kind !== 'ammo' || it.amount >= AMMO_STACK_SIZE) continue;
-    const add = Math.min(AMMO_STACK_SIZE - it.amount, remaining);
-    items[i] = { ...it, amount: it.amount + add };
+    // 탄약 Item은 언제나 amount를 갖는다 — `?? 0`은 타입만 좁힌다.
+    const held = it.amount ?? 0;
+    if (it.kind !== 'ammo' || held >= AMMO_STACK_SIZE) continue;
+    const add = Math.min(AMMO_STACK_SIZE - held, remaining);
+    items[i] = { ...it, amount: held + add };
     remaining -= add;
   }
   let nextItemId = inventory.nextItemId;
@@ -151,10 +153,11 @@ export function spendAmmo(inventory, amount) {
   const items = inventory.items
     .map((it, index) => {
       if (remaining <= 0 || it.kind !== 'ammo' || index >= inventory.capacity) return it;
-      const spend = Math.min(it.amount, remaining);
+      const held = it.amount ?? 0;
+      const spend = Math.min(held, remaining);
       remaining -= spend;
-      return { ...it, amount: it.amount - spend };
+      return { ...it, amount: held - spend };
     })
-    .filter((it) => !(it.kind === 'ammo' && it.amount <= 0));
+    .filter((it) => !(it.kind === 'ammo' && (it.amount ?? 0) <= 0));
   return { ...inventory, items };
 }

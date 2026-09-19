@@ -6,6 +6,7 @@
   "main": "electron/main.js",
   "scripts": {
     "test": "node --test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "docs:reference": "node scripts/generate-reference-workbook.mjs",
     "docs:check": "node scripts/generate-reference-workbook.mjs --check",
     "balance:map": "node scripts/measure-map-balance.mjs",

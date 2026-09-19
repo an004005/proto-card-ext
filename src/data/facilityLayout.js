@@ -322,6 +322,7 @@ export const CAMERA_SNIPE_NOISE = 2;
 export const CAMERA_SNIPE_RANGE = 2;
 /** 장전된 탄은 전투 안에만 있는 개념이라(combatEngine.createCombat), 맵에서는 인벤토리의 예비탄 1발을 쓴다. */
 export const CAMERA_SNIPE_AMMO_COST = 1;
+/** @type {import('../engine/types.js').FacilitySectorId[]} */
 export const GENERATOR_SECTOR_IDS = ['power', 'labs'];
 export const GENERATOR_HACK_TIME = 3;
 export const GENERATOR_FORCE_TIME = 3;

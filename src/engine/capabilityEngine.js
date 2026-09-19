@@ -21,7 +21,18 @@ function isPresent(item) {
 }
 
 /**
- * @param {import('./types.js').Loadout} loadout
+ * @typedef {Object} CapabilitySource 여섯 값을 세는 데 필요한 부분만 — Loadout 전체는 물론,
+ *   프리셋 미리보기처럼 equipmentId만 들고 있는 가벼운 구성도 그대로 넘길 수 있다.
+ * @property {{equipmentId?: string}[]} [weapons]
+ * @property {?{equipmentId?: string}} [top]
+ * @property {?{equipmentId?: string}} [bottom]
+ * @property {{equipmentId?: string}[]} [modules]
+ * @property {string[]} [implantIds]
+ * @property {unknown[]} [consumableSlots] 읽지 않는다 — Loadout을 그대로 받기 위한 자리.
+ */
+
+/**
+ * @param {CapabilitySource} loadout
  * @returns {import('./types.js').CapabilityValues}
  */
 export function computeCapabilities(loadout) {

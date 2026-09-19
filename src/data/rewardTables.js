@@ -5,7 +5,7 @@
 export const REWARD_GATE_CHANCE = { normal: 0.6, elite: 0.9, boss: 1.0 };
 export const REWARD_GATE_ROLLS = 2;
 
-/** @type {{value: string, weight: number}[]} */
+/** @type {{value: 'consumable'|'currency'|'junk', weight: number}[]} */
 export const REWARD_CATEGORY_WEIGHTS = [
   { value: 'consumable', weight: 2 },
   { value: 'currency', weight: 4 },

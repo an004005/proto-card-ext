@@ -36,7 +36,8 @@ export function resolveCard(def, stage) {
     const row = def.stageTable[stage];
     return { cost: row.cost, effects: row.effects || [], armorPerTurn: row.armorPerTurn };
   }
-  return { cost: def.cost, effects: def.effects || [] };
+  // stageTable이 없는 카드는 언제나 cost를 적는다 — `?? 0`은 타입만 좁힌다.
+  return { cost: def.cost ?? 0, effects: def.effects || [] };
 }
 
 /**
@@ -89,7 +90,7 @@ function getModuleBlockBonus(stage, powers) {
 }
 
 /**
- * @param {?('melee'|'ranged')} attackKind
+ * @param {'melee'|'ranged'|null|undefined} attackKind
  * @param {number} stage
  * @param {Object.<string, {active: boolean}>} powers
  * @returns {number}
@@ -147,8 +148,8 @@ export function isCardPlayable(state, instanceId) {
  * @param {string} defId
  * @param {number|string} idSuffix
  * @param {number} staggerIndex
- * @param {number} [hpMultiplier]
- * @param {boolean} [doubleActionActive]
+ * @param {number|undefined} hpMultiplier
+ * @param {boolean|undefined} doubleActionActive
  * @param {RngState} rngState
  * @returns {{enemy: EnemyState, rngState: RngState}}
  */
@@ -157,6 +158,7 @@ export function createEnemyInstance(defId, idSuffix, staggerIndex, hpMultiplier,
   if (!def) throw new Error(`Unknown monster defId "${defId}"`);
   const hp = Math.round(def.hp * (hpMultiplier || 1));
   const created = createInitialAiState(defId, staggerIndex, rngState);
+  /** @type {EnemyState} */
   const enemy = {
     id: `${defId}-${idSuffix}`, defId, name: def.name,
     hp, maxHp: hp, block: 0, statuses: { ...(def.startingStatuses || {}) },
@@ -195,7 +197,9 @@ export function createCombatState({
   const shuffled = cardEngine.shuffleIntoDrawPile(piles, deck, rngState);
   shuffled.piles = cardEngine.moveInnateCardsToFront(shuffled.piles, (defId) => !!CARD_DEFINITIONS[defId].innate);
 
+  /** @type {Object.<string, number>} */
   const staggerCounts = {};
+  /** @type {EnemyState[]} */
   const enemies = [];
   let rng = shuffled.rngState;
   monsterIds.forEach((defId, index) => {
@@ -240,6 +244,7 @@ export function beginPlayerFirst(state) {
 
 /** 기습(§7.3): 적 선공 1턴 — 첫 인텐트를 즉시 실행한 뒤 플레이어 턴으로 넘어감. @param {CombatState} state @returns {CombatState} */
 export function beginEnemyFirst(state) {
+  /** @type {CombatState} */
   let s = { ...state, phase: 'enemy_turn' };
   s = resolveEnemyTurn(s);
   if (s.phase !== 'enemy_turn') return s; // defeated before ever taking a turn
@@ -261,13 +266,14 @@ export function startPlayerTurn(state) {
   if (player.powers.mantisBlades?.active) {
     piles = { ...piles, hand: [...piles.hand, cardEngine.createCardInstance('mantis_blade_slash')] };
   }
+  /** @type {CombatState} */
   let s = { ...state, player, piles, rngState: drawn.rngState, phase: 'player_turn' };
 
   // 임플란트⑥ 매턴 시작 광역 3 피해 (§10) — flat, unaffected by weak/vulnerable (implant, not a card).
   if (s.player.turnStartAoeDamage) {
     s = {
       ...s,
-      enemies: s.enemies.map((e) => (e.hp > 0 ? applyDamage(e, s.player.turnStartAoeDamage, false) : e)),
+      enemies: s.enemies.map((e) => (e.hp > 0 ? applyDamage(e, s.player.turnStartAoeDamage ?? 0, false) : e)),
     };
     s = checkWinLoss(s);
   }
@@ -279,7 +285,7 @@ export function startPlayerTurn(state) {
 /**
  * @param {CombatState} state
  * @param {'player'|'enemy'} scope
- * @param {?string} enemyId
+ * @param {string|null|undefined} enemyId
  * @returns {PlayerCombatState|EnemyState|undefined}
  */
 function getCombatant(state, scope, enemyId) {
@@ -289,7 +295,7 @@ function getCombatant(state, scope, enemyId) {
 /**
  * @param {CombatState} state
  * @param {'player'|'enemy'} scope
- * @param {?string} enemyId
+ * @param {string|null|undefined} enemyId
  * @param {PlayerCombatState|EnemyState} updated
  * @returns {CombatState}
  */
@@ -306,7 +312,7 @@ function livingEnemies(state) {
 /**
  * @param {CardEffect} effect
  * @param {EffectContext} context
- * @returns {{scope: 'player'} | {scope: 'enemy', enemyId: ?string} | {scope: 'all_enemies'}}
+ * @returns {{scope: 'player'} | {scope: 'enemy', enemyId?: ?string} | {scope: 'all_enemies'}}
  */
 function resolveTargetScope(effect, context) {
   let targetSpec = effect.target;
@@ -342,7 +348,7 @@ function checkBossPhaseTransition(state, enemyId) {
   s = { ...s, rngState: created.rngState };
   let piles = s.piles;
   for (let i = 0; i < (def.phaseTransitionInsertCount || 0); i++) {
-    piles = cardEngine.insertCardToDiscard(piles, def.phaseTransitionInsertStatusCard);
+    piles = cardEngine.insertCardToDiscard(piles, def.phaseTransitionInsertStatusCard ?? '');
   }
   return { ...s, piles };
 }
@@ -350,10 +356,10 @@ function checkBossPhaseTransition(state, enemyId) {
 /**
  * @param {CombatState} state
  * @param {'player'|'enemy'} scope
- * @param {?string} enemyId
+ * @param {string|null|undefined} enemyId
  * @param {number} amount
  * @param {boolean} ignoresBlock
- * @param {?string} sourceEnemyIdForReflect
+ * @param {string|null|undefined} sourceEnemyIdForReflect
  * @returns {CombatState}
  */
 function damageTarget(state, scope, enemyId, amount, ignoresBlock, sourceEnemyIdForReflect) {
@@ -373,7 +379,7 @@ function damageTarget(state, scope, enemyId, amount, ignoresBlock, sourceEnemyId
     }
   }
   if (scope === 'enemy') {
-    s = checkBossPhaseTransition(s, enemyId);
+    s = checkBossPhaseTransition(s, enemyId ?? '');
     // 조이기(constrict) 시전자가 죽으면 플레이어의 조이기 상태를 해제한다.
     const dead = s.enemies.find((e) => e.id === enemyId);
     if (dead && dead.hp <= 0 && dead.isConstrictSource && s.player.statuses.constrict) {
@@ -443,11 +449,11 @@ function applyOneEffect(state, effect, context) {
         }
         flatBonus += computeScalesByBonus(effect, s, context);
         const weak = context.source === 'player' ? !!s.player.statuses.weak : !!context.sourceStatuses?.weak;
-        const amount = computeDamage(effect.value, {
-          stage, scalesWithStage: context.scalesWithStage, flatBonus, weak,
+        const amount = computeDamage(effect.value ?? 0, {
+          stage, scalesWithStage: !!context.scalesWithStage, flatBonus, weak,
           vulnerable: false, // vulnerable is resolved per-target below (depends on defender)
         });
-        const ignoresBlock = (context.ignoresBlock || effect.ignoresBlock) && effect.attackKind === 'ranged';
+        const ignoresBlock = !!(context.ignoresBlock || effect.ignoresBlock) && effect.attackKind === 'ranged';
 
         if (target.scope === 'all_enemies') {
           for (const enemy of livingEnemies(s)) {
@@ -475,14 +481,14 @@ function applyOneEffect(state, effect, context) {
       if (target.scope === 'player') {
         const flatBonus = getModuleBlockBonus(stage, state.player.powers) + (state.player.statuses.dexterity || 0) + computeScalesByBonus(effect, state, context);
         const fragile = !!state.player.statuses.fragile;
-        const gained = computeBlock(effect.value, { stage, scalesWithStage: context.scalesWithStage, flatBonus, fragile });
+        const gained = computeBlock(effect.value ?? 0, { stage, scalesWithStage: !!context.scalesWithStage, flatBonus, fragile });
         return { ...state, player: { ...state.player, block: state.player.block + gained } };
       }
       if (target.scope === 'enemy') {
         const enemy = state.enemies.find((e) => e.id === target.enemyId);
         if (!enemy) return state;
         const fragile = !!enemy.statuses.fragile;
-        const gained = computeBlock(effect.value, { stage: 0, scalesWithStage: false, flatBonus: 0, fragile });
+        const gained = computeBlock(effect.value ?? 0, { stage: 0, scalesWithStage: false, flatBonus: 0, fragile });
         return setCombatant(state, 'enemy', target.enemyId, { ...enemy, block: enemy.block + gained });
       }
       return state;
@@ -492,12 +498,12 @@ function applyOneEffect(state, effect, context) {
       if (target.scope === 'all_enemies') {
         let s = state;
         for (const enemy of livingEnemies(s)) {
-          s = setCombatant(s, 'enemy', enemy.id, { ...enemy, statuses: applyStatus(enemy.statuses, effect.status, effect.amount) });
+          s = setCombatant(s, 'enemy', enemy.id, { ...enemy, statuses: applyStatus(enemy.statuses, effect.status ?? '', effect.amount ?? 0) });
         }
         return s;
       }
       if (target.scope === 'player') {
-        let s = { ...state, player: { ...state.player, statuses: applyStatus(state.player.statuses, effect.status, effect.amount) } };
+        let s = { ...state, player: { ...state.player, statuses: applyStatus(state.player.statuses, effect.status ?? '', effect.amount ?? 0) } };
         // 조이기(constrict): 시전한 적을 표식해두고, 그 적이 죽으면 상태를 해제한다(damageTarget 참고).
         if (effect.status === 'constrict' && context.source === 'enemy' && context.enemyId) {
           const caster = s.enemies.find((e) => e.id === context.enemyId);
@@ -508,17 +514,17 @@ function applyOneEffect(state, effect, context) {
       if (target.scope === 'enemy') {
         const enemy = state.enemies.find((e) => e.id === target.enemyId);
         if (!enemy || enemy.hp <= 0) return state;
-        return setCombatant(state, 'enemy', target.enemyId, { ...enemy, statuses: applyStatus(enemy.statuses, effect.status, effect.amount) });
+        return setCombatant(state, 'enemy', target.enemyId, { ...enemy, statuses: applyStatus(enemy.statuses, effect.status ?? '', effect.amount ?? 0) });
       }
       return state;
     }
     case 'applyStun': {
       const enemy = state.enemies.find((e) => e.id === context.cardTargetId);
       if (!enemy || enemy.hp <= 0) return state;
-      return setCombatant(state, 'enemy', enemy.id, { ...enemy, statuses: applyStatus(enemy.statuses, 'stun', effect.amount) });
+      return setCombatant(state, 'enemy', enemy.id, { ...enemy, statuses: applyStatus(enemy.statuses, 'stun', effect.amount ?? 0) });
     }
     case 'draw': {
-      const drawn = cardEngine.drawCards(state.piles, effect.count, state.rngState);
+      const drawn = cardEngine.drawCards(state.piles, effect.count ?? 0, state.rngState);
       return { ...state, piles: drawn.piles, rngState: drawn.rngState };
     }
     case 'discardRandomFromHand': {
@@ -530,11 +536,11 @@ function applyOneEffect(state, effect, context) {
       return discardCardWithSlyTrigger(s, card, context);
     }
     case 'activatePower':
-      return { ...state, player: { ...state.player, powers: { ...state.player.powers, [effect.power]: { active: true } } } };
+      return { ...state, player: { ...state.player, powers: { ...state.player.powers, [effect.power ?? '']: { active: true } } } };
     case 'grantNextRangedBonus':
       return {
         ...state,
-        player: { ...state.player, temporaryEffects: { ...state.player.temporaryEffects, nextRangedBonus: { amount: effect.amount, ignoresBlock: effect.ignoresBlock } } },
+        player: { ...state.player, temporaryEffects: { ...state.player.temporaryEffects, nextRangedBonus: { amount: effect.amount ?? 0, ignoresBlock: !!effect.ignoresBlock } } },
       };
     case 'removeInventoryItem': {
       if (!context.itemId) return state;
@@ -701,10 +707,12 @@ export function endPlayerTurn(state) {
 function executeEnemyAction(state, enemyId) {
   let s = state;
   let enemy = s.enemies.find((e) => e.id === enemyId);
+  if (!enemy) return s; // 호출부가 살아 있는 적의 id만 넘긴다.
   const def = MONSTER_DEFINITIONS[enemy.defId];
   const move = currentMove(enemy.defId, enemy.aiState, enemy.phase);
 
   if (move.damage) {
+    /** @type {EffectContext} */
     const context = { source: 'enemy', enemyId, scalesWithStage: false, sourceStatuses: enemy.statuses };
     const repeated = move.hits || 1;
     for (let i = 0; i < repeated; i++) {
@@ -729,6 +737,7 @@ function executeEnemyAction(state, enemyId) {
   }
 
   enemy = s.enemies.find((e) => e.id === enemyId);
+  if (!enemy) return s; // 방금 소환 처리를 지났을 뿐 이 적은 아직 목록에 있다.
   if (move.selfDestruct) {
     s = setCombatant(s, 'enemy', enemyId, { ...enemy, hp: 0 });
   } else if (move.flee) {
@@ -788,6 +797,7 @@ export function advanceTurnWithSteps(state) {
 export function resolveEnemyTurn(state, steps) {
   if (state.phase !== 'enemy_turn') return state;
   let s = state;
+  /** @param {CombatStep} step */
   const record = (step) => { if (steps) steps.push(step); };
   const actingOrder = s.enemies.map((e) => e.id);
   for (const enemyId of actingOrder) {
@@ -796,8 +806,9 @@ export function resolveEnemyTurn(state, steps) {
     if (!enemy || enemy.hp <= 0) continue;
 
     enemy = { ...enemy, block: 0 };
-    if (MONSTER_DEFINITIONS[enemy.defId].standingArmor && (enemy.statuses.armor || 0) < MONSTER_DEFINITIONS[enemy.defId].standingArmor) {
-      enemy = { ...enemy, statuses: { ...enemy.statuses, armor: MONSTER_DEFINITIONS[enemy.defId].standingArmor } };
+    const standingArmor = MONSTER_DEFINITIONS[enemy.defId].standingArmor;
+    if (standingArmor && (enemy.statuses.armor || 0) < standingArmor) {
+      enemy = { ...enemy, statuses: { ...enemy.statuses, armor: standingArmor } };
     }
     enemy = applyArmorAtTurnStart(enemy);
     const poisonedBefore = (enemy.statuses.poison || 0) > 0;

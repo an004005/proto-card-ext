@@ -48,8 +48,9 @@ function triggerCombatIfNeeded(snapshot) {
     // 조우는 그 위협이 내 노드에 서 있는 동안만 유지된다. 떠났는데도 조우가 남으면 아무도 없는
     // 자리에서 판정이 계속되고, tier가 even/forced인 채로 굳으면 모든 시설맵 액션이 영구히
     // 막힌다(isBlockedByEncounter). 위협이 사라졌으면 조우도 없앤다.
-    const stale = run.encounter
-      && !Object.values(run.threats).some((t) => t.id === run.encounter.threatId && t.nodeId === run.playerNodeId);
+    const encounter = run.encounter;
+    const stale = encounter
+      && !Object.values(run.threats).some((t) => t.id === encounter.threatId && t.nodeId === run.playerNodeId);
     return stale ? { ...snapshot, facilityRunState: { ...run, encounter: null } } : snapshot;
   }
   const threat = run.threats[trigger.threatId];
@@ -220,7 +221,7 @@ function withFacilityRunState(snapshot, fn, { usesCapability = true } = {}) {
   if (extracting && contract?.type === 'retrieval' && contract.status === 'acquired') {
     const held = playerState.inventory.items.filter((i) => i.kind === 'contractGoods' && i.contractId === contract.id).length;
     if (held >= (contract.goodsSlots || 0)) {
-      next = { ...next, contract: { ...contract, status: 'completed', completedAt: next.time } };
+      next = { ...next, contract: { ...contract, status: /** @type {const} */ ('completed'), completedAt: next.time } };
     }
   }
   const result = { ...snapshot, facilityRunState: next, playerState };
@@ -328,12 +329,12 @@ function applyMapConsumable(snapshot, itemId) {
   const slotIndex = ps.loadout.consumableSlots.findIndex((it) => it?.id === itemId);
   const item = fromInventory || (slotIndex !== -1 ? ps.loadout.consumableSlots[slotIndex] : null);
   if (!item) return snapshot;
-  const def = CONSUMABLE_DEFINITIONS[item.defId];
+  const def = CONSUMABLE_DEFINITIONS[item.defId ?? ''];
   if (!isMapUsableConsumable(def)) return snapshot;
 
   let { hp, overrideChips } = ps;
-  if (def.effect.kind === 'healPercent') hp = Math.min(ps.maxHp, hp + Math.round(ps.maxHp * def.effect.amount));
-  else overrideChips = (overrideChips || 0) + def.effect.amount;
+  if (def.effect.kind === 'healPercent') hp = Math.min(ps.maxHp, hp + Math.round(ps.maxHp * (def.effect.amount ?? 0)));
+  else overrideChips = (overrideChips || 0) + (def.effect.amount ?? 0);
   let inventory = ps.inventory;
   let loadout = ps.loadout;
   if (fromInventory) {
@@ -539,7 +540,7 @@ export function plantFakeNoiseCommand(snapshot, targetNodeId) {
   return withFacilityRunState(snapshot, (run) => plantFakeNoise(run, capabilities.deception, targetNodeId));
 }
 
-/** @param {GameSnapshot} snapshot @param {string} targetSectorId @returns {GameSnapshot} */
+/** @param {GameSnapshot} snapshot @param {import('./types.js').FacilitySectorId} targetSectorId @returns {GameSnapshot} */
 export function broadcastFalseTargetCommand(snapshot, targetSectorId) {
   const capabilities = effectiveCapabilities(snapshot);
   return withFacilityRunState(snapshot, (run) => broadcastFalseTarget(run, capabilities.deception, targetSectorId));
@@ -672,7 +673,8 @@ function grantLootOption(inventory, option, durability) {
   if (option.kind === 'equipment') return addItem(inventory, createItem('equipment', { equipmentId: option.equipmentId, durability }));
   if (option.kind === 'currency') return addItem(inventory, createItem('currency', { value: option.value }));
   if (option.kind === 'junk') return addItem(inventory, createItem('junk', { value: option.value }));
-  if (option.kind === 'ammo') return addAmmo(inventory, option.amount);
+  // kind가 쓰는 필드만 채워지는 구조라 `?? 0`은 타입만 좁힌다.
+  if (option.kind === 'ammo') return addAmmo(inventory, option.amount ?? 0);
   if (option.kind === 'consumable') return addItem(inventory, createItem('consumable', { defId: option.defId }));
   return inventory;
 }
@@ -703,6 +705,7 @@ export function selectFarmRewardCommand(snapshot, optionIndex) {
 
   const inventory = grantLootOption(snapshot.playerState.inventory, option, durability);
   const run = snapshot.facilityRunState;
+  if (!run) return snapshot; // pendingFarmChoice가 있었으므로 실제로는 걸리지 않는다.
   return {
     ...snapshot,
     rngState,

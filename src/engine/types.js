@@ -237,6 +237,8 @@
  * @property {boolean} [spawnedAfterSeizure] 이미 통제실을 장악한 구역에서 나온 추적자인가. 장악은
  *   그때 나와 있던 추적자를 떼는 조건이지 구역 면역이 아니므로, 이 표식이 붙은 추적자에게는
  *   장악 조건이 걸리지 않는다(ADR-0096).
+ * @property {string[]} monsterIds 런 시작(또는 추적자 스폰) 때 한 번 뽑아 고정한 몬스터 구성 —
+ *   조우 화면의 지각 산정과 실제 전투 진입이 같은 목록을 쓴다.
  * @property {string[]} patrolRoute
  * @property {number} patrolIndex
  * @property {string} nodeId 현재 위치.
@@ -406,7 +408,8 @@
 
 /**
  * @typedef {Object} FarmChoiceOption
- * @property {'equipment'|'consumable'|'ammo'|'currency'} kind
+ * @property {'equipment'|'consumable'|'ammo'|'currency'|'junk'} kind 'junk'는 보급품
+ *   (rollSupplyLoot)에서만 나온다 — 확보 대상 후보 셋에는 들어가지 않는다.
  * @property {string} [equipmentId]
  * @property {string} [defId]
  * @property {number} [value]
@@ -463,7 +466,7 @@
  * @property {string} [status]
  * @property {number} [amount]
  * @property {string} [target] 'self'|'player'|'enemy'|'machine_enemy'|'all_enemies'
- * @property {'melee'|'ranged'} [attackKind]
+ * @property {?('melee'|'ranged')} [attackKind] null = 무기 종류를 가리지 않는 피해.
  * @property {number} [count]
  * @property {number} [hits] damage 효과 반복 타격 횟수(다단히트, 기본 1) — 매 타격마다 개별로 방어도에 흡수됨
  * @property {'handSize'|'exhaustPileSize'|'discardPileSize'|'strengthStacks'|'playerBlock'|'targetVulnerableStacks'|'targetPoisonStacks'|'loadedAmmo'} [scalesBy] damage/block 값에 조건부 고정 보너스를 더함
@@ -489,10 +492,11 @@
  * @property {number} [ammoCost]
  * @property {number} [requiresLoadedAtMost] Only playable while the current magazine has this many rounds or fewer.
  * @property {boolean} exhausts
- * @property {boolean} scalesWithStage
+ * @property {boolean} [scalesWithStage] `stageTable`로 단계를 직접 적는 카드는 생략한다(= false).
  * @property {CardEffect[]} [effects]
  * @property {CardStageRow[]} [stageTable]
  * @property {'variable'|'fixed'} [powerKind]
+ * @property {string} [power] 파워 카드가 켜는 파워 id — powerKind가 있는 카드만.
  * @property {boolean} [unplayable]
  * @property {string} [requiresWeapon]
  * @property {number} [damagePerTurnHeld] 감염 상태이상 카드: 턴 종료 시 손패에 있으면 장당 이만큼 피해
@@ -580,8 +584,8 @@
  * @typedef {Object} EffectContext
  * @property {'player'|'enemy'} source
  * @property {string} [enemyId] source enemy id, when source==='enemy'
- * @property {string} [cardTargetId] UI-selected target for player cards needing one
- * @property {boolean} scalesWithStage
+ * @property {?string} [cardTargetId] UI-selected target for player cards needing one
+ * @property {boolean} [scalesWithStage] 교활(sly) 자동 발동처럼 단계 개념이 없는 자리는 생략한다(= false).
  * @property {Statuses} [sourceStatuses] source enemy's statuses, when source==='enemy'
  * @property {boolean} [ignoresBlock]
  * @property {string} [itemId] burden-loot card's linked inventory item id

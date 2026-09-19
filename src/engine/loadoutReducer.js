@@ -169,6 +169,7 @@ function returnLoadoutToWarehouse(snapshot) {
   const loadout = ps.loadout;
   let warehouse = ps.warehouse;
   // 창고로 넘어가는 물건은 창고 id를 새로 발급받는다(addItem이 넘겨받은 id를 버린다).
+  /** @param {import('./types.js').Item} item */
   const store = (item) => { const { id, ...rest } = item; warehouse = addItem(warehouse, rest); };
   for (const weapon of loadout.weapons) store(weapon);
   if (loadout.top) store(loadout.top);
@@ -219,7 +220,7 @@ export function applyLoadoutPreset(snapshot, presetId) {
   const missing = [];
 
   for (const equipmentId of presetEquipmentIds(preset)) {
-    const next = equipFirstFromWarehouse(s, (item) => item.kind === 'equipment' && item.equipmentId === equipmentId && item.durability > 0);
+    const next = equipFirstFromWarehouse(s, (item) => item.kind === 'equipment' && item.equipmentId === equipmentId && (item.durability ?? 0) > 0);
     if (next === s) missing.push(equipmentId);
     s = next;
   }
@@ -272,13 +273,13 @@ export function previewPresetCapabilities(preset) {
 function canFillEmptyLoadoutSlot(loadout, item) {
   if (item.kind === 'consumable') return loadout.consumableSlots.includes(null);
   if (item.kind !== 'equipment') return false;
-  const category = getEquipmentCategory(item.equipmentId);
+  const category = getEquipmentCategory(item.equipmentId ?? '');
   if (category === 'top' || category === 'bottom') return !loadout[category];
   if (category === 'weapon') return loadout.weapons.length < SLOT_LIMITS.weapons;
   if (category === 'module') return loadout.modules.length < SLOT_LIMITS.modules;
   // 임플란트는 여전히 defId 중복 불가(같은 패시브 두 번 장착 방지) — 무기/모듈은 §신규
   // 인스턴스화로 중복 소유·장착이 허용되므로 여기서 dedup하지 않는다.
-  if (category === 'implant') return loadout.implantIds.length < SLOT_LIMITS.implantIds && !loadout.implantIds.includes(item.equipmentId);
+  if (category === 'implant') return loadout.implantIds.length < SLOT_LIMITS.implantIds && !loadout.implantIds.includes(item.equipmentId ?? '');
   return false;
 }
 

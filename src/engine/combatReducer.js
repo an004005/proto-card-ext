@@ -129,14 +129,15 @@ export function startCombat(snapshot, monsterIds, hpMultiplier, context) {
       ...combat,
       enemies: combat.enemies.map((e) => ({
         ...e,
-        statuses: applyStatus(applyStatus(e.statuses, 'vulnerable', debuff.vulnerable), 'weak', debuff.weak),
+        statuses: applyStatus(applyStatus(e.statuses, 'vulnerable', debuff.vulnerable ?? 0), 'weak', debuff.weak ?? 0),
       })),
     };
   }
 
-  const sectorId = snapshot.facilityRunState?.graph.nodes.find((node) => node.id === context.nodeId)?.sectorId;
-  const sectorGenerator = snapshot.facilityRunState?.graph.generators?.find((generator) => generator.sectorId === sectorId);
-  if (sectorGenerator && !snapshot.facilityRunState.disabledGeneratorIds.includes(sectorGenerator.id)) {
+  const run = snapshot.facilityRunState;
+  const sectorId = run?.graph.nodes.find((node) => node.id === context.nodeId)?.sectorId;
+  const sectorGenerator = run?.graph.generators?.find((generator) => generator.sectorId === sectorId);
+  if (run && sectorGenerator && !run.disabledGeneratorIds.includes(sectorGenerator.id)) {
     combat = {
       ...combat,
       enemies: combat.enemies.map((enemy) => ({
@@ -247,22 +248,26 @@ export function useConsumable(snapshot, itemId) {
   const ps = snapshot.playerState;
   const slotIndex = ps.loadout.consumableSlots.findIndex((it) => it?.id === itemId);
   if (slotIndex === -1) return snapshot;
-  const def = CONSUMABLE_DEFINITIONS[ps.loadout.consumableSlots[slotIndex].defId];
+  // findIndex가 찾아낸 칸이라 비어 있지 않고, 소비품 Item은 언제나 defId를 갖는다.
+  const slot = ps.loadout.consumableSlots[slotIndex];
+  if (!slot || !slot.defId) return snapshot;
+  const def = CONSUMABLE_DEFINITIONS[slot.defId];
   let combat = snapshot.activeCombatState;
 
+  // kind가 쓰는 필드만 채워지는 구조라(ConsumableDef.effect) 아래 `?? 0`은 타입만 좁힌다.
   if (def.effect.kind === 'healPercent') {
-    const heal = Math.round(combat.player.maxHp * def.effect.amount);
+    const heal = Math.round(combat.player.maxHp * (def.effect.amount ?? 0));
     combat = { ...combat, player: { ...combat.player, hp: Math.min(combat.player.maxHp, combat.player.hp + heal) } };
   } else if (def.effect.kind === 'aoeDamage') {
-    combat = { ...combat, enemies: combat.enemies.map((e) => (e.hp > 0 ? applyDamage(e, def.effect.amount, false) : e)) };
+    combat = { ...combat, enemies: combat.enemies.map((e) => (e.hp > 0 ? applyDamage(e, def.effect.amount ?? 0, false) : e)) };
   } else if (def.effect.kind === 'addOverrideChips') {
     // 칩은 전투 상태가 아니라 런 상태에 쌓인다 — 지도와 전투가 같은 통을 쓰기 때문이다(ADR-0086).
-    snapshot = { ...snapshot, playerState: { ...snapshot.playerState, overrideChips: (snapshot.playerState.overrideChips || 0) + def.effect.amount } };
+    snapshot = { ...snapshot, playerState: { ...snapshot.playerState, overrideChips: (snapshot.playerState.overrideChips || 0) + (def.effect.amount ?? 0) } };
   } else if (def.effect.kind === 'aoeDebuff') {
     combat = {
       ...combat,
       enemies: combat.enemies.map((e) => (e.hp > 0
-        ? { ...e, statuses: applyStatus(applyStatus(e.statuses, 'vulnerable', def.effect.vulnerable), 'weak', def.effect.weak) }
+        ? { ...e, statuses: applyStatus(applyStatus(e.statuses, 'vulnerable', def.effect.vulnerable ?? 0), 'weak', def.effect.weak ?? 0) }
         : e)),
     };
   }
@@ -346,7 +351,8 @@ export function finalizeIfCombatEnded(snapshot) {
   const combatSummary = (decayResult.changes.length || decayResult.destroyedItems.length)
     ? {
       durabilityChanges: decayResult.changes,
-      destroyed: decayResult.destroyedItems.map((i) => ({ itemId: i.id, equipmentId: i.equipmentId })),
+      // 파괴된 것은 언제나 장비 Item이라 equipmentId가 있다 — `?? ''`는 타입만 좁힌다.
+      destroyed: decayResult.destroyedItems.map((i) => ({ itemId: i.id, equipmentId: i.equipmentId ?? '' })),
     }
     : null;
 

@@ -70,7 +70,7 @@ export function exitActivateTimeFor(effectiveHacking) {
 /**
  * @param {import('./types.js').FacilityGraph} graph
  * @param {number} seed
- * @param {{revealLandmarks?: boolean, revealLandmarkSectorIds?: string[], contract?: object}} [runConfig] 런 시작 조건 — 계약과 사전 정보 공개.
+ * @param {{revealLandmarks?: boolean, revealLandmarkSectorIds?: string[], contract?: ?import('../data/contracts.js').ContractDef}} [runConfig] 런 시작 조건 — 계약과 사전 정보 공개.
  * @returns {import('./types.js').FacilityRunState}
  */
 export function createRunState(graph, seed, runConfig = {}) {
@@ -145,6 +145,7 @@ export function createRunState(graph, seed, runConfig = {}) {
   // 계약(§3단계). 수락된 계약을 넘겨받아 진행 상태를 이 런에 심는다 — 여기서부터는
   // facilityRunState.contract가 유일한 소스이고, 로드아웃 단계의 GameSnapshot.activeContract는
   // 더 이상 참조하지 않는다.
+  /** @type {import('./types.js').ContractRuntimeState|null} */
   const contract = runConfig.contract
     ? { ...runConfig.contract, status: 'accepted', acquiredAt: null, completedAt: null }
     : null;
@@ -278,16 +279,22 @@ function mergeContents(previous, next) {
   const beforeDevices = new Map((previous.devices || []).map((entry) => [entry.id, entry]));
   return {
     opportunities: (next.opportunities || []).map((entry) => (entry.usesRemaining === undefined && before.get(entry.id)?.usesRemaining !== undefined
-      ? { ...entry, usesRemaining: before.get(entry.id).usesRemaining }
+      ? { ...entry, usesRemaining: before.get(entry.id)?.usesRemaining }
       : entry)),
     // 장치도 같다 — 무료 인접 시야는 인터페이스·발전기의 상태를 'unknown'으로 적으므로(ADR-0096),
     // 그대로 덮어쓰면 값을 치른 관측이 확인한 상태가 옆을 지나가는 것만으로 지워진다.
     devices: (next.devices || []).map((entry) => (entry.status === 'unknown' && beforeDevices.get(entry.id)?.status
-      ? beforeDevices.get(entry.id)
+      ? beforeDevices.get(entry.id) ?? entry
       : entry)),
   };
 }
 
+/**
+ * @param {Record<string, import('./types.js').NodeObservation>} observations
+ * @param {string} nodeId
+ * @param {Partial<import('./types.js').NodeObservation>} patch
+ * @returns {Record<string, import('./types.js').NodeObservation>}
+ */
 export function mergeObservation(observations, nodeId, patch) {
   const previous = observations[nodeId];
   const merged = { ...previous };
@@ -310,6 +317,11 @@ export function mergeObservation(observations, nodeId, patch) {
   return { ...observations, [nodeId]: merged };
 }
 
+/**
+ * @param {import('./types.js').FacilityRunState} run
+ * @param {number} [effectivePerception]
+ * @returns {import('./types.js').FacilityRunState}
+ */
 export function refreshLocalObservations(run, effectivePerception = 0) {
   if (!run.playerNodeId) return run;
   // 대기 직후에는 서 있는 자리만 갱신한다 — 숨어서 기다리는 동안 주변을 살피지는 않으므로
@@ -486,6 +498,7 @@ export function nodeContentsAt(run, nodeId, depth = 'full') {
   // 카메라의 상태는 런 시작부터 공개다(ADR-0090) — 무료 인접 시야에서도 그대로 적는다.
   // 접속 인터페이스와 배터리 발전기는 '있다'까지이고, 해킹·파괴 여부는 값을 치른 관측이 판다
   // (ADR-0096). 그래서 presence 깊이에서는 상태를 'unknown'으로 남긴다.
+  /** @param {{kind: 'camera'|'interface'|'generator', id: string}} device */
   const deviceStatusAt = (device) => (depth === 'full' ? deviceStatus(run, device) : /** @type {const} */ ('unknown'));
   for (const camera of run.graph.cameras) {
     if (camera.nodeId !== nodeId) continue;
@@ -694,12 +707,14 @@ export function deceiveThreat(state, threatId, effectiveDeception) {
   if ((state.deceivedThreatIds || []).includes(threatId)) throw new RuleViolation('this threat has already been deceived once');
   // 불가 단계면 여기서 던진다 — 사양표를 거치므로 화면의 예고와 같은 판정이다.
   requireActionCost('encounterDeceive', { value: effectiveDeception });
-  const penalty = ENCOUNTER_DECEIVE_STEP_PENALTY[capabilityStep(effectiveDeception, ENCOUNTER_DECEIVE_REQUIREMENT)];
+  // requireActionCost가 불가 단계를 이미 던졌으므로 남는 단계는 표에 있는 넷뿐이다.
+  const step = /** @type {'surplus'|'standard'|'strained'|'severe'} */ (capabilityStep(effectiveDeception, ENCOUNTER_DECEIVE_REQUIREMENT));
+  const penalty = ENCOUNTER_DECEIVE_STEP_PENALTY[step];
 
   const used = [...(state.deceivedThreatIds || []), threatId];
   const success = effectiveDeception >= threat.alert + penalty.successPenalty;
   // 위태 단계는 성공하든 실패하든 그 위협의 경계가 오른다 — 어설픈 수작은 그 자체로 신호다.
-  const alerted = penalty.raisesThreatAlert ? Math.min(3, threat.alert + 1) : threat.alert;
+  const alerted = penalty.raisesThreatAlert ? /** @type {0|1|2|3} */ (Math.min(3, threat.alert + 1)) : threat.alert;
 
   // 내가 선 자리 말고 인접한 다른 노드 하나로 시선을 던진다. 갈 수 있는 통로로만 던져야
   // 위협이 실제로 그쪽으로 걸어간다.
@@ -774,11 +789,7 @@ function sectorMinAlert(state, sectorId) {
   return /** @type {0|1|2|3} */ (SECTOR_ALERT_MIN_ENEMY_ALERT[state.sectorAlerts[sectorId].level] ?? 0);
 }
 
-/**
- * @param {import('./types.js').FacilityRunState} state
- * @param {import('./types.js').FacilitySectorId} sectorId
- * @param {string} eventId
- */
+/** 노드 id의 앞머리가 그 노드의 구역이다. @param {string} nodeId */
 function sectorOfNode(nodeId) {
   return /** @type {import('./types.js').FacilitySectorId} */ (nodeId.split('_')[0]);
 }
@@ -1063,7 +1074,8 @@ function updateHunter(state, hunter, tickTime) {
 
   if (tickTime < next.nextMoveAt) return { threat: next, state };
 
-  const stepped = stepToward(edgesForThreatMovement(state), next.nodeId, next.target.nodeId, state.rngState);
+  // sees면 target을 방금 세웠고, 아니면 hunterSweepTarget이 반드시 하나를 세운다.
+  const stepped = stepToward(edgesForThreatMovement(state), next.nodeId, /** @type {{nodeId: string}} */ (next.target).nodeId, state.rngState);
   // 순회 중 마지막으로 본 자리를 떠났다면 다음 칸에 다시 그리로 돌아오도록 앵커는 그대로 둔다.
   const moved = { ...next, nodeId: stepped.nodeId, nextMoveAt: tickTime + HUNTER_MOVE_INTERVAL };
   const nextState = discoverAtNode({ ...state, rngState: stepped.rngState }, moved.nodeId, sectorOfNode(moved.nodeId));
@@ -1589,26 +1601,29 @@ const TASK_COMPLETIONS = {
     // 3 이상은 3홉. 표준 2홉이 무료 인접 관측(1홉)보다 한 홉 더 보는 것이 4칸을 쓰는 이유다.
     // 소리와 마찬가지로 "보는 거리"는 잠긴 통로에 막히지 않으므로 전체 그래프로 잰다.
     const info = perceptionInfo(task.params?.perception ?? 0);
-    const hops = bfsHopDistances(state.graph.edges, task.nodeId);
-    const targets = new Set([task.nodeId]);
+    // 정찰·은엄폐·통로 개방은 언제나 노드 위에서 예약된다(scheduleTask 호출부).
+    const nodeId = /** @type {string} */ (task.nodeId);
+    const hops = bfsHopDistances(state.graph.edges, nodeId);
+    const targets = new Set([nodeId]);
     for (const [nodeId, hop] of hops) {
       if (hop <= info.reconHops) targets.add(nodeId);
     }
     return {
       ...state,
       activeRecon: {
-        source: 'basic', sourceNodeId: task.nodeId, targetNodeIds: [...targets], expiresAt: null, detailLevel: info.level,
+        source: 'basic', sourceNodeId: nodeId, targetNodeIds: [...targets], expiresAt: null, detailLevel: info.level,
       },
     };
   },
   concealment(state, task) {
-    return { ...state, activeConcealment: { nodeId: task.nodeId, bonus: task.params.bonus } };
+    return { ...state, activeConcealment: { nodeId: /** @type {string} */ (task.nodeId), bonus: task.params.bonus } };
   },
   openEdge(state, task) {
     const { edgeId, evidenceTier } = task.params;
     let next = state.openedEdgeIds.includes(edgeId) ? state : { ...state, openedEdgeIds: [...state.openedEdgeIds, edgeId] };
     if (evidenceTier) {
-      next = { ...next, evidence: [...next.evidence, { id: idForNewEntry(next, next.evidence, 'evidence'), nodeId: task.nodeId, tier: evidenceTier, createdBySectorId: sectorOfNode(task.nodeId) }] };
+      const nodeId = /** @type {string} */ (task.nodeId);
+      next = { ...next, evidence: [...next.evidence, { id: idForNewEntry(next, next.evidence, 'evidence'), nodeId, tier: evidenceTier, createdBySectorId: sectorOfNode(nodeId) }] };
     }
     return next;
   },
@@ -1694,7 +1709,7 @@ const TASK_COMPLETIONS = {
       const rolled = rollFieldLootOptions(axis, tier, next.rngState);
       next = { ...next, rngState: rolled.rngState, pendingFarmChoice: { opportunityId, tier, axis, options: rolled.options } };
     }
-    return { ...next, lastActionResult: { kind: 'farm', nodeId: task.nodeId, opportunityId, status: 'completed', completedAt: next.time } };
+    return { ...next, lastActionResult: { kind: /** @type {const} */ ('farm'), nodeId: /** @type {string} */ (task.nodeId), opportunityId, status: /** @type {const} */ ('completed'), completedAt: next.time } };
   },
   cleanTraces(state, task) {
     return { ...state, evidence: state.evidence.filter((e) => e.nodeId !== task.nodeId) };
@@ -1754,7 +1769,7 @@ const TASK_COMPLETIONS = {
     const { instanceId, kind, range, duration, cooldown, targetId } = task.params;
     let next = state;
     if (kind === 'snapshot_scan') {
-      const hops = bfsHopDistances(state.graph.edges, task.nodeId);
+      const hops = bfsHopDistances(state.graph.edges, /** @type {string} */ (task.nodeId));
       const threatNodes = new Set(Object.values(state.threats).map((t) => t.nodeId));
       let observations = { ...next.observations };
       for (const node of state.graph.nodes) {
@@ -1938,7 +1953,7 @@ function abortTask(state, reason = 'threatContact') {
  * (그 조우는 이미 열려 있고, 열세의 행동권 1회가 바로 이 작업이다) 중단시키지 않는다.
  *
  * @param {import('./types.js').FacilityRunState} state
- * @param {{kind: string, timeCost: number, nodeId?: string|null, cost?: object|null, params?: object|null}} task
+ * @param {{kind: string, timeCost: number, nodeId?: string|null, cost?: ?Partial<import('./capabilityCosts.js').CapabilityCost>, params?: ?Record<string, any>}} task
  * @returns {import('./types.js').FacilityRunState}
  */
 export function scheduleTask(state, task) {
@@ -1954,11 +1969,13 @@ export function scheduleTask(state, task) {
   const ignoredThreatIds = state.playerNodeId
     ? Object.values(state.threats).filter((t) => t.nodeId === state.playerNodeId).map((t) => t.id)
     : [];
+  /** @type {import('./types.js').PendingTask} */
   const pending = {
     kind: task.kind,
     nodeId: nodeId || null,
     cost: task.cost || null,
-    params: task.params || null,
+    // params 없이 가동되는 작업은 완료 적용에서도 params를 읽지 않는다(읽는 쪽은 옵셔널 체이닝).
+    params: /** @type {Record<string, any>} */ (task.params || null),
     startedAt: state.time,
     completesAt: state.time + timeCost,
     ignoredThreatIds,
@@ -2146,7 +2163,10 @@ export function highGroundMobility(effectiveMobility) {
   return effectiveForRequirement(effectiveMobility);
 }
 
-/** Public UI/test predicate for an edge from the player's current node. */
+/** Public UI/test predicate for an edge from the player's current node.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').FacilityEdge} edge
+ * @param {number} [effectiveMobility] */
 export function canTraverseEdge(state, edge, effectiveMobility = 0) {
   return !!state.playerNodeId
     && (edge.from === state.playerNodeId || edge.to === state.playerNodeId)
@@ -2155,11 +2175,14 @@ export function canTraverseEdge(state, edge, effectiveMobility = 0) {
 
 /** Public UI predicate: is this camera currently under an active (unexpired) hack? Destroyed
  * cameras are a separate state (disabledCameraIds) — callers that need "won't detect me right
- * now" should check both, as cameraIsHacked below does. */
+ * now" should check both, as cameraIsHacked below does.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} cameraId */
 export function isCameraHackActive(state, cameraId) {
   return state.hackedCameras.some((entry) => entry.cameraId === cameraId && entry.expiresAt > state.time);
 }
 
+/** @param {import('./types.js').FacilityRunState} state @param {string} cameraId */
 function cameraIsHacked(state, cameraId) {
   return state.disabledCameraIds?.includes(cameraId) || isCameraHackActive(state, cameraId);
 }
@@ -2224,7 +2247,9 @@ export function cameraSeesStealth(effectiveStealth) {
   return effectiveStealth < CAMERA_PERCEPTION;
 }
 
-/** 그 노드에 지금 나를 볼 수 있는 카메라가 있는가(UI용). */
+/** 그 노드에 지금 나를 볼 수 있는 카메라가 있는가(UI용).
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string|null|undefined} nodeId */
 export function hasLiveCameraAt(state, nodeId) {
   return !!liveCameraAt(state, nodeId);
 }
@@ -2291,6 +2316,7 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
     : [...state.visitedNodeIds, destinationNodeId];
   // 자리를 뜨면 고르지 않은 확보 대상 후보는 사라진다 — 파밍한 자리에서 결정하지 않으면
   // 가져갈 수 없다. 열린 채로 남겨두면 4단계의 "떠난 조우가 남아 소프트락"과 같은 모양이 된다.
+  /** @type {import('./types.js').FacilityRunState} */
   let moved = { ...state, playerNodeId: destinationNodeId, visitedNodeIds, combatTrigger: null, activeRecon: null, activeConcealment: null, encounter: null, pendingFarmChoice: null, lastWaitEndedAt: /** @type {number|null} */ (null) };
   // 다른 층계 대가와 같은 자리로 보낸다 — facilityReducer의 공통 래퍼가 playerState에서 정산한다.
   if (highGroundCost?.hpCost) moved = { ...moved, pendingHpLoss: (moved.pendingHpLoss || 0) + highGroundCost.hpCost };
@@ -2299,7 +2325,7 @@ export function moveToAdjacentNode(state, destinationNodeId, effectiveMobility =
   if (movementNoise > 0) moved = reportNoise(moved, destinationNodeId, /** @type {1|2|3} */ (movementNoise), state.time);
   if (effectiveStealth <= 2) {
     const tier = /** @type {1|2} */ (effectiveStealth <= -2 ? 2 : 1);
-    moved = { ...moved, evidence: [...moved.evidence, { id: idForNewEntry(state, moved.evidence, 'evidence'), nodeId: destinationNodeId, tier, createdBySectorId: destinationNodeId.split('_')[0] }] };
+    moved = { ...moved, evidence: [...moved.evidence, { id: idForNewEntry(state, moved.evidence, 'evidence'), nodeId: destinationNodeId, tier, createdBySectorId: destinationNodeId.split('_')[0] ?? '' }] };
   }
   // 통로 하나는 언제나 1칸이다(ADR-0084). 시간은 이동이 아니라 작업에서 나간다.
   return advanceTime(moved, moved.time + moveTimeCost(traversedEdge, effectiveMobility));
@@ -2471,7 +2497,7 @@ export function effectiveStealthWithConcealment(baseEffectiveStealth, state) {
   return explainEffectiveStealth(baseEffectiveStealth, state).total;
 }
 
-/** Effective Hacking -> direct hacking range in graph hops. */
+/** Effective Hacking -> direct hacking range in graph hops. @param {number} effectiveHacking */
 export function cameraHackRange(effectiveHacking) {
   return CAMERA_HACK_RANGE_BY_HACKING[Math.max(-2, Math.min(4, effectiveHacking)) + 2];
 }
@@ -2496,7 +2522,10 @@ function lineOfSightHops(state, fromNodeId) {
   return bfsHopDistancesOverArcs(arcs, fromNodeId);
 }
 
-/** Whether a hacking target is reachable directly, or through the hacked interface at this node. */
+/** Whether a hacking target is reachable directly, or through the hacked interface at this node.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} targetNodeId
+ * @param {number} effectiveHacking */
 function canReachHackingTarget(state, targetNodeId, effectiveHacking) {
   if (capabilityStep(effectiveHacking) === 'impossible') return false;
   const playerNode = state.graph.nodes.find((node) => node.id === state.playerNodeId);
@@ -2505,11 +2534,14 @@ function canReachHackingTarget(state, targetNodeId, effectiveHacking) {
   const currentInterface = state.graph.accessInterfaces.find((entry) => entry.nodeId === state.playerNodeId);
   const hackedInterfaceIds = state.hackedInterfaceIds || [];
   if (currentInterface && hackedInterfaceIds.includes(currentInterface.id) && playerNode.sectorId === targetNode.sectorId) return true;
-  const hop = bfsHopDistances(state.graph.edges, state.playerNodeId).get(targetNodeId);
+  const hop = bfsHopDistances(state.graph.edges, playerNode.id).get(targetNodeId);
   return hop !== undefined && hop <= cameraHackRange(effectiveHacking);
 }
 
-/** Hack the access interface installed at the player's current node. */
+/** Hack the access interface installed at the player's current node.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} interfaceId
+ * @param {number} effectiveHacking */
 export function hackAccessInterface(state, interfaceId, effectiveHacking) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('access interface hacking unavailable');
   const accessInterface = state.graph.accessInterfaces.find((entry) => entry.id === interfaceId);
@@ -2522,7 +2554,10 @@ export function hackAccessInterface(state, interfaceId, effectiveHacking) {
   return applyCapabilityCost(state, cost, undefined, 'hackInterface', { interfaceId, hacking: effectiveHacking });
 }
 
-/** Hack a camera at the current/nearby node, or anywhere in this sector through a hacked interface. */
+/** Hack a camera at the current/nearby node, or anywhere in this sector through a hacked interface.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} cameraId
+ * @param {number} effectiveHacking */
 export function hackCamera(state, cameraId, effectiveHacking) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('camera hacking unavailable');
   const camera = state.graph.cameras.find((entry) => entry.id === cameraId);
@@ -2536,7 +2571,10 @@ export function hackCamera(state, cameraId, effectiveHacking) {
   }));
 }
 
-/** Permanently destroy a camera from its node. This is a loud Force action. */
+/** Permanently destroy a camera from its node. This is a loud Force action.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} cameraId
+ * @param {number} effectiveForce */
 export function destroyCamera(state, cameraId, effectiveForce) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('camera destruction unavailable');
   const camera = state.graph.cameras.find((entry) => entry.id === cameraId);
@@ -2548,7 +2586,11 @@ export function destroyCamera(state, cameraId, effectiveForce) {
 }
 
 /** Disable a sector battery generator. Hacking follows the normal direct/interface access rule;
- * Force is loud and requires physically standing on the generator node. */
+ * Force is loud and requires physically standing on the generator node.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {string} generatorId
+ * @param {'hacking'|'force'} capabilityKind
+ * @param {number} effectiveCapability */
 export function disableGenerator(state, generatorId, capabilityKind, effectiveCapability) {
   if (state.phase !== 'active' || !state.playerNodeId) throw new RuleViolation('generator control unavailable');
   const generator = state.graph.generators?.find((entry) => entry.id === generatorId);
@@ -2632,10 +2674,13 @@ function activateLockdown(run) {
   return { ...run, lockdown: { startedAt: run.time }, reinforcements };
 }
 
-/** @param {import('./types.js').FacilityRunState} run @returns {import('../data/contracts.js').ContractDef | undefined} */
+/** 계약 목표부 랜드마크 — 계약이 없으면 undefined.
+ * @param {import('./types.js').FacilityRunState} run
+ * @returns {import('./types.js').SectorLandmark | undefined} */
 function contractLandmark(run) {
-  if (!run.contract) return undefined;
-  return run.graph.landmarks.find((l) => l.sectorId === run.contract.sectorId);
+  const contract = run.contract;
+  if (!contract) return undefined;
+  return run.graph.landmarks.find((l) => l.sectorId === contract.sectorId);
 }
 
 /**

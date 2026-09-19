@@ -38,8 +38,9 @@ export function describeItem(item) {
 
   // 임플란트는 §신규 내구도 시스템 대상이 아니므로(카드가 없어 닳지 않음) 내구도를 표시하지 않는다.
   const category = EQUIPMENT_CATEGORY_LABEL[item.equipmentId ?? ''] || '미장착 장비';
-  const showsDurability = category !== '임플란트' && item.durability !== undefined;
-  const broken = showsDurability && item.durability <= 0;
+  const durability = item.durability;
+  const showsDurability = category !== '임플란트' && durability !== undefined;
+  const broken = showsDurability && durability <= 0;
   return {
     name: EQUIPMENT_DEFS[item.equipmentId ?? '']?.name || item.equipmentId || '',
     sub: showsDurability ? `${category} · 내구도 ${item.durability}/${MAX_DURABILITY}${broken ? ' (파손)' : ''}` : category,

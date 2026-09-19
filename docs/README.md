@@ -19,6 +19,7 @@
 
 ## 개발용 도구
 
+- `npm run typecheck`는 `src/engine/`·`src/data/`의 JSDoc 타입을 TypeScript로 검사한다(오류 0이 기준선).
 - 전투 화면의 `DEBUG 즉시 승리`(`DEBUG_WIN_COMBAT`)는 살아 있는 적을 전부 쓰러뜨린 것으로 치고 정상 승리 처리를 그대로 태운다 — 디버그 전용이며 게임 규칙이 아니다.
 
 ## 구현 전 정보

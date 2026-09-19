@@ -76,8 +76,11 @@ export function equipItemFrom(snapshot, fromKey, itemId) {
   if (item.kind === 'consumable') return equipConsumableFrom(snapshot, fromKey, item);
   if (item.kind !== 'equipment') return snapshot;
   // 파손(내구도 0) 장비는 수리 시스템이 아직 없어 재장착 불가(§신규 내구도).
-  if (item.durability <= 0) return snapshot;
-  const category = getEquipmentCategory(item.equipmentId);
+  // 장비 Item은 생성 때 언제나 durability/equipmentId를 받는다(equipmentEngine) — 아래 두
+  // 기본값은 타입만 좁힌다.
+  if ((item.durability ?? MAX_DURABILITY) <= 0) return snapshot;
+  const equipmentId = item.equipmentId ?? '';
+  const category = getEquipmentCategory(equipmentId);
   if (!category) return snapshot;
 
   let loadout = ps.loadout;
@@ -92,13 +95,13 @@ export function equipItemFrom(snapshot, fromKey, itemId) {
   const bumpImplantToInventory = (bumpedEquipmentId) => { inventory = addItem(inventory, createItem('equipment', { equipmentId: bumpedEquipmentId, durability: MAX_DURABILITY })); };
 
   if (category === 'implant') {
-    if (loadout.implantIds.includes(item.equipmentId)) return snapshot;
+    if (loadout.implantIds.includes(equipmentId)) return snapshot;
     let ids = loadout.implantIds;
     if (ids.length >= SLOT_LIMITS.implantIds) {
       bumpImplantToInventory(ids[0]);
       ids = ids.slice(1);
     }
-    loadout = { ...loadout, implantIds: [...ids, item.equipmentId] };
+    loadout = { ...loadout, implantIds: [...ids, equipmentId] };
   } else if (category === 'top' || category === 'bottom') {
     const prev = loadout[category];
     if (prev) bumpItemToInventory(prev);
@@ -137,6 +140,7 @@ export function unequipItem(snapshot, itemId) {
   else if (loadout.modules.some((m) => m.id === itemId)) { removed = loadout.modules.find((m) => m.id === itemId); loadout = { ...loadout, modules: loadout.modules.filter((m) => m.id !== itemId) }; }
   else return snapshot;
 
+  if (!removed) return snapshot; // 위 분기가 이미 찾아낸 항목이라 실제로는 걸리지 않는다.
   const { id, ...rest } = removed;
   const inventory = addItem(ps.inventory, rest);
   return { ...snapshot, playerState: { ...ps, loadout, inventory } };
@@ -175,7 +179,8 @@ export function equipConsumableFrom(snapshot, fromKey, item) {
   if (emptyIndex !== -1) {
     slots = slots.map((s, i) => (i === emptyIndex ? item : s));
   } else {
-    inventory = addItem(inventory, createItem('consumable', { defId: slots[0].defId }));
+    // emptyIndex가 -1이므로 0번 칸은 비어 있지 않다 — 옵셔널 체이닝은 타입만 좁힌다.
+    inventory = addItem(inventory, createItem('consumable', { defId: slots[0]?.defId }));
     slots = [...slots.slice(1), item];
   }
   const loadout = { ...ps.loadout, consumableSlots: slots };
@@ -195,7 +200,7 @@ export function unequipConsumable(snapshot, itemId) {
   const item = ps.loadout.consumableSlots[slotIndex];
   const consumableSlots = ps.loadout.consumableSlots.map((it, i) => (i === slotIndex ? null : it));
   const loadout = { ...ps.loadout, consumableSlots };
-  const inventory = addItem(ps.inventory, createItem('consumable', { defId: item.defId }));
+  const inventory = addItem(ps.inventory, createItem('consumable', { defId: item?.defId }));
   return { ...snapshot, playerState: { ...ps, loadout, inventory } };
 }
 
