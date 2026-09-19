@@ -275,17 +275,26 @@ export function keepsObservationWhileWaiting(effectivePerception) {
 function mergeContents(previous, next) {
   if (!previous) return next;
   const before = new Map((previous.opportunities || []).map((entry) => [entry.id, entry]));
+  const beforeDevices = new Map((previous.devices || []).map((entry) => [entry.id, entry]));
   return {
     opportunities: (next.opportunities || []).map((entry) => (entry.usesRemaining === undefined && before.get(entry.id)?.usesRemaining !== undefined
       ? { ...entry, usesRemaining: before.get(entry.id).usesRemaining }
       : entry)),
-    devices: next.devices || [],
+    // 장치도 같다 — 무료 인접 시야는 인터페이스·발전기의 상태를 'unknown'으로 적으므로(ADR-0096),
+    // 그대로 덮어쓰면 값을 치른 관측이 확인한 상태가 옆을 지나가는 것만으로 지워진다.
+    devices: (next.devices || []).map((entry) => (entry.status === 'unknown' && beforeDevices.get(entry.id)?.status
+      ? beforeDevices.get(entry.id)
+      : entry)),
   };
 }
 
 export function mergeObservation(observations, nodeId, patch) {
   const previous = observations[nodeId];
   const merged = { ...previous };
+  // 이 갱신이 예전 기록보다 얕은가. 얕은 갱신은 기록에 적힌 항목을 지우지도, **신선도를 올리지도**
+  // 못한다(ADR-0096) — 깊이 5로 정찰해 둔 노드 옆을 지나가기만 해도 "방금 확인"이 되면 정찰이
+  // 파는 유지(신선도)가 공짜가 된다. 그 대신 얕은 확인 시각은 shallowObservedAt에 따로 남긴다.
+  const shallower = patch.detailLevel !== undefined && patch.detailLevel < (previous?.detailLevel ?? 0);
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
     if (key === 'contents') { merged.contents = mergeContents(previous?.contents, /** @type {any} */ (value)); continue; }
@@ -293,8 +302,11 @@ export function mergeObservation(observations, nodeId, patch) {
     // 얕은 무료 관측이 지나가도 그대로 남으므로(패치에 없는 키는 보존), 깊이도 함께 남아
     // 있어야 UI가 그 항목을 계속 그릴 수 있다.
     if (key === 'detailLevel') merged.detailLevel = Math.max(previous?.detailLevel ?? 0, /** @type {number} */ (value));
+    else if (key === 'observedAt' && shallower) merged.shallowObservedAt = /** @type {number} */ (value);
     else /** @type {any} */ (merged)[key] = value;
   }
+  // 기록과 같은 깊이 이상으로 다시 봤으면 얕은 확인 시각은 의미가 없다 — observedAt이 그 시각이다.
+  if (!shallower && patch.observedAt !== undefined) delete merged.shallowObservedAt;
   return { ...observations, [nodeId]: merged };
 }
 
@@ -471,17 +483,21 @@ export function nodeContentsAt(run, nodeId, depth = 'full') {
       : { id: opportunity.id, grade: opportunity.grade }));
   /** @type {import('./types.js').ObservedDevice[]} */
   const devices = [];
+  // 카메라의 상태는 런 시작부터 공개다(ADR-0090) — 무료 인접 시야에서도 그대로 적는다.
+  // 접속 인터페이스와 배터리 발전기는 '있다'까지이고, 해킹·파괴 여부는 값을 치른 관측이 판다
+  // (ADR-0096). 그래서 presence 깊이에서는 상태를 'unknown'으로 남긴다.
+  const deviceStatusAt = (device) => (depth === 'full' ? deviceStatus(run, device) : /** @type {const} */ ('unknown'));
   for (const camera of run.graph.cameras) {
     if (camera.nodeId !== nodeId) continue;
     devices.push({ kind: 'camera', id: camera.id, status: deviceStatus(run, { kind: 'camera', id: camera.id }) });
   }
   for (const entry of run.graph.accessInterfaces) {
     if (entry.nodeId !== nodeId) continue;
-    devices.push({ kind: 'interface', id: entry.id, status: deviceStatus(run, { kind: 'interface', id: entry.id }) });
+    devices.push({ kind: 'interface', id: entry.id, status: deviceStatusAt({ kind: 'interface', id: entry.id }) });
   }
   for (const generator of run.graph.generators || []) {
     if (generator.nodeId !== nodeId) continue;
-    devices.push({ kind: 'generator', id: generator.id, status: deviceStatus(run, { kind: 'generator', id: generator.id }) });
+    devices.push({ kind: 'generator', id: generator.id, status: deviceStatusAt({ kind: 'generator', id: generator.id }) });
   }
   return { opportunities, devices };
 }
@@ -1001,11 +1017,6 @@ export function isHunter(threat) {
   return threat?.kind === 'hunter';
 }
 
-/** 그 구역에 지금 살아 있는 추적자. @param {import('./types.js').FacilityRunState} state @param {string} sectorId */
-function hunterOfSector(state, sectorId) {
-  return Object.values(state.threats).find((t) => isHunter(t) && t.sectorId === sectorId) || null;
-}
-
 /**
  * 추적자가 지금 플레이어를 보고 있는가. 일반 위협의 1홉 시야(threatObservesPlayer)와 같은
  * 규칙이되 거리가 HUNTER_SIGHT_HOPS로 넓고, 실효 Stealth가 임계 이상이면 그 안에서도 놓친다 —
@@ -1032,8 +1043,11 @@ function hunterObservesPlayer(state, hunter) {
  */
 function updateHunter(state, hunter, tickTime) {
   const sees = hunterObservesPlayer(state, hunter);
+  // 스폰한 칸은 미관측으로 세지 않는다. 그 칸에도 올리면 화면의 "놓치기까지 M칸"이 태어나자마자
+  // HUNTER_LOSE_TICKS보다 하나 적은 값으로 뜨고, 실제 미관측 칸 수도 규칙과 한 칸 어긋난다.
+  const justSpawned = hunter.spawnedAt === tickTime;
   /** @type {import('./types.js').ThreatRuntimeState} */
-  let next = sees
+  const observed = sees
     ? {
       ...hunter,
       lostTicks: 0,
@@ -1041,107 +1055,145 @@ function updateHunter(state, hunter, tickTime) {
       lastKnownPlayerNodeId: state.playerNodeId,
       target: { kind: /** @type {const} */ ('player'), nodeId: /** @type {string} */ (state.playerNodeId) },
     }
-    : { ...hunter, lostTicks: (hunter.lostTicks || 0) + 1 };
+    : { ...hunter, lostTicks: (hunter.lostTicks || 0) + (justSpawned ? 0 : 1) };
 
   // 못 보는 동안의 목표는 마지막으로 본 자리다. 거기 이미 서 있으면 인접을 한 칸씩 훑는다 —
-  // 그 자리에 멈춰 서 있으면 20칸 동안 아무 일도 일어나지 않아 "놓치기까지 M칸"이 그냥 대기가 된다.
-  if (!sees) {
-    const anchor = next.lastKnownPlayerNodeId;
-    if (!anchor) {
-      next.target = { kind: /** @type {const} */ ('patrol'), nodeId: next.nodeId };
-    } else if (next.nodeId !== anchor) {
-      next.target = { kind: /** @type {const} */ ('player'), nodeId: anchor };
-    } else {
-      const adjacency = buildAdjacency(edgesForThreatMovement(state));
-      const ring = [...(adjacency.get(anchor) || [])].sort();
-      const sweepIndex = ring.length ? (next.patrolIndex + 1) % ring.length : 0;
-      next.patrolIndex = sweepIndex;
-      next.target = { kind: /** @type {const} */ ('patrol'), nodeId: ring.length ? ring[sweepIndex] : anchor };
-    }
-  }
+  // 그 자리에 멈춰 서 있으면 놓치기까지의 칸 동안 아무 일도 일어나지 않아 그냥 대기가 된다.
+  const next = sees ? observed : { ...observed, ...hunterSweepTarget(state, observed) };
 
   if (tickTime < next.nextMoveAt) return { threat: next, state };
 
   const stepped = stepToward(edgesForThreatMovement(state), next.nodeId, next.target.nodeId, state.rngState);
-  next.nodeId = stepped.nodeId;
-  next.nextMoveAt = tickTime + HUNTER_MOVE_INTERVAL;
   // 순회 중 마지막으로 본 자리를 떠났다면 다음 칸에 다시 그리로 돌아오도록 앵커는 그대로 둔다.
-  let nextState = { ...state, rngState: stepped.rngState };
-  nextState = discoverAtNode(nextState, next.nodeId, sectorOfNode(next.nodeId));
-  return { threat: next, state: nextState };
+  const moved = { ...next, nodeId: stepped.nodeId, nextMoveAt: tickTime + HUNTER_MOVE_INTERVAL };
+  const nextState = discoverAtNode({ ...state, rngState: stepped.rngState }, moved.nodeId, sectorOfNode(moved.nodeId));
+  return { threat: moved, state: nextState };
 }
 
 /**
- * 경계도 3단계 도달 시의 스폰과, 세 무력화 조건의 제거를 한 자리에서 본다. 매 칸 경계에서
- * 돌며, 스폰은 **단계가 3으로 올라선 그 순간** 한 번뿐이다(`hunterSpawnedSectorIds`) — 매 칸
- * "3이면 없으면 만든다"로 두면 전투로 쓰러뜨린 다음 칸에 곧바로 새 추적자가 서 있다.
+ * 플레이어를 못 보는 칸의 목표와 순회 인덱스. 마지막으로 본 자리가 있으면 그리로 가고, 이미
+ * 거기 서 있으면 그 인접을 한 칸씩 훑는다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} hunter
+ * @returns {{target: import('./types.js').ThreatTarget, patrolIndex: number}}
+ */
+function hunterSweepTarget(state, hunter) {
+  const anchor = hunter.lastKnownPlayerNodeId;
+  if (!anchor) {
+    return { target: { kind: /** @type {const} */ ('patrol'), nodeId: hunter.nodeId }, patrolIndex: hunter.patrolIndex };
+  }
+  if (hunter.nodeId !== anchor) {
+    return { target: { kind: /** @type {const} */ ('player'), nodeId: anchor }, patrolIndex: hunter.patrolIndex };
+  }
+  const ring = [...(buildAdjacency(edgesForThreatMovement(state)).get(anchor) || [])].sort();
+  const sweepIndex = ring.length ? (hunter.patrolIndex + 1) % ring.length : 0;
+  return {
+    target: { kind: /** @type {const} */ ('patrol'), nodeId: ring.length ? ring[sweepIndex] : anchor },
+    patrolIndex: sweepIndex,
+  };
+}
+
+/** 추적자가 물러나는 이유마다 위협 패널에 남는 한 줄. 문장을 조건 옆에 흩어 두면 상수를
+ * 바꿔도 화면 문구가 옛 숫자를 말한다. */
+const HUNTER_RETIREMENT_TEXT = {
+  alertFell: '추적자가 철수했다 — 구역 경계도가 3단계 아래로 내려갔다.',
+  controlRoom: '추적자가 철수했다 — 구역 통제실을 장악했다.',
+  lost: `추적자가 흔적을 놓쳤다 — ${HUNTER_LOSE_TICKS}칸 동안 나를 보지 못했다.`,
+};
+
+/**
+ * 추적자 하나를 지우고 그 이유를 `hunterLog`에 한 줄로 남긴다.
+ * @param {import('./types.js').FacilityRunState} state
+ * @param {import('./types.js').ThreatRuntimeState} hunter
+ * @param {number} tickTime
+ * @param {'alertFell'|'controlRoom'|'lost'} reason
+ * @returns {import('./types.js').FacilityRunState}
+ */
+function retireHunter(state, hunter, tickTime, reason) {
+  const threats = { ...state.threats };
+  delete threats[hunter.id];
+  return {
+    ...state,
+    threats,
+    hunterLog: [...(state.hunterLog || []), { at: tickTime, sectorId: hunter.sectorId, reason, text: HUNTER_RETIREMENT_TEXT[reason] }],
+  };
+}
+
+/**
+ * 경계도 3단계 도달 시의 스폰과, 상태로 판정하는 두 무력화 조건(경계도 하락·통제실 장악)을 한
+ * 자리에서 본다. 매 칸 경계에서 돌며, 스폰은 **단계가 3으로 올라선 그 순간** 한 번뿐이다
+ * (`hunterSpawnedSectorIds`) — 매 칸 "3이면 없으면 만든다"로 두면 전투로 쓰러뜨린 다음 칸에
+ * 곧바로 새 추적자가 서 있다.
+ *
+ * 세 번째 조건(연속 미관측)은 이 칸의 관측 결과가 나와야 판정할 수 있으므로 updateHunter 뒤,
+ * worldTick이 본다.
+ *
+ * 통제실 장악은 **지금 있는 추적자를 떼는** 조건이지 그 구역을 면역으로 만들지 않는다
+ * (ADR-0092·ADR-0096) — 장악한 구역도 경계도가 다시 3이 되면 추적자를 내보낸다.
  * @param {import('./types.js').FacilityRunState} state
  * @param {number} tickTime
  * @returns {import('./types.js').FacilityRunState}
  */
 function syncHunters(state, tickTime) {
   let next = state;
-  let threats = next.threats;
   let spawned = next.hunterSpawnedSectorIds || [];
-  let log = next.hunterLog || [];
   let changed = false;
 
   for (const sectorId of next.graph.sectorIds) {
     const level = next.sectorAlerts[sectorId]?.level ?? 0;
-    const hunter = Object.values(threats).find((t) => isHunter(t) && t.sectorId === sectorId) || null;
-    const seized = (next.revealedPatrolRouteSectorIds || []).includes(sectorId);
+    const hunter = Object.values(next.threats).find((t) => isHunter(t) && t.sectorId === sectorId) || null;
+    // 교전 중인 추적자는 전투가 끝날 때까지 맵에서 지우지 않는다 — 조우 패널이 가리키는 위협이
+    // 그 자리에서 증발하면 전투가 열리지도 끝나지도 않는다. 쓰러뜨리면 전투 쪽이 치운다.
+    const engaged = !!hunter && next.engagedThreatId === hunter.id;
 
     if (level < 3) {
       // 단계가 내려가면 이 구역은 다시 "3이 되는 순간"을 가질 수 있다.
       if (spawned.includes(sectorId)) { spawned = spawned.filter((id) => id !== sectorId); changed = true; }
-      if (hunter) {
-        delete (threats = { ...threats })[hunter.id];
-        log = [...log, { at: tickTime, sectorId, reason: /** @type {const} */ ('alertFell'), text: '추적자가 철수했다 — 구역 경계도가 3단계 아래로 내려갔다.' }];
-        changed = true;
-      }
+      if (hunter && !engaged) { next = retireHunter(next, hunter, tickTime, 'alertFell'); changed = true; }
       continue;
     }
 
-    if (hunter && seized) {
-      delete (threats = { ...threats })[hunter.id];
-      log = [...log, { at: tickTime, sectorId, reason: /** @type {const} */ ('controlRoom'), text: '추적자가 철수했다 — 구역 통제실을 장악했다.' }];
-      changed = true;
-      continue;
-    }
-    if (hunter && (hunter.lostTicks || 0) >= HUNTER_LOSE_TICKS) {
-      delete (threats = { ...threats })[hunter.id];
-      log = [...log, { at: tickTime, sectorId, reason: /** @type {const} */ ('lost'), text: '추적자가 흔적을 놓쳤다 — 20칸 동안 나를 보지 못했다.' }];
+    // 장악은 **그때 나와 있던** 추적자를 떼는 조건이다. 장악 표식은 영구히 남으므로 이 조건을
+    // 계속 보면 한 번 장악한 구역은 영영 추적자가 서지 못하는 면역 구역이 된다(ADR-0096).
+    if (hunter && !engaged && !hunter.spawnedAfterSeizure && (next.revealedPatrolRouteSectorIds || []).includes(sectorId)) {
+      next = retireHunter(next, hunter, tickTime, 'controlRoom');
       changed = true;
       continue;
     }
     if (hunter || spawned.includes(sectorId)) continue;
-    // 통제실을 이미 장악한 구역에는 애초에 내보내지 않는다.
-    if (seized) continue;
 
     const origin = hunterSpawnNode(next, sectorId);
     if (!origin) continue;
-    threats = { ...threats, [`hunter_${sectorId}`]: makeHunter(next, sectorId, origin, tickTime) };
+    next = { ...next, threats: { ...next.threats, [`hunter_${sectorId}`]: makeHunter(next, sectorId, origin, tickTime) } };
     spawned = [...spawned, sectorId];
     changed = true;
   }
 
   if (!changed) return next;
-  return { ...next, threats, hunterSpawnedSectorIds: spawned, hunterLog: log };
+  return { ...next, hunterSpawnedSectorIds: spawned };
 }
 
 /**
- * 랜드마크 노드에서 나온다. 랜드마크가 없는 구역이면 관문.
+ * 랜드마크 노드에서 나온다. 랜드마크가 없거나 플레이어가 거기 서 있으면 관문이고, 관문이 여럿
+ * 이면 증원과 같이 **플레이어에게서 가장 먼** 관문을 고른다 — 아무 관문이나 집으면 배열 순서에
+ * 따라 바로 옆에서 튀어나온다.
  *
  * 플레이어가 서 있는 자리에는 내보내지 않는다 — 증원과 같은 규칙이다(등 뒤에서 생기지 않는다).
- * 특히 랜드마크는 통제실을 장악하러 서 있는 그 자리라, 거기 세우면 추적자를 떼는 유일한 능동
- * 수단(통제실 장악)이 시작하는 순간 전투로 끊긴다. 다른 자리도 없으면 이번 칸은 건너뛴다.
+ * 특히 랜드마크는 통제실을 장악하러 서 있는 그 자리라, 거기 세우면 추적자를 떼는 능동 수단
+ * (통제실 장악)이 시작하는 순간 전투로 끊긴다. 다른 자리도 없으면 이번 칸은 건너뛴다.
  * @param {import('./types.js').FacilityRunState} state @param {string} sectorId
  */
 function hunterSpawnNode(state, sectorId) {
   const landmark = state.graph.landmarks.find((l) => l.sectorId === sectorId);
   if (landmark && landmark.nodeId !== state.playerNodeId) return landmark.nodeId;
-  const gateway = state.graph.nodes.find((n) => n.sectorId === sectorId && n.isGateway && n.id !== state.playerNodeId);
-  return gateway ? gateway.id : null;
+  const gateways = state.graph.nodes.filter((n) => n.sectorId === sectorId && n.isGateway && n.id !== state.playerNodeId);
+  if (gateways.length === 0) return null;
+  const playerHops = state.playerNodeId ? bfsHopDistances(edgesForThreatMovement(state), state.playerNodeId) : null;
+  if (!playerHops) return gateways[0].id;
+  return gateways.reduce(
+    (best, node) => ((playerHops.get(node.id) ?? Infinity) > (playerHops.get(best.id) ?? Infinity) ? node : best),
+    gateways[0],
+  ).id;
 }
 
 /**
@@ -1171,6 +1223,10 @@ function makeHunter(state, sectorId, nodeId, tickTime) {
     target: null,
     investigationMemory: null,
     lostTicks: 0,
+    spawnedAt: tickTime,
+    // 이미 장악한 구역에서 태어났는가. 장악은 한 구역에 한 번뿐이라, 그 뒤에 나온 추적자는
+    // 장악으로 떨어지지 않는다 — 경계도를 3 아래로 내리거나 놓치게 하거나 쓰러뜨려야 한다.
+    spawnedAfterSeizure: (state.revealedPatrolRouteSectorIds || []).includes(sectorId),
   };
 }
 
@@ -1439,8 +1495,14 @@ function worldTick(state, tickTime) {
     }
     if (isHunter(threat)) {
       const { threat: hunted, state: afterHunter } = updateHunter(workingState, threat, tickTime);
-      nextThreats[threat.id] = hunted;
       workingState = { ...afterHunter, threats: { ...afterHunter.threats, [threat.id]: hunted } };
+      // 놓치기는 이 칸의 관측 결과가 나온 **뒤** 곧바로 판정한다. 다음 칸 첫머리로 미루면
+      // 추적자가 규칙보다 한 칸 더 서 있게 된다(ADR-0096).
+      if ((hunted.lostTicks || 0) >= HUNTER_LOSE_TICKS) {
+        workingState = retireHunter(workingState, hunted, tickTime, 'lost');
+        continue;
+      }
+      nextThreats[threat.id] = hunted;
       continue;
     }
     const { threat: updated, state: afterThreat } = updateThreat(workingState, threat, tickTime);

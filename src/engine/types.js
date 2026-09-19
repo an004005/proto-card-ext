@@ -232,6 +232,11 @@
  * @property {'hunter'} [kind] 추적자(ADR-0092)만 붙는 표식. 없으면 일반 위협 마커다.
  * @property {boolean} [alwaysVisible] 관측과 무관하게 지도·위협 패널에 항상 그려지는가(추적자).
  * @property {number} [lostTicks] 추적자가 연속으로 플레이어를 관측하지 못한 칸 수(HUNTER_LOSE_TICKS).
+ *   스폰한 칸은 세지 않는다 — 그래야 "놓치기까지 M칸"이 태어난 칸에 정확히 HUNTER_LOSE_TICKS로 뜬다.
+ * @property {number} [spawnedAt] 추적자가 나온 맵 시각(칸). 스폰한 칸을 미관측으로 세지 않기 위한 표식이다.
+ * @property {boolean} [spawnedAfterSeizure] 이미 통제실을 장악한 구역에서 나온 추적자인가. 장악은
+ *   그때 나와 있던 추적자를 떼는 조건이지 구역 면역이 아니므로, 이 표식이 붙은 추적자에게는
+ *   장악 조건이 걸리지 않는다(ADR-0096).
  * @property {string[]} patrolRoute
  * @property {number} patrolIndex
  * @property {string} nodeId 현재 위치.
@@ -272,7 +277,11 @@
  * 노드 하나에 대해 "마지막으로 확인한 것". 무료 인접 관측·정찰·정밀 스캔·카메라가 각자 아는
  * 항목만 써 넣는 공용 노트이고, 쓰기는 runEngine.mergeObservation 하나로만 한다.
  * @typedef {Object} NodeObservation
- * @property {number} observedAt 이 기록을 마지막으로 갱신한 맵 시각(칸).
+ * @property {number} observedAt 이 기록을 **그 깊이로** 마지막으로 확인한 맵 시각(칸). 화면의
+ *   "마지막 확인 · N칸 전"이 읽는 값이며, 기록보다 얕은 갱신은 이 값을 올리지 못한다(ADR-0096).
+ * @property {number} [shallowObservedAt] 기록보다 **얕은** 갱신(무료 인접 시야 등)이 이 노드를
+ *   마지막으로 스친 시각. 위협 유무처럼 그 얕은 깊이의 항목이 언제 갱신됐는지를 남길 뿐,
+ *   기록 전체의 신선도는 아니다. 같은 깊이 이상으로 다시 보면 지워진다.
  * @property {boolean} hasThreat 그 시각에 위협이 그 노드에 있었는가.
  * @property {number} [threatCount] 그 시각 그 노드에 서 있던 위협 **그룹 수**. 무료 인접 시야가
  *   주는 정보다(ADR-0090) — 규모는 그보다 깊은 관측이 판다.
@@ -292,7 +301,9 @@
  * @typedef {Object} ObservedDevice
  * @property {'camera'|'interface'|'generator'} kind
  * @property {string} id
- * @property {'active'|'hacked'|'destroyed'} status 관측 시점의 상태.
+ * @property {'active'|'hacked'|'destroyed'|'unknown'} status 관측 시점의 상태. 무료 인접 시야
+ *   (깊이 `presence`)는 카메라만 상태까지 주고(ADR-0090), 접속 인터페이스·배터리 발전기는
+ *   존재만 주므로 'unknown'이다(ADR-0096).
  */
 
 /**

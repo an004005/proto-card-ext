@@ -5,6 +5,8 @@
 // tier: 'normal' | 'elite' | 'boss' | 'minion'. 'minion' monsters are never assigned to a map
 // node directly — they only ever appear via another monster's `move.summon`.
 
+import { HUNTER_PERCEPTION } from './facilityLayout.js';
+
 /** @typedef {import('../engine/types.js').MonsterDef} MonsterDef */
 
 /** @type {Object.<string, MonsterDef>} */
@@ -159,7 +161,7 @@ export const MONSTER_DEFINITIONS = {
   // 경계도 3단계가 구역에 풀어놓는 개체(ADR-0092). 정예급보다 한 급 위다 — 조우 회피도
   // 속이기도 통하지 않으므로, 만나면 반드시 이 체력을 넘겨야 한다.
   hunter: {
-    id: 'hunter', name: '추적자', hp: 55, isMachine: true, tier: 'elite', perception: 3,
+    id: 'hunter', name: '추적자', hp: 55, isMachine: true, tier: 'elite', perception: HUNTER_PERCEPTION,
     sequence: [
       { id: 'hunter_volley', mapNoise: 2, damage: 9, hits: 2 },
       { id: 'hunter_brace', mapNoise: 0, damage: 0, effects: [{ kind: 'block', value: 8, target: 'self' }] },

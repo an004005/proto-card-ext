@@ -371,9 +371,10 @@ export const EXIT_OPEN_WINDOW = 5;
 /**
  * 유효 Hacking -2~-1/0/1/2/3/4 -> **탈출구 가동** 게이지 길이(칸). 가동은 다른 현장 작업과 같은
  * 모양이다(ADR-0084) — 1칸을 써서 걸어두고, 그 자리에서 대기로 게이지를 채운다. 게이지가 차면
- * 출구가 EXIT_OPEN_WINDOW칸 동안 열린다. 길이는 옛 [18,18,18,16,13,11,8]의 절반으로 줄였다
- * (ADR-0085): 가동 하나가 마감 예산의 절반을 먹으면 탈출은 선택이 아니라 통행료가 되므로,
- * "언제 가동을 걸 것인가"가 판단으로 남을 만큼만 남긴다. effectiveHacking을 -2..4로 clamp한 뒤
+ * 출구가 EXIT_OPEN_WINDOW칸 동안 열린다. 길이는 옛 [18,18,18,16,13,11,8]의 절반으로 줄였고
+ * (ADR-0085) — 가동 하나가 마감 예산의 절반을 먹으면 탈출은 선택이 아니라 통행료가 되므로,
+ * "언제 가동을 걸 것인가"가 판단으로 남을 만큼만 남긴다 — 게이지 작업을 통째로 반감할 때 한 번 더
+ * 줄었다: [9,9,9,8,7,6,4] → [5,5,5,4,4,3,2](ADR-0094). effectiveHacking을 -2..4로 clamp한 뒤
  * (value+2) 인덱스로 조회.
  */
 export const EXIT_ACTIVATE_TIME_BY_HACKING = [5, 5, 5, 4, 4, 3, 2];
@@ -460,7 +461,10 @@ export const ALERT_PRESSURE = {
 export const HUNTER_MOVE_INTERVAL = 2;
 /** 위협 마커 perception(computeThreatPerception이 여기에 alert을 더한다)이 아니라 추적자 마커 자체의 지각. */
 export const HUNTER_PERCEPTION = 3;
-/** 이만큼 연속으로 플레이어를 관측하지 못하면 흔적을 놓치고 물러난다. 관측하면 0으로 되돌아간다. */
+/**
+ * 이만큼 연속으로 플레이어를 관측하지 못하면 흔적을 놓치고 물러난다. 관측하면 0으로 되돌아간다.
+ * 스폰한 칸은 세지 않으므로 태어난 자리에서 정확히 이 칸만큼 숨으면 떨어진다(ADR-0096).
+ */
 export const HUNTER_LOSE_TICKS = 20;
 /** 추적자의 시야 — 일반 위협의 1홉보다 넓다. 이 홉 안에 있으면 본다. */
 export const HUNTER_SIGHT_HOPS = 2;
@@ -696,8 +700,6 @@ export const CURRENT_NODE_DETAIL_LEVEL = 2;
 export const PERCEPTION_WAIT_OBSERVATION_MIN = 2;
 /** 이 수치 이상이면 무료 시야가 한 홉 더 뻗는다 — 두 번째 홉은 위협 유무까지다. */
 export const PERCEPTION_FREE_FAR_VIEW_MIN = 2;
-/** 그 두 번째 홉의 사거리. */
-export const FREE_FAR_VIEW_HOPS = 2;
 
 // 대기와 조우 회피. 대기는 HP·경계도를 회복시키지 않는다 — 개방·쿨다운·적 위치를
 // 기다리는 용도다. 묶음 대기는 1칸 대기를 반복하며 새 조우·출구 개방/폐쇄·붕괴에서 즉시 멈춘다.

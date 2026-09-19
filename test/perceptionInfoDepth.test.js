@@ -1,5 +1,5 @@
-// Perception이 정하는 정보의 깊이(PERCEPTION_INFO_TABLE). 정찰 비용 4칸과 표준 2홉은 그대로고,
-// Perception이 사는 것은 사거리와 **무엇이 보이는가**다.
+// Perception이 정하는 정보의 깊이(PERCEPTION_INFO_TABLE). 정찰 비용(BASIC_RECON_TIME)과 표준
+// 2홉은 그대로고, Perception이 사는 것은 사거리와 **무엇이 보이는가**다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
@@ -39,7 +39,7 @@ test('정찰 사거리는 Perception이 정한다 — 2 이하 1홉, 3 이상 2�
   assert.equal(perceptionInfo(-9).reconHops, 1);
 });
 
-test('정찰 비용은 Perception과 무관하게 4칸 고정이다', () => {
+test('정찰 비용은 Perception과 무관하게 BASIC_RECON_TIME 고정이다', () => {
   const run = { ...makeRun(1), threats: {} };
   for (const perception of [-2, 0, 2, 4]) {
     const scouted = finishTask(basicRecon(run, perception));
@@ -296,6 +296,67 @@ test('얕은 무료 관측이 지나가도 정찰이 적어둔 남은 횟수는 
   const refreshed = refreshLocalObservations({ ...scouted, playerNodeId: run.playerNodeId }, 0);
   const after = refreshed.observations[adjacentId].contents.opportunities.find((o) => o.id === known.id);
   assert.equal(after.usesRemaining, known.usesRemaining, '무료 관측이 정찰의 남은 횟수를 지웠다');
+});
+
+test('얕은 무료 관측은 깊은 기록의 신선도를 올리지 않는다 — 옆을 지나가는 것이 재정찰은 아니다', () => {
+  const run = makeRun(1);
+  const adjacentId = run.graph.edges
+    .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
+    .map((e) => (e.from === run.playerNodeId ? e.to : e.from))[0];
+  assert.ok(adjacentId, '인접 노드가 있어야 한다');
+
+  // 그 자리에 서서 깊게 정찰해 둔다.
+  const scouted = scout({ ...run, playerNodeId: adjacentId }, 4);
+  const deep = scouted.observations[adjacentId];
+  assert.ok(deep.detailLevel > FREE_OBSERVATION_DETAIL_LEVEL, '정찰 기록이 무료 시야보다 깊어야 한다');
+
+  // 원래 자리로 돌아와 한참 뒤에 공짜 시야만 한 번 스친다.
+  const later = { ...scouted, playerNodeId: run.playerNodeId, time: scouted.time + 10 };
+  const refreshed = refreshLocalObservations(later, 0);
+  const after = refreshed.observations[adjacentId];
+  assert.equal(after.observedAt, deep.observedAt, '공짜 시야가 정찰의 신선도를 갱신했다');
+  assert.equal(after.shallowObservedAt, later.time, '얕은 확인 시각은 따로 남아야 한다');
+  assert.equal(after.detailLevel, deep.detailLevel, '깊이는 더 깊은 쪽이 남는다');
+
+  // 같은 깊이 이상으로 다시 보면 신선도가 실제로 갱신되고 얕은 표식은 사라진다.
+  const rescouted = scout({ ...later, playerNodeId: adjacentId }, 4);
+  assert.ok(rescouted.observations[adjacentId].observedAt > deep.observedAt);
+  assert.equal(rescouted.observations[adjacentId].shallowObservedAt, undefined);
+});
+
+test('무료 인접 시야는 인터페이스·발전기의 존재만 준다 — 상태는 미확인이다', () => {
+  const run = makeRun(1);
+  const adjacentIds = run.graph.edges
+    .filter((e) => e.from === run.playerNodeId || e.to === run.playerNodeId)
+    .map((e) => (e.from === run.playerNodeId ? e.to : e.from));
+  const withInterface = adjacentIds.find((id) => run.graph.accessInterfaces.some((i) => i.nodeId === id))
+    || run.graph.accessInterfaces[0].nodeId;
+  // 인접에 인터페이스가 없는 시드라면 인접으로 끌어다 붙인다 — 보는 것은 깊이 규칙이지 배치가 아니다.
+  const placed = adjacentIds.includes(withInterface)
+    ? run
+    : {
+      ...run,
+      graph: {
+        ...run.graph,
+        accessInterfaces: run.graph.accessInterfaces.map((i) => (i.nodeId === withInterface ? { ...i, nodeId: adjacentIds[0] } : i)),
+      },
+    };
+  const nodeId = adjacentIds.includes(withInterface) ? withInterface : adjacentIds[0];
+
+  const refreshed = refreshLocalObservations(placed, 0);
+  const device = refreshed.observations[nodeId].contents.devices.find((d) => d.kind === 'interface');
+  assert.ok(device, '인터페이스의 존재는 적혀야 한다');
+  assert.equal(device.status, 'unknown', '무료 시야가 해킹 여부까지 줬다');
+
+  // 서 있는 자리(깊이 full)는 상태까지 읽는다.
+  const standing = refreshLocalObservations({ ...placed, playerNodeId: nodeId }, 0);
+  const known = standing.observations[nodeId].contents.devices.find((d) => d.kind === 'interface');
+  assert.equal(known.status, 'active');
+
+  // 값을 치러 알아낸 상태는 그 뒤 공짜 시야가 스쳐도 'unknown'으로 지워지지 않는다.
+  const passing = refreshLocalObservations({ ...standing, playerNodeId: placed.playerNodeId }, 0);
+  const kept = passing.observations[nodeId].contents.devices.find((d) => d.kind === 'interface');
+  assert.equal(kept.status, 'active', '공짜 시야가 아는 상태를 미확인으로 되돌렸다');
 });
 
 test('정보 깊이 표의 레벨은 오름차순이고 항목은 누적이다', () => {

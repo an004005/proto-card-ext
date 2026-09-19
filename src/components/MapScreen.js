@@ -635,8 +635,9 @@ function knownContentsOf(run, nodeId, debugReveal = false) {
 /** 장치 상태의 표시 이름 — 종류마다 "작동 중"의 반대말이 다르다. */
 const DEVICE_STATUS_LABELS = {
   camera: { active: '카메라 작동 중', hacked: '카메라 해킹됨', destroyed: '카메라 파괴됨' },
-  interface: { active: '접속 인터페이스 미해킹', hacked: '접속 인터페이스 해킹됨', destroyed: '접속 인터페이스 파괴됨' },
-  generator: { active: '배터리 발전기 작동 중', hacked: '배터리 발전기 해킹됨', destroyed: '배터리 발전기 무력화됨' },
+  // 무료 인접 시야는 인터페이스·발전기의 **존재만** 준다(ADR-0096) — 상태는 값을 치른 관측의 몫이다.
+  interface: { active: '접속 인터페이스 미해킹', hacked: '접속 인터페이스 해킹됨', destroyed: '접속 인터페이스 파괴됨', unknown: '접속 인터페이스 상태 미확인' },
+  generator: { active: '배터리 발전기 작동 중', hacked: '배터리 발전기 해킹됨', destroyed: '배터리 발전기 무력화됨', unknown: '배터리 발전기 상태 미확인' },
 };
 
 /**
@@ -772,7 +773,9 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
       tone: 'plain',
       title: '장치',
       chips: devices.map((device) => {
-        const status = deviceStatus(run, device);
+        // 기록이 'unknown'이면 그 장치의 상태는 아직 확인하지 않은 것이다 — 지금 값을 끌어다
+        // 그리면 무료 시야가 주지 않기로 한 정보를 화면이 대신 준다(ADR-0096).
+        const status = device.status === 'unknown' ? 'unknown' : deviceStatus(run, device);
         return {
           label: DEVICE_STATUS_LABELS[device.kind]?.[status] || device.kind,
           // 아직 작동하는 카메라만 붉게 둔다 — 지나가면 걸리는 유일한 장치다.

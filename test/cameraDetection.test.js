@@ -10,6 +10,8 @@ import {
   explainEffectiveStealth, hackCamera, cameraSeesStealth, hasLiveCameraAt,
 } from '../src/engine/runEngine.js';
 import { gameReducer } from '../src/engine/gameReducer.js';
+import { useMapConsumableCommand } from '../src/engine/facilityReducer.js';
+import { effectiveCapabilities } from '../src/engine/capabilityEngine.js';
 import { CAMERA_PERCEPTION, CAMERA_HACK_DURATION } from '../src/data/facilityLayout.js';
 import { finishTask } from './helpers/finishTask.js';
 
@@ -175,6 +177,30 @@ test('같은 카메라에 같은 칸에서 두 번 걸리지 않는다', () => {
   const twice = checkCameraDetection(once, nodeId, -2);
   assert.deepEqual(twice.lastCameraDetection, detection);
   assert.deepEqual(twice.sectorAlerts, once.sectorAlerts, '경계도 압력이 두 번 올랐다');
+});
+
+test('행동 뒤 판정은 행동 **뒤**의 Capability로 잰다 — 붕대로 부상이 풀리면 그 칸에 걸리지 않는다', () => {
+  const run = runWithCameraHere();
+  const nodeId = /** @type {string} */ (run.playerNodeId);
+  // 은엄폐 +3 · 살아 있는 카메라 −1. 장비 합 Stealth 0이므로 성한 몸이면 실효 2(= 지각)라 안전하고,
+  // 부상 −1(ADR-0093)이 걸리면 실효 1이라 걸린다.
+  const concealed = { ...run, activeConcealment: { nodeId, bonus: 3 } };
+  const snapshot = {
+    ...mapSnapshot(concealed),
+    playerState: {
+      hp: 20, maxHp: 40, overloadActive: false, overrideChips: 0,
+      loadout: { ...EMPTY_LOADOUT, consumableSlots: [{ id: 'bandage-1', kind: 'consumable', defId: 'bandage' }] },
+      inventory: { items: [], ammo: 0, capacity: 12 },
+    },
+  };
+  assert.equal(effectiveCapabilities(snapshot).stealth, -1, 'HP 절반이면 부상 −1이 걸려 있어야 한다');
+  assert.equal(explainEffectiveStealth(-1, concealed).total, CAMERA_PERCEPTION - 1, '다친 채로는 지각에 못 미친다');
+
+  const after = useMapConsumableCommand(snapshot, 'bandage-1');
+  assert.equal(after.facilityRunState.pendingTask, null, '붕대는 1칸에 끝난다');
+  assert.ok(after.playerState.hp > 20, '붕대가 적용되지 않았다');
+  assert.equal(effectiveCapabilities(after).stealth, 0, '회복했으면 부상 페널티가 풀린다');
+  assert.equal(after.facilityRunState.lastCameraDetection, null, '행동 앞의 옛 Capability로 판정했다');
 });
 
 test('발각되면 반경 안의 위협이 추적으로 바뀌고 구역 경계 압력이 오른다', () => {
