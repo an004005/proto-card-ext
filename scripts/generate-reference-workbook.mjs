@@ -218,7 +218,7 @@ function buildWorkbook() {
     ['맵', '카메라 위치 공개', '런 시작', '모든 카메라의 위치와 상태는 런 시작부터 지도와 노드 카드에 보인다. 접속 인터페이스 장악이 주는 것은 그 구역 카메라의 원격 접속뿐이다(ADR-0090)', 'src/engine/runEngine.js'],
     ['맵', '카메라 지각', FACILITY.CAMERA_PERCEPTION, '카메라 노드에서 유료 행동을 마치거나 그 자리를 떠날 때 실효 Stealth가 이 값 미만이면 발각된다. 진입 자체는 판정하지 않고, 그 자리에서 소음이 나면 은신과 무관하게 즉시 발각된다(ADR-0091)', 'src/data/facilityLayout.js'],
     ['맵', '무료 인접 관측', '1홉 · 깊이 ' + FACILITY.FREE_OBSERVATION_DETAIL_LEVEL, '옆방의 위협 유무·그룹 수·모드와 내용물의 존재(보급품·확보 대상·장치)를 공짜로 준다. Perception ' + FACILITY.PERCEPTION_FREE_FAR_VIEW_MIN + ' 이상이면 두 번째 홉의 위협 유무까지 넓어진다(ADR-0090)', 'src/engine/runEngine.js'],
-    ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '이 시각 뒤로는 새 가동을 시작할 수 없다. 이미 시작된 가동 게이지와 열린 창은 끝까지 간다(ADR-0054)', 'src/data/facilityLayout.js'],
+    ['탈출', 'A 비활성', FACILITY.EXIT_A_DISABLED_AT, '이 시각 뒤로는 새 가동을 시작할 수 없다. 이미 시작된 가동 게이지와 열린 창은 끝까지 간다(ADR-0087)', 'src/data/facilityLayout.js'],
     ['탈출', '표준 출구 수', '1 (+열쇠 출구)', '표준 출구는 A 하나뿐이고 열쇠 출구가 유일한 대안 경로다. A는 시작 구역도 계약 목표 구역도 아닌 구역에서 시작점으로부터 가장 먼 노드에 놓인다(ADR-0083)', 'src/engine/facilityGraph.js'],
     ['탈출', '봉쇄와 출구', '영향 없음', '봉쇄는 위협 이동·증원만 가속하고 출구 폐쇄 시각은 앞당기지 않는다(ADR-0083)', 'src/engine/runEngine.js'],
     ['탈출', '탈출구 가동', `시작 1칸 + 게이지 ${FACILITY.EXIT_ACTIVATE_TIME_BY_HACKING.join('/')}`, '유효 Hacking -2~4별 전체 소요 칸. 가동에 드는 것은 1칸이고 나머지는 그 노드에서 대기로 채운다. 자리를 뜨면 가동이 취소된다(ADR-0084)', 'src/data/facilityLayout.js'],
@@ -310,6 +310,7 @@ function buildWorkbook() {
       implants: preset.implants.map(presetName).join(', '),
       consumables: preset.consumables.map(presetName).join(', '),
       capability: ['perception', 'stealth', 'hacking', 'mobility', 'force', 'deception']
+        // 부호 표기는 창고 화면(LoadoutScreen)과 같다 — 양수만 +를 달고 0은 그냥 `0`이다.
         .map((key) => `${koreanTerm(key)} ${capabilities[key] > 0 ? '+' : ''}${capabilities[key]}`).join(', '),
     };
   });

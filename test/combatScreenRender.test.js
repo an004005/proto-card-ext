@@ -37,7 +37,7 @@ function combatSnapshot() {
     facilityRunState: run,
     playerState: {
       hp: 70, maxHp: 70, overloadActive: false,
-      loadout: { consumableSlots: [], weapons: [{ id: 'w1', kind: 'equipment', equipmentId: 'katana', durability: 10 }], modules: [], implants: [] },
+      loadout: { consumableSlots: [], weapons: [{ id: 'w1', kind: 'equipment', equipmentId: 'katana', durability: 10 }], modules: [], implantIds: [] },
       inventory: { items: [], ammo: 8, capacity: 12 }, warehouse: { items: [], ammo: 0, capacity: 99 },
     },
   };
@@ -51,6 +51,12 @@ function mountCombat(snapshot) {
   render(html`<${CombatScreen} />`, root);
   return root;
 }
+
+test('전투 한 라운드는 맵 시간 1칸이다 (ADR-0095)', () => {
+  // 화면의 배너·툴팁·"이 전투 N칸"이 전부 이 상수 하나를 곱해 쓴다. 값이 조용히 바뀌면 문구는
+  // 그대로인 채 숫자만 달라지므로, 결정을 여기 한 줄로 고정해 둔다.
+  assert.equal(COMBAT_ROUND_TIME_COST, 1);
+});
 
 test('첫 라운드에는 아직 맵 시간이 나가지 않았다', () => {
   assert.equal(combatTimeSpentText(1, COMBAT_ROUND_TIME_COST), '라운드 1 · 이 전투 0칸');

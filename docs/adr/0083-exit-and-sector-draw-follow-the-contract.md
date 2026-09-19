@@ -1,5 +1,5 @@
 ---
-status: amended by 0089
+status: amended by ADR-0089
 ---
 
 # 출구와 구역 추첨은 계약을 따라간다

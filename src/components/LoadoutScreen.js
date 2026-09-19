@@ -27,6 +27,20 @@ function presetItemName(id) {
   return EQUIPMENT_DEFS[id]?.name ?? CONSUMABLE_DEFINITIONS[id]?.name ?? id;
 }
 
+/**
+ * 같은 것이 여러 번 빠졌으면 `붕대, 붕대, 붕대`가 아니라 `붕대 ×3`으로 묶는다 — 프리셋은 같은
+ * 소모품을 여러 칸에 넣으므로 그대로 이으면 한 줄이 같은 이름으로 채워진다.
+ * @param {string[]} ids
+ */
+function missingText(ids) {
+  const counts = new Map();
+  for (const id of ids) {
+    const name = presetItemName(id);
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(', ');
+}
+
 // 역할군 프리셋(data/loadoutPresets.js) — 창고에서 장비를 한 점씩 집어 여섯 Capability를 머릿속으로
 // 더하는 대신, 완성된 구성 넷을 먼저 보여준다. 툴팁에 결과 Capability 여섯 값을 그대로 적으므로
 // 누르기 전에 무엇을 얻고 무엇을 잃는지가 보인다.
@@ -41,7 +55,7 @@ function PresetRow({ applied }) {
         ${LOADOUT_PRESETS.map((preset) => {
           const capabilities = previewPresetCapabilities(preset);
           const preview = CAPABILITY_ORDER
-            .map((key) => `${CAPABILITY_SHORT[key]}(${CAPABILITY_KOREAN[key]}) ${capabilities[key] >= 0 ? '+' : ''}${capabilities[key]}`)
+            .map((key) => `${CAPABILITY_SHORT[key]}(${CAPABILITY_KOREAN[key]}) ${capabilities[key] > 0 ? '+' : ''}${capabilities[key]}`)
             .join(' · ');
           return html`
             <${Tooltip} key=${preset.id} width=${280} content=${`${preset.name} — ${preset.summary}. 장착 후 시설맵 Capability: ${preview}`}>
@@ -59,7 +73,7 @@ function PresetRow({ applied }) {
       </div>
       ${applied?.missing?.length
         ? html`<span style=${{ fontSize: '11px', color: 'var(--color-accent-700)' }}>
-            창고에 없음: ${applied.missing.map(presetItemName).join(', ')}
+            창고에 없음: ${missingText(applied.missing)}
           </span>`
         : null}
     </div>
@@ -107,8 +121,8 @@ export function LoadoutScreen() {
                 return html`
                   ${/* 창고(출격 준비)와 맵이 같은 문장을 써야 한다 — 여기서만 "유효치"를 말하면
                       플레이어는 층계 판정이 그 값으로 이뤄진다고 읽는다(리뷰 B7). */ null}
-                  <${Tooltip} key=${key} width=${240} content=${`${CAPABILITY_LABELS[key]}(${CAPABILITY_KOREAN[key]}) — ${CAPABILITY_ROLE[key]} 현재 값 ${raw >= 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다 — 0으로 자르지 않습니다. 예외는 고지대 통과 하나로, 지형 판정이라 0 하한을 적용한 값 ${eff}로 층계를 가릅니다). 시설맵 화면에서 사용됩니다.`}>
-                    <span class="tag tag-outline" tabIndex="0">${CAPABILITY_SHORT[key]}(${CAPABILITY_KOREAN[key]}) ${raw >= 0 ? '+' : ''}${raw}</span>
+                  <${Tooltip} key=${key} width=${240} content=${`${CAPABILITY_LABELS[key]}(${CAPABILITY_KOREAN[key]}) — ${CAPABILITY_ROLE[key]} 현재 값 ${raw > 0 ? '+' : ''}${raw}(층계 판정은 이 원시 수치를 그대로 씁니다 — 0으로 자르지 않습니다. 예외는 고지대 통과 하나로, 지형 판정이라 0 하한을 적용한 값 ${eff}로 층계를 가릅니다). 시설맵 화면에서 사용됩니다.`}>
+                    <span class="tag tag-outline" tabIndex="0">${CAPABILITY_SHORT[key]}(${CAPABILITY_KOREAN[key]}) ${raw > 0 ? '+' : ''}${raw}</span>
                   <//>
                 `;
               })}

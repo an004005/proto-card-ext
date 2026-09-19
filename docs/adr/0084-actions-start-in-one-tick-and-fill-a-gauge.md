@@ -1,5 +1,5 @@
 ---
-status: amended by ADR-0085
+status: amended by ADR-0085, ADR-0087, ADR-0094
 ---
 
 # 행동은 1칸에 가동되고 나머지는 게이지로 채운다

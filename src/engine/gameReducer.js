@@ -7,7 +7,9 @@
 // 행동), combatReducer.js (전투/이탈), rewardReducer.js (보상), inventoryReducer.js (장비/짐
 // 정리). Dependency direction is one-way: inventoryReducer <- rewardReducer <- combatReducer <-
 // facilityReducer, and loadoutReducer depends only on inventoryReducer + runEngine.js — no cycles.
-import { newRun, setLoadoutSlot, confirmLoadout, autoEquipLoadout, applyLoadoutPreset } from './loadoutReducer.js';
+import {
+  newRun, setLoadoutSlot, confirmLoadout, autoEquipLoadout, applyLoadoutPreset, clearAppliedLoadoutPreset,
+} from './loadoutReducer.js';
 import { acceptContractCommand } from './contractReducer.js';
 import {
   moveToNode, requestExtractionCommand, basicReconCommand, openSpecialEdgeCommand,
@@ -44,6 +46,22 @@ export { getDeckEntries };
  * @returns {import('./types.js').GameSnapshot}
  */
 export function gameReducer(snapshot, command) {
+  const next = applyCommand(snapshot, command);
+  return LOADOUT_CHANGING_COMMANDS.has(command.type) ? clearAppliedLoadoutPreset(next) : next;
+}
+
+/**
+ * 장착 구성을 바꾸는 커맨드들. 하나라도 실행되면 `appliedLoadoutPreset`(창고 화면의 "이 프리셋
+ * 그대로다" 표시)은 더 이상 참이 아니므로 내린다. APPLY_LOADOUT_PRESET만 그 표시를 다시 세운다.
+ */
+const LOADOUT_CHANGING_COMMANDS = new Set([
+  'SET_LOADOUT_SLOT', 'AUTO_EQUIP_LOADOUT',
+  'EQUIP_ITEM', 'EQUIP_ITEM_FROM_WAREHOUSE',
+  'UNEQUIP_ITEM', 'UNEQUIP_IMPLANT', 'UNEQUIP_CONSUMABLE',
+]);
+
+/** @param {import('./types.js').GameSnapshot} snapshot @param {*} command */
+function applyCommand(snapshot, command) {
   switch (command.type) {
     case 'NEW_RUN': return newRun(command.seed);
     case 'ACCEPT_CONTRACT': return acceptContractCommand(snapshot, command.contractId);

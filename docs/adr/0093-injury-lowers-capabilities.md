@@ -1,7 +1,3 @@
----
-status: accepted
----
-
 # HP가 줄면 Capability가 내려간다
 
 ## 맥락

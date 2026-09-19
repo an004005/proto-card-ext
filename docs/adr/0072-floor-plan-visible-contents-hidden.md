@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: amended by ADR-0090
 ---
 
 # 평면도는 공개하고 그 안의 내용물을 감춘다

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: amended by ADR-0090, ADR-0091
 ---
 
 # 조우의 은신은 상황으로 갈라지고, 위협의 경계는 시간으로 내려온다

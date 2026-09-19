@@ -1,7 +1,3 @@
----
-status: accepted
----
-
 # 과부화는 수치가 아니라 ON/OFF 토글이다
 
 ## 맥락

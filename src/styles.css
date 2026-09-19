@@ -50,7 +50,16 @@
   --color-status-100: #f2ecfd;
   --color-status-700: #6d28d9;
   --color-status-800: #5b21b6;
+
+  /* 판정 결과색 — 조우 층(우위/동률/열세 지속)과 전투 강조가 같은 네 값을 쓴다. 컴포넌트에
+     리터럴로 흩어져 있던 것을 여기로 모았다. 100번대는 배지 배경, 나머지는 글자·테두리다. */
+  --color-positive: #15803d;
+  --color-positive-100: #f0fdf4;
+  --color-warning: #b45309;
+  --color-warning-100: #fffbeb;
   --color-negative: #dc2626;
+  --color-negative-100: #fef2f2;
+  --color-info: #0e7490;
 
   --shadow-sm: 0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent);
   --shadow-md: 0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent);

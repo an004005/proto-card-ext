@@ -27,33 +27,65 @@ function countedNames(names) {
 const EVADE_TICKS = actionTimeCost('evade');
 
 /**
- * 지금 이 층에서 무엇이 되고 무엇이 막히는지. 판정 자체는 facilityReducer.isBlockedByEncounter가
- * 한다 — 'even'과 'forced'만 유료 행동을 통째로 막고, 'advantage'와 'disadvantage'는 막지
- * 않는다(열세는 행동 1회 뒤 다시 판정될 뿐이다). 이 표는 그 규칙을 사람 말로 옮긴 것이므로,
- * 저 함수가 바뀌면 여기도 같이 고친다.
+ * 층마다 실제로 그려지는 버튼 목록 — 렌더 분기와 아래 허용 표가 **같은 배열**을 읽는다.
+ * 예전에는 표가 손으로 적혀 있어서 동률에 없는 '교전'을 적고 강제 전투에 없는 '회피'를 적었다.
+ *
+ * `allow`는 허용 표에 적히는 짧은 이름이고, null이면 표에 오르지 않는다 — 동률의 '무시'처럼
+ * 잠긴 채로만 그려지는 버튼이 그렇다. 교전은 강제 전투에만 있다(encounterFightCommand는
+ * tier가 'forced'가 아니면 스냅샷을 그대로 돌려준다).
+ */
+const TIER_BUTTONS = {
+  advantage: [
+    { id: 'ambush', allow: '기습' },
+    { id: 'ignore', allow: '무시' },
+    { id: 'evade', allow: '회피' },
+    { id: 'deceive', allow: '속이기' },
+  ],
+  even: [
+    { id: 'ignore', allow: null },
+    { id: 'evade', allow: '회피' },
+    { id: 'deceive', allow: '속이기' },
+  ],
+  disadvantage: [],
+  forced: [{ id: 'fight', allow: '교전' }],
+};
+
+/**
+ * 버튼 목록이 말하지 않는 나머지 — 버튼 없이 되는 것(`extra`)과 막히는 것이다. 판정 자체는
+ * facilityReducer.isBlockedByEncounter가 한다 — 'even'과 'forced'만 유료 행동을 통째로 막고,
+ * 'advantage'와 'disadvantage'는 막지 않는다(열세는 행동 1회 뒤 다시 판정될 뿐이다). 이 표는
+ * 그 규칙을 사람 말로 옮긴 것이므로, 저 함수가 바뀌면 여기도 같이 고친다.
  */
 const TIER_ALLOWANCE = {
   advantage: {
-    allowed: '이동 · 정찰 · 대기 · 파밍 · 장비 사용 — 모든 행동',
+    extra: '이동 · 정찰 · 대기 · 파밍 · 장비 사용 — 모든 행동',
     blocked: '없음',
   },
   disadvantage: {
-    allowed: '유료 행동 1회(이동·정찰·대기·파밍·개방 중 하나) · 무료 조작(인벤토리·카드 확인)',
-    blocked: '두 번째 유료 행동(다시 판정됨)',
+    extra: '유료 행동 1회(이동·정찰·대기·파밍·개방 중 하나) · 무료 조작(인벤토리·카드 확인)',
+    blocked: '없음 — 유료 행동이 끝날 때마다 다시 판정되고, 그래도 낮으면 전투만 남는다',
   },
   even: {
-    allowed: '회피 · 속이기 · 교전 · 무료 조작',
+    extra: '무료 조작',
     blocked: '이동·정찰·대기·파밍·개방',
   },
   forced: {
-    allowed: '회피 · 속이기 · 교전 · 무료 조작',
-    blocked: '이동·정찰·대기·파밍·개방',
+    extra: '무료 조작',
+    blocked: '회피·속이기를 포함한 그 밖의 모든 행동',
   },
 };
 
+/** 그 층의 버튼 이름 + 버튼 없이 되는 것. 표와 버튼이 갈라지지 않도록 여기서만 만든다. */
+export function encounterAllowanceText(tier) {
+  const entry = TIER_ALLOWANCE[tier];
+  if (!entry) return null;
+  const names = (TIER_BUTTONS[tier] || []).filter((button) => button.allow).map((button) => button.allow);
+  return { allowed: [...names, entry.extra].join(' · '), blocked: entry.blocked };
+}
+
 /** 조우 층 설명 밑에 붙는 두 칸짜리 요약 — "그래서 지금 뭘 누를 수 있는가"에 답한다. */
 function AllowanceList({ tier }) {
-  const entry = TIER_ALLOWANCE[tier];
+  const entry = encounterAllowanceText(tier);
   if (!entry) return null;
   const labelStyle = {
     fontSize: '10px', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase',
@@ -69,7 +101,7 @@ function AllowanceList({ tier }) {
         </div>
         <div style=${{ width: '1px', background: 'var(--color-divider)' }}></div>
         <div style=${{ flex: 1 }}>
-          <div style=${{ ...labelStyle, color: 'var(--color-negative, #dc2626)' }}>막힘</div>
+          <div style=${{ ...labelStyle, color: 'var(--color-negative)' }}>막힘</div>
           <div style=${{ fontSize: '10.5px', lineHeight: 1.45, color: 'var(--color-neutral-700)' }}>${entry.blocked}</div>
         </div>
       </div>
@@ -78,10 +110,10 @@ function AllowanceList({ tier }) {
 }
 
 const TIER_INFO = {
-  advantage: { label: '우위', color: '#15803d', bg: '#f0fdf4' },
-  even: { label: '동률', color: '#b45309', bg: '#fffbeb' },
+  advantage: { label: '우위', color: 'var(--color-positive)', bg: 'var(--color-positive-100)' },
+  even: { label: '동률', color: 'var(--color-warning)', bg: 'var(--color-warning-100)' },
   disadvantage: { label: '열세', color: 'var(--color-accent-2-700)', bg: 'var(--color-accent-2-100)' },
-  forced: { label: '열세 지속', color: 'var(--color-negative, #dc2626)', bg: '#fef2f2' },
+  forced: { label: '열세 지속', color: 'var(--color-negative)', bg: 'var(--color-negative-100)' },
 };
 
 /**
@@ -138,16 +170,33 @@ export function EncounterPanel({ run, capabilities }) {
         ? `성공합니다 — Deception ${deception} ≥ 성공 기준 ${deceiveBar}. 추적은 유지되지만 목표가 옆 노드로 옮겨갑니다.`
         : `실패합니다 — Deception ${deception} < 성공 기준 ${deceiveBar}. 속이려다 들켜 열세로 내려갑니다.`}${
         penaltyText ? ` 층계 ${deceiveLadder?.label} — ${penaltyText}(성공 기준은 이 위협의 경계 ${threat.alert}에 벌점을 더한 값입니다).` : ''}`;
-  // 우위와 동률이 같은 버튼을 내놓는다 — 마크업을 두 벌 두면 한쪽만 고쳐지고 두 층이 서로
-  // 다른 예고를 적게 된다.
-  const deceiveOption = () => html`
-    <button class="btn btn-secondary" style=${{ width: '100%' }} disabled=${!canDeceive}
-      title=${deceiveTip}
-      onClick=${() => dispatch({ type: 'ENCOUNTER_DECEIVE' })}>
-      속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})${canDeceive && deceiveLadder && deceiveLadder.step !== 'standard' ? html` <${StepBadge} ladder=${deceiveLadder} />` : null}
-    </button>
-    <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-2px' }}>${deceiveTip}</div>
-  `;
+  // 층마다 마크업을 따로 두면 한쪽만 고쳐지고 두 층이 서로 다른 예고를 적게 된다 — 버튼
+  // 하나에 렌더러 하나다. TIER_BUTTONS가 어느 층에 무엇이 뜨는지를 정한다.
+  //
+  // 예고 문장은 버튼 아래 줄로 **보이게** 적는다. 같은 문장을 title로 한 번 더 걸면 화면에
+  // 보이는 글과 브라우저 툴팁이 겹쳐 뜬다.
+  const BUTTON_RENDERERS = {
+    ambush: () => html`<button class="btn btn-danger" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_AMBUSH' })}>기습 — 적 전원 스턴 부여 (0칸)</button>`,
+    ignore: () => (encounter.tier === 'advantage'
+      ? html`<button class="btn btn-secondary" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_IGNORE' })}>무시 — 이 자리에서 다른 행동 (0칸)</button>`
+      : html`
+        <button class="btn btn-secondary" disabled style=${{ width: '100%' }}>무시 — 사용 불가</button>
+        <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-4px' }}>동률 상태에서는 무시할 수 없습니다. 회피는 ${EVADE_TICKS}칸이 들고, 같은 위협은 다음 유료 행동이 끝날 때 다시 판정합니다.</div>
+      `),
+    evade: () => html`<button class="btn btn-secondary" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_EVADE' })}>회피 — 추적 해제 (${EVADE_TICKS}칸)</button>`,
+    deceive: () => html`
+      <button class="btn btn-secondary" style=${{ width: '100%' }} disabled=${!canDeceive}
+        onClick=${() => dispatch({ type: 'ENCOUNTER_DECEIVE' })}>
+        속이기 — 추적 목표를 옆으로 (0칸${canDeceive ? (deceiveWouldWork ? ' · 성공 예고' : ' · 실패 예고') : ''})${canDeceive && deceiveLadder && deceiveLadder.step !== 'standard' ? html` <${StepBadge} ladder=${deceiveLadder} />` : null}
+      </button>
+      <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-2px' }}>${deceiveTip}</div>
+    `,
+    fight: () => html`
+      <button class="btn btn-danger" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_FIGHT' })}>전투</button>
+      <div style=${{ fontSize: '11px', color: 'var(--color-negative)', textAlign: 'center', fontWeight: 700 }}>기습당함 — 적이 먼저 행동합니다.</div>
+    `,
+  };
+  const tierButtons = TIER_BUTTONS[encounter.tier] || [];
   const opSymbol = stealth > perception ? '>' : stealth === perception ? '=' : '<';
   const info = TIER_INFO[encounter.tier];
   // 열세는 버튼이 하나도 없는 안내문이라 지도를 계속 가린다 — 읽은 뒤에는 접을 수 있어야 한다.
@@ -181,7 +230,7 @@ export function EncounterPanel({ run, capabilities }) {
         <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '20px', color: 'var(--color-neutral-500)' }}>${opSymbol}</div>
         <div style=${{ textAlign: 'center' }}>
           <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>적 지각</div>
-          <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '24px', color: 'var(--color-negative, #dc2626)' }}>${perception}</div>
+          <div style=${{ fontFamily: 'var(--font-heading)', fontWeight: 800, fontSize: '24px', color: 'var(--color-negative)' }}>${perception}</div>
         </div>
       </div>
 
@@ -190,34 +239,15 @@ export function EncounterPanel({ run, capabilities }) {
         ${stealthBreakdownText(stealth, stealthBase, stealthParts)}
       </div>
 
-      ${encounter.tier === 'advantage' ? html`
+      ${tierButtons.length ? html`
         <div style=${{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <button class="btn btn-danger" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_AMBUSH' })}>기습 — 적 전원 스턴 부여 (0칸)</button>
-          <button class="btn btn-secondary" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_IGNORE' })}>무시 — 이 자리에서 다른 행동 (0칸)</button>
-          <button class="btn btn-secondary" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_EVADE' })}>회피 — 추적 해제 (${EVADE_TICKS}칸)</button>
-          ${deceiveOption()}
-        </div>
-      ` : null}
-
-      ${encounter.tier === 'even' ? html`
-        <div style=${{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <button class="btn btn-secondary" disabled style=${{ width: '100%' }}>무시 — 사용 불가</button>
-          <div style=${{ fontSize: '10px', color: 'var(--color-neutral-600)', marginTop: '-4px' }}>동률 상태에서는 무시할 수 없습니다. 회피는 ${EVADE_TICKS}칸이 들고, 같은 위협은 다음 유료 행동이 끝날 때 다시 판정합니다.</div>
-          <button class="btn btn-secondary" style=${{ width: '100%', marginTop: '4px' }} onClick=${() => dispatch({ type: 'ENCOUNTER_EVADE' })}>회피 — 추적 해제 (${EVADE_TICKS}칸)</button>
-          ${deceiveOption()}
+          ${tierButtons.map((button) => BUTTON_RENDERERS[button.id]())}
         </div>
       ` : null}
 
       ${encounter.tier === 'disadvantage' ? html`
         <div style=${{ fontSize: '11px', color: 'var(--color-neutral-600)', textAlign: 'center' }}>
           지금은 유효한 유료 행동 1회만 허용됩니다 — 정찰 등 시간이 드는 행동을 하면 다시 판정합니다(인벤토리 정렬 같은 무료 조작은 이 기회를 쓰지 않습니다). 그래도 낮으면 전투만 가능해집니다.
-        </div>
-      ` : null}
-
-      ${encounter.tier === 'forced' ? html`
-        <div style=${{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <button class="btn btn-danger" style=${{ width: '100%' }} onClick=${() => dispatch({ type: 'ENCOUNTER_FIGHT' })}>전투</button>
-          <div style=${{ fontSize: '11px', color: 'var(--color-negative, #dc2626)', textAlign: 'center', fontWeight: 700 }}>기습당함 — 적이 먼저 행동합니다.</div>
         </div>
       ` : null}
 

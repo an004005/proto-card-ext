@@ -1,7 +1,7 @@
 import { html } from '../lib.js';
 import { dispatch } from '../state/dispatch.js';
 import { snapshotSignal } from '../state/runState.js';
-import { SECTOR_NAMES, LANDMARKS_BY_SECTOR, RUN_COLLAPSE_TIME, RUN_SECTOR_COUNT } from '../data/facilityLayout.js';
+import { SECTOR_NAMES, LANDMARKS_BY_SECTOR, RUN_COLLAPSE_TIME } from '../data/facilityLayout.js';
 
 const TYPE_LABEL = { retrieval: '회수', destroy: '파괴', intel: '정보' };
 const TYPE_COMPLETION = {
@@ -17,8 +17,9 @@ const TYPE_COMPLETION = {
 function SectorRingLine({ sectorIds, objectiveSectorId }) {
   if (!sectorIds || sectorIds.length === 0) return null;
   // 링 정반대(가장 깊은 자리)는 언제나 중간 인덱스다 — 동력·정비동이 뽑혔으면 그것이, 아니면
-  // 계약 목표 구역이 이 자리를 차지한다(selectRunSectorIds).
-  const deepestIndex = Math.floor(RUN_SECTOR_COUNT / 2);
+  // 계약 목표 구역이 이 자리를 차지한다(selectRunSectorIds). 세는 자는 규칙 상수가 아니라 지금
+  // 그리는 이 줄의 길이다 — 둘이 어긋나면 존재하지 않는 칸에 표시가 붙는다.
+  const deepestIndex = Math.floor(sectorIds.length / 2);
   return html`
     <div style=${{ borderTop: '1px solid var(--color-divider)', paddingTop: 'var(--space-2)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
       <span style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.06em' }}>이번 시설</span>

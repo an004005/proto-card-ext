@@ -233,6 +233,19 @@ export function applyLoadoutPreset(snapshot, presetId) {
 }
 
 /**
+ * `appliedLoadoutPreset`은 "지금 장착된 것이 그 프리셋 그대로"라는 뜻이다 — 장비를 하나라도
+ * 손대면 더 이상 참이 아니므로 표시를 내린다. 남겨 두면 프리셋 버튼이 계속 눌린 채로 보이고
+ * 「창고에 없음」 줄도 더는 맞지 않는 목록을 가리킨다.
+ * @param {GameSnapshot} snapshot
+ * @returns {GameSnapshot}
+ */
+export function clearAppliedLoadoutPreset(snapshot) {
+  if (!snapshot || !snapshot.appliedLoadoutPreset) return snapshot;
+  const { appliedLoadoutPreset, ...rest } = snapshot;
+  return rest;
+}
+
+/**
  * 이 프리셋을 그대로 장착했을 때의 여섯 Capability — 버튼의 미리보기가 읽는 값이다. 창고 사정을
  * 보지 않는 "정의상의 값"이므로, 실제 적용 결과와는 빠진 항목만큼 달라질 수 있다(그래서 화면이
  * 「창고에 없음」을 함께 적는다).

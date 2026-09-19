@@ -21,7 +21,17 @@ import { PlayLog } from './PlayLog.js';
 import { InventoryPopup } from './InventoryPopup.js';
 import { PileListPopup } from './PileListPopup.js';
 
-/** 전투 중 마감 배너를 띄우는 시간 창(칸). 한 턴이 3칸이니 다섯 턴 남짓이다. */
+/**
+ * 디버그 상자의 너비. 상자는 아레나 오른쪽 위에 절대 배치로 뜨므로, 열려 있는 동안에는 적
+ * 컨테이너가 그만큼 오른쪽을 비워 줘야 한다 — 그러지 않으면 상자가 적 카드를 덮어 카드를
+ * 끌어다 놓을 자리가 가려진다.
+ */
+const DEBUG_PANEL_WIDTH = 300;
+
+/**
+ * 전투 중 마감 배너를 띄우는 시간 창(칸). 한 라운드가 `COMBAT_ROUND_TIME_COST`(1칸)이니
+ * 열다섯 라운드 남짓이다 — 이 전투를 끝까지 치르면 마감에 닿는다는 뜻이라 배너를 띄운다.
+ */
 const COMBAT_DEADLINE_BANNER_WINDOW = 15;
 
 /**
@@ -105,7 +115,7 @@ export function CombatScreen() {
       onDrop=${handleDropAnywhere}
     >
       ${urgent.length > 0 ? html`
-        <div style=${{ fontSize: '12px', fontWeight: 800, padding: '7px var(--space-4)', color: 'var(--color-bg)', background: 'var(--color-negative, #dd2b0f)' }}>
+        <div style=${{ fontSize: '12px', fontWeight: 800, padding: '7px var(--space-4)', color: 'var(--color-bg)', background: 'var(--color-negative)' }}>
           ${urgent.join(' · ')} — 턴 하나에 맵 ${COMBAT_ROUND_TIME_COST}칸이 나갑니다.
         </div>
       ` : null}
@@ -133,6 +143,8 @@ export function CombatScreen() {
           <button
             class="btn btn-secondary"
             style=${{ fontSize: '10px', padding: '4px 10px', letterSpacing: '0.08em', borderColor: showDebug ? 'var(--color-accent)' : 'var(--color-divider)', color: showDebug ? 'var(--color-accent)' : 'inherit' }}
+            aria-expanded=${showDebug ? 'true' : 'false'}
+            aria-pressed=${showDebug ? 'true' : 'false'}
             onClick=${() => setShowDebug((v) => !v)}
           >DEBUG</button>
         </div>
@@ -141,9 +153,15 @@ export function CombatScreen() {
       ${/* 아레나 — 헤더와 손패 사이를 전부 쓴다. 플레이어가 왼쪽, 적이 오른쪽, 가운데 구분선.
             예전에는 둘 다 화면 위쪽에 붙은 작은 카드였고 아래 60%가 비어 있었다. */ null}
       <div style=${{ flex: 1, minHeight: 0, display: 'flex', gap: 'var(--space-6)', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
-        <${PlayerStatusBar} player=${player} overloadActive=${combat.overloadActive} canToggleOverload=${combat.phase === 'player_turn'} animation=${animation?.actor === 'player' ? animation : null} />
+        ${/* 과부화 여부는 overloadActiveSignal 하나에서만 읽는다 — 손패와 상태 바가 각자
+              다른 출처(combat.overloadActive)를 보면 한쪽만 켜진 채로 그려질 수 있다. */ null}
+        <${PlayerStatusBar} player=${player} overloadActive=${overloadActive} canToggleOverload=${combat.phase === 'player_turn'} animation=${animation?.actor === 'player' ? animation : null} />
         <div style=${{ width: '2px', background: 'var(--color-divider)', alignSelf: 'stretch' }}></div>
-        <div style=${{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', maxHeight: '100%', overflowY: 'auto' }}>
+        <div style=${{
+          display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center',
+          maxHeight: '100%', overflowY: 'auto',
+          paddingRight: showDebug ? `calc(${DEBUG_PANEL_WIDTH}px + var(--space-4))` : 0,
+        }}>
           ${enemies.map((enemy) => html`
             <${EnemyRow}
               key=${enemy.id}
@@ -157,7 +175,7 @@ export function CombatScreen() {
         </div>
         ${showDebug ? html`
           <div style=${{
-            position: 'absolute', top: 0, right: 0, zIndex: 5, width: '300px', fontSize: '11px',
+            position: 'absolute', top: 0, right: 0, zIndex: 5, width: `${DEBUG_PANEL_WIDTH}px`, fontSize: '11px',
             border: '2px solid var(--color-divider)', background: 'var(--color-bg)', boxShadow: 'var(--shadow-lg)',
             padding: 'var(--space-2) var(--space-3)', display: 'flex', flexDirection: 'column', gap: '8px',
           }}>
@@ -188,6 +206,9 @@ export function CombatScreen() {
       <div style=${{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
         ${consumableSlots.filter(Boolean).map((item) => {
           const def = CONSUMABLE_DEFINITIONS[item.defId];
+          // 정의가 사라진 소모품(테스트 픽스처나 옛 저장 상태)이 줄 하나를 통째로 터뜨리지
+          // 않게 한다 — 전투 화면이 빈 채로 남는 것보다 그 슬롯만 비는 편이 낫다.
+          if (!def) return null;
           // 버튼에 이름만 있으면 무엇이 일어나는지, 소음이 얼마나 나는지, 다시 쓸 수 있는지가
           // 전부 감춰진다 — 소모품은 한 번 쓰면 영구히 사라지므로 특히 그렇다(리뷰 B7).
           const tip = `${def.description}.`
@@ -224,7 +245,7 @@ export function CombatScreen() {
                 <${Tooltip} width=${200} content="이탈 태그가 붙은 카드를 플레이하면 진행도가 오릅니다. 필요한 진행도에 도달하면 '이탈 확정'으로 보상 없이 즉시 맵으로 돌아갈 수 있습니다.">
                   <span>이탈 진행도 ${disengage.disengageProgress}/${DISENGAGE_REQUIRED_PROGRESS}</span>
                 <//>
-                ${escapeCards.length > 0 ? html`<span style=${{ color: '#0e7490', fontWeight: 800 }}>손패 이탈 카드 ${escapeCards.length}장 강조됨</span>` : html`<span style=${{ color: 'var(--color-negative, #dc2626)' }}>손패에 이탈 카드 없음 — 다음 드로우까지 버티세요</span>`}
+                ${escapeCards.length > 0 ? html`<span style=${{ color: 'var(--color-info)', fontWeight: 800 }}>손패 이탈 카드 ${escapeCards.length}장 강조됨</span>` : html`<span style=${{ color: 'var(--color-negative)' }}>손패에 이탈 카드 없음 — 다음 드로우까지 버티세요</span>`}
                 <button class="btn btn-secondary" style=${{ padding: '4px 10px' }} disabled=${playbackActive} onClick=${() => dispatch({ type: 'CANCEL_DISENGAGE' })}>이탈 취소</button>
                 <${Tooltip} width=${200} content="진행도를 채우면 전투를 즉시 종료하고 맵으로 돌아갑니다 — 승리 보상은 없지만 HP는 지금 상태 그대로 유지됩니다.">
                   <button class="btn btn-primary" style=${{ padding: '4px 10px' }} disabled=${playbackActive || !canDisengage(disengage)} onClick=${() => dispatch({ type: 'RESOLVE_DISENGAGE' })}>이탈 확정</button>

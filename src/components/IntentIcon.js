@@ -27,6 +27,9 @@ export function describeIntent(move, enemyStatuses = {}, playerVulnerable = fals
     const total = perHit * hits;
     return { isAttack: true, kind: 'attack', value: total, tooltip: `공격 ${total}${hits > 1 ? ` (${perHit} × ${hits}회)` : ''}` };
   }
+  // 도주는 effects보다 먼저 본다 — 도주 행동이 방어도나 상태이상을 함께 걸면 아래 effects
+  // 분기가 먼저 잡아 "도주"라는 가장 중요한 사실이 배지에서 사라진다.
+  if (move.flee) return { isAttack: false, kind: 'flee', value: null, tooltip: '도주' };
   const effects = move.effects || [];
   const blockEffect = effects.find((e) => e.kind === 'block');
   if (blockEffect) {
@@ -43,7 +46,6 @@ export function describeIntent(move, enemyStatuses = {}, playerVulnerable = fals
     const label = STATUS_LABELS[statusEffect.status] || statusEffect.status;
     return { isAttack: false, kind: 'buff', value: statusEffect.amount, tooltip: `${label} ${statusEffect.amount} 부여` };
   }
-  if (move.flee) return { isAttack: false, kind: 'flee', value: null, tooltip: '도주' };
   if (move.insertStatusCard) {
     const count = move.insertStatusCardCount || 1;
     return { isAttack: false, kind: 'other', value: null, tooltip: `상태이상 카드 삽입${count > 1 ? ` ×${count}` : ''}` };
@@ -51,7 +53,9 @@ export function describeIntent(move, enemyStatuses = {}, playerVulnerable = fals
   if (move.summon) return { isAttack: false, kind: 'other', value: null, tooltip: `소환: ${MONSTER_DEFINITIONS[move.summon]?.name || move.summon}` };
   if (move.selfDestruct) return { isAttack: false, kind: 'other', value: null, tooltip: '자폭' };
   if (move.stealCurrency) return { isAttack: false, kind: 'other', value: null, tooltip: '환금템 강탈' };
-  return { isAttack: false, kind: 'other', value: null, tooltip: move.id || '' };
+  // 여기까지 왔다는 것은 이 행동을 설명할 표가 아직 없다는 뜻이다. 그렇다고 `move.id`를
+  // 그대로 적으면 플레이어에게 영문 식별자가 노출된다 — 무언가 한다는 사실만 한국어로 적는다.
+  return { isAttack: false, kind: 'other', value: null, tooltip: '행동' };
 }
 
 /** 20px 선 아이콘. 색은 배지에서 물려받으므로(stroke: currentColor) 종류별 색을 따로 두지 않는다. */
@@ -91,8 +95,10 @@ export function badgeLabel(tooltip) {
 export function IntentIcon({ intent, enemyStatuses = {}, playerVulnerable = false }) {
   const { isAttack, kind, tooltip } = describeIntent(intent, enemyStatuses, playerVulnerable);
   const label = badgeLabel(tooltip);
+  // tag-accent/tag-neutral은 붙여 봐야 아래 인라인 스타일이 배경·글자색·테두리를 전부 덮어써
+  // 아무 효과가 없다 — 모양을 잡는 .tag 하나만 남긴다.
   const body = html`
-    <span class=${`tag ${isAttack ? 'tag-accent' : 'tag-neutral'}`} style=${{
+    <span class="tag" style=${{
       gap: '5px', padding: '3px 8px', fontWeight: 800, fontSize: '11.5px', whiteSpace: 'nowrap',
       ...(isAttack
         ? { background: 'var(--color-accent-100)', color: 'var(--color-accent-800)', border: '1px solid var(--color-accent-300)' }

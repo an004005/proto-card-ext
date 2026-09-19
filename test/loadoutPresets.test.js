@@ -144,6 +144,20 @@ test('창고에 없는 항목은 건너뛰고 화면이 읽을 수 있게 남긴
   assert.deepEqual(state.playerState.loadout.consumableSlots, [null, null, null]);
 });
 
+test('장비를 하나라도 손대면 프리셋 표시가 내려간다', () => {
+  // 표시는 "지금 장착된 것이 그 프리셋 그대로"라는 뜻이다. 남겨 두면 버튼이 계속 눌린 채로
+  // 보이고 「창고에 없음」 줄도 더는 맞지 않는 목록을 가리킨다.
+  const applied = gameReducer(startLoadout(5), { type: 'APPLY_LOADOUT_PRESET', presetId: 'assault' });
+  assert.equal(applied.appliedLoadoutPreset.presetId, 'assault');
+
+  const equipped = applied.playerState.loadout.weapons[0];
+  const unequipped = gameReducer(applied, { type: 'UNEQUIP_ITEM', itemId: equipped.id });
+  assert.ok(!('appliedLoadoutPreset' in unequipped), '장비를 해제했는데 프리셋 표시가 남아 있다');
+
+  // 자동 장착도 구성을 바꾸므로 마찬가지다.
+  assert.ok(!('appliedLoadoutPreset' in gameReducer(applied, { type: 'AUTO_EQUIP_LOADOUT' })));
+});
+
 test('출격 준비 화면이 아니면 프리셋은 아무 일도 하지 않는다', () => {
   const offered = gameReducer(null, { type: 'NEW_RUN', seed: 5 }); // 'contract' 화면
   assert.equal(gameReducer(offered, { type: 'APPLY_LOADOUT_PRESET', presetId: 'assault' }), offered);
