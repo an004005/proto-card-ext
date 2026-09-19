@@ -11,7 +11,7 @@
 | 유형 | 코드 키 | 완료 조건 |
 |---|---|---|
 | 회수 | `retrieval` | 목표부에서 물건을 확보한 뒤 **그 물건을 들고 탈출구를 밟아야** 완료. 버리면 실패 |
-| 파괴 | `destroy` | 목표부에 폭약 **설치**(9칸) → 목표부에서 **2홉 이상** 떨어진 노드에서 **기폭**(2칸) |
+| 파괴 | `destroy` | 목표부에 폭약 **설치**(5칸) → 목표부에서 **2홉 이상** 떨어진 노드에서 **기폭**(1칸) |
 | 정보 | `intel` | 목표부에서 데이터 확보 → **목표부 구역에 인접한 구역**의 랜드마크에서 송출 |
 
 어느 유형도 **목표부에 도착하는 것만으로는 끝나지 않는다.** 목표부 행동이 끝나는 순간 봉쇄가 켜지고, 완료는 그 뒤에 온다.
@@ -38,10 +38,10 @@
 
 | 행동 | 상수 | 칸 | 요구 Capability |
 |---|---|---|---|
-| 물건 확보 / 데이터 확보 | `CONTRACT_ACQUIRE_TIME` | 6 | 회수는 Stealth 또는 Mobility 중 **높은 쪽** 1, 정보는 Hacking 1 |
-| 폭약 설치 | `CONTRACT_DESTROY_TIME` | 9 | Force 1 |
-| 기폭 | `CONTRACT_DETONATE_TIME` | 2 | 없음 |
-| 데이터 송출 | `CONTRACT_TRANSMIT_TIME` | 5 | Hacking 1 |
+| 물건 확보 / 데이터 확보 | `CONTRACT_ACQUIRE_TIME` | 3 | 회수는 Stealth 또는 Mobility 중 **높은 쪽** 1, 정보는 Hacking 1 |
+| 폭약 설치 | `CONTRACT_DESTROY_TIME` | 5 | Force 1 |
+| 기폭 | `CONTRACT_DETONATE_TIME` | 1 | 없음 |
+| 데이터 송출 | `CONTRACT_TRANSMIT_TIME` | 3 | Hacking 1 |
 | 기폭 최소 거리 | `CONTRACT_DETONATE_MIN_HOPS` | 2홉 | — |
 
 요구치 미달이어도 층계로 대가를 치르고 할 수 있다([05](./05-capabilities-and-ladder.md)).
@@ -60,7 +60,7 @@
 
 ### 구역 추첨
 
-`selectRunSectorIds` (`src/engine/facilityGraph.js`), 상수는 `RUN_SECTOR_COUNT` = 4.
+`selectRunSectorIds` (`src/engine/facilityGraph.js`), 상수는 `RUN_SECTOR_COUNT` = 4. 추첨은 **계약 제안을 만들 때 제안마다** 돌고 그 결과가 계약 카드에 링 순서로 보인다(ADR-0089) — 수락은 다시 굴리지 않는다.
 
 1. 링 0번은 항상 시작 구역 `START_SECTOR_ID` = `entrance`(입구·관리동).
 2. 수락한 계약의 목표 구역이 반드시 포함된다(목표가 입구면 이 단계는 생략).

@@ -18,21 +18,21 @@
 | 새 판마다 체력·창고 초기화, 전 장비 제공 | [출격 준비](../../src/engine/loadoutReducer.js)의 newRun·buildStartingWarehouse. 두 장비 풀을 모두 창고에 합친다 |
 | 한 판은 네 구역, 지점 수 180~248 | [시설 데이터](../../src/data/facilityLayout.js)의 RUN_SECTOR_COUNT·SECTOR_LAYOUTS. 입구 68에 나머지 셋의 최소 28+36+48, 최대 56+60+64를 더한 범위 |
 | 일반 출구 하나, 계약 목표 구역과 분리 | [시설 구성](../../src/engine/facilityGraph.js)의 placeStartAndExits. A와 key만 배치한다 |
-| 정보의 깊이와 무료 관측 차이 | [시설 데이터](../../src/data/facilityLayout.js)의 PERCEPTION_INFO_TABLE·FREE_OBSERVATION_DETAIL_LEVEL, [현장 규칙](../../src/engine/runEngine.js)의 refreshLocalObservations·basicRecon |
+| 정보의 깊이와 무료 관측 차이(무료 시야는 위협 수·모드·내용물 존재까지, 카메라 위치는 상시 공개) | [시설 데이터](../../src/data/facilityLayout.js)의 PERCEPTION_INFO_TABLE·FREE_OBSERVATION_DETAIL_LEVEL, [현장 규칙](../../src/engine/runEngine.js)의 refreshLocalObservations·basicRecon |
 | 잠금·고지대와 부족 수행 비용 | [행동 비용](../../src/engine/actionCosts.js), [능력 비용](../../src/engine/capabilityCosts.js), [현장 규칙](../../src/engine/runEngine.js)의 openSpecialEdge·highGroundMobility |
 | 조우 우위·동률·열세와 마지막 행동 기회 | [현장 규칙](../../src/engine/runEngine.js)의 computeEncounterTier·explainEffectiveStealth, [현장 행동](../../src/engine/facilityReducer.js)의 triggerCombatIfNeeded 및 encounter 계열 |
-| 구역 경계 압력과 개별 추적 감쇠는 별개 | [시설 데이터](../../src/data/facilityLayout.js)의 ALERT_GAUGE_CAPACITY·ALERT_PRESSURE·감쇠 상수, [현장 규칙](../../src/engine/runEngine.js)의 escalateSectorAlert·describeThreatDecay |
+| 구역 경계 압력과 개별 추적 감쇠는 별개, 3단계는 추적자 | [시설 데이터](../../src/data/facilityLayout.js)의 ALERT_GAUGE_CAPACITY·ALERT_PRESSURE·감쇠 상수·HUNTER_*, [현장 규칙](../../src/engine/runEngine.js)의 escalateSectorAlert·describeThreatDecay·syncHunters·describeHunters |
 | 목표 확보 시 봉쇄, 출구 폐쇄는 당기지 않음 | [현장 규칙](../../src/engine/runEngine.js)의 계약 작업 완료·activateLockdown. 과거 ‘125칸 유예’ 주석은 현행 규칙으로 채택하지 않음 |
 | 회수는 물품 보유 탈출, 파괴는 떨어져 기폭, 정보는 이웃 구역 송출 | [현장 행동](../../src/engine/facilityReducer.js)의 withFacilityRunState, [현장 규칙](../../src/engine/runEngine.js)의 acquireContractGoods·detonateContractCharge·transmitContractIntel |
 | 기본 손패 5, 행동력 3, 장전탄과 예비탄 | [전투 규칙](../../src/engine/combatEngine.js)의 HAND_SIZE·BASE_ENERGY·createCombatState·reload 효과 |
-| 한 라운드 3칸, 외부 시설 진행, 카드 소음 꺼짐 | [전투와 지도 연결](../../src/engine/combatMapIntegration.js)의 COMBAT_NOISE_ENABLED=false·applyCombatRoundTimeToRunState, [전투 진행](../../src/engine/combatReducer.js)의 settleCombatRound·finalizeIfCombatEnded |
+| 한 라운드 1칸, 외부 시설 진행, 카드 소음 꺼짐 | [전투와 지도 연결](../../src/engine/combatMapIntegration.js)의 COMBAT_NOISE_ENABLED=false·applyCombatRoundTimeToRunState, [전투 진행](../../src/engine/combatReducer.js)의 settleCombatRound·finalizeIfCombatEnded |
 | 과부화 비용 없음, 두 단계 강화 | [과부화](../../src/engine/overloadEngine.js), [전투 진행](../../src/engine/combatReducer.js)의 toggleOverloadCommand. 일반 보정은 25%이며 개별 카드 단계표는 별도 |
 | 장비가 카드와 여섯 능력을 함께 제공 | [장비 카드 구성](../../src/engine/equipmentEngine.js)의 buildDeckFromLoadout, [침투 능력 데이터](../../src/data/facilityEquipmentCapabilities.js), [능력 합산](../../src/engine/capabilityEngine.js) |
 | 과적 물품만 짐 카드가 됨 | [전투 진행](../../src/engine/combatReducer.js)의 getDeckEntries. [인벤토리](../../src/engine/inventoryEngine.js)의 획득 순서 기준 과적 판정과 탄약 사용 가능 범위 |
 | 내구도 10, 4 미만 손상 카드, 카드 사용당 1% 손상 | [장비 규칙](../../src/engine/equipmentEngine.js), [전투 규칙](../../src/engine/combatEngine.js)의 DURABILITY_DECAY_CHANCE와 playCard |
 | 장비 보상 보장과 추가 보상, 현장 3택 1 | [전투 보상](../../src/engine/rewardEngine.js), [보상 지급](../../src/engine/rewardReducer.js), [현장 전리품](../../src/engine/fieldLoot.js), [현장 행동](../../src/engine/facilityReducer.js)의 selectFarmRewardCommand |
 | 통제실·흔적·시체·전원·유인의 다른 역할 | [수습](../../src/engine/recovery.js), [현장 규칙](../../src/engine/runEngine.js)의 hackControlRoom·disposeCorpse·작업 완료 효과 |
-| 새 탈출 요청 마감 300, 붕괴 490, 요청 3, 개방 5 | [시설 데이터](../../src/data/facilityLayout.js), [현장 규칙](../../src/engine/runEngine.js)의 requestExtraction·isAtOpenExit·advanceTime·applyExpiryBoundary. 300 전에 시작한 요청은 개방까지 진행되고 열린 창도 유지됨 |
+| 새 탈출구 가동 마감 150, 붕괴 240, 가동 게이지 5~2, 열린 창 5 | [시설 데이터](../../src/data/facilityLayout.js)의 EXIT_A_DISABLED_AT·RUN_COLLAPSE_TIME·EXIT_ACTIVATE_TIME_BY_HACKING·EXIT_OPEN_WINDOW, [현장 규칙](../../src/engine/runEngine.js)의 requestExtraction·isAtOpenExit·advanceTime·applyExpiryBoundary. 150 전에 시작한 가동은 개방까지 진행되고 열린 창도 유지됨 |
 | 점수는 물품 value 합과 계약 결과 | [정산](../../src/components/runEndHelpers.js), [계약 결과](../../src/engine/contractReducer.js)의 computeContractOutcome, [탈출 화면](../../src/components/ExtractionCompleteScreen.js), [실패 화면](../../src/components/GameOverScreen.js) |
 | 보스는 현재 시설 편성에서 제외 | [적 데이터](../../src/data/monsters.js)와 [구역별 편성](../../src/data/dropTables.js)의 SECTOR_THREAT_POOLS 비교. 규모 표시는 실제 마릿수와 동일하지 않음 |
 

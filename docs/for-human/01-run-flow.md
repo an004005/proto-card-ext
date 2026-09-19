@@ -24,14 +24,14 @@
 
 - `NEW_RUN`이 시드 하나로 모든 것을 결정론적으로 만든다(`newRun`, `src/engine/loadoutReducer.js`).
 - 계약은 **여덟 구역 전부**의 계약에서 유형별(회수/파괴/정보) 한 장씩, **언제나 세 장** 제안된다(`offerContracts`). 자세한 내용은 [02 계약과 구역](./02-contracts-and-sectors.md).
-- 이 시점에 구역은 아직 뽑히지 않았다. `runSectorIds`는 `null`이다.
+- 구역 추첨은 **제안을 만들 때 제안마다 한 번씩** 돌고, 계약 카드에 그 네 구역이 링 순서로 미리 보인다(ADR-0089). 제안마다 시설 구성이 다르므로 계약 선택은 곧 이번 판의 시설을 고르는 일이다.
 
 ### 2단계 — 계약 수락
 
 `acceptContractCommand` (`src/engine/contractReducer.js`)가 세 가지를 한 번에 한다.
 
 1. 선불 재화(`prepaymentCurrency`, 10~25)를 인벤토리에 넣는다.
-2. **이 런의 네 구역을 뽑는다**(`selectRunSectorIds`). 시작 구역 + 수락한 계약의 목표 구역 + 나머지 둘.
+2. **제안에 이미 담겨 있던 네 구역**(`offer.sectorIds`)을 `runSectorIds`로 옮긴다 — 수락이 다시 굴리지 않으므로 화면이 보여준 시설과 지어지는 시설이 같다(ADR-0089).
 3. 화면을 `loadout`으로 넘긴다.
 
 계약 수락은 되돌릴 수 없고, 목표부(그 구역의 랜드마크) 위치는 시설 생성 시점에 지도에 미리 공개된다.
@@ -41,6 +41,7 @@
 - 슬롯 정원(`SLOT_LIMITS`, `src/engine/inventoryReducer.js` + `CONSUMABLE_SLOT_COUNT`): 무기 2 · 상의 1 · 하의 1 · 모듈 2 · 임플란트 3 · 소모품 퀵슬롯 3.
 - 기본 최대 HP `BASE_MAX_HP` = 40, 기본 인벤토리 용량 `BASE_INVENTORY_CAPACITY` = 10칸(`src/engine/loadoutReducer.js`).
 - 창고(`warehouse`)는 용량이 무제한(`Infinity`)이고 인벤토리와 별개다. 시작 탄약은 `STARTING_AMMO` = 16발이며 **창고에 있다** — 플레이어가 직접 인벤토리로 옮겨야 런에 들고 나간다. 탄약 한 더미는 `AMMO_STACK_SIZE` = 10발까지 담기므로 16발은 두 칸이다.
+- 역할군 프리셋 네 개(돌격·잠입·해커·정찰, `src/data/loadoutPresets.js`)가 있어 한 번에 한 벌을 갖춰 입을 수 있다.
 - 아무것도 장착하지 않은 상태로 시작한다(`defaultLoadout`). 빈 무기 슬롯마다 `맨손공격` 3장, 빈 상의·하의 슬롯마다 `어설픈 회피` 3장이 덱에 들어간다(`EMPTY_SLOT_FILLER_COUNT` = 3, `src/engine/equipmentEngine.js`).
 - `CONFIRM_LOADOUT`이 시설 그래프를 생성하고(`generateFacilityGraph`) 맵 화면으로 넘어간다. **이 시점 이후 창고에는 손이 닿지 않는다.**
 
@@ -51,16 +52,16 @@
 | 분류 | 커맨드 | 비용 |
 |---|---|---|
 | 이동 | `MOVE_TO_NODE` | 1칸 (통로·Mobility 무관) |
-| 정보 | `BASIC_RECON` | 4칸 |
+| 정보 | `BASIC_RECON` | 2칸 |
 | 대기 | `WAIT` / `WAIT_BATCH` | 1칸 / 최대 5칸 |
-| 파밍 | `USE_OPPORTUNITY`, `SELECT_FARM_REWARD` | 5 / 10 / 13칸 |
+| 파밍 | `USE_OPPORTUNITY`, `SELECT_FARM_REWARD` | 3 / 5 / 7칸 |
 | 장치 | `HACK_CAMERA`, `DESTROY_CAMERA`, `HACK_ACCESS_INTERFACE`, `DISABLE_GENERATOR`, `OPEN_SPECIAL_EDGE` | 행동별 |
-| 계약 | `ACQUIRE_CONTRACT_GOODS`, `DESTROY_CONTRACT_TARGET`, `DETONATE_CONTRACT_CHARGE`, `ACQUIRE_CONTRACT_INTEL`, `TRANSMIT_CONTRACT_INTEL` | 6 / 9 / 2 / 6 / 5칸 |
-| 수습 | `DISPOSE_CORPSE`, `CLEAN_TRACES`, `CUT_POWER`, `BROADCAST_FALSE_TARGET`, `PLANT_FAKE_NOISE`, `HACK_CONTROL_ROOM` | 5 / 4~8 / 6 / 7 / 3 / 8칸 |
-| 조우 | `ENCOUNTER_AMBUSH`, `ENCOUNTER_IGNORE`, `ENCOUNTER_EVADE`, `ENCOUNTER_DECEIVE`, `ENCOUNTER_FIGHT` | 0 / 0 / 1 / 0 / 0 또는 3칸 |
-| 장비 | `EQUIP_ITEM`, `UNEQUIP_ITEM`(맵에서) | 건당 `MAP_EQUIP_TIME_COST` = 3칸 |
-| 소모품 | `USE_MAP_CONSUMABLE` | `MAP_CONSUMABLE_TIME_COST` = 2칸 |
-| 탈출 | `REQUEST_EXTRACTION` | 탈출구 가동 9~4칸(Hacking) |
+| 계약 | `ACQUIRE_CONTRACT_GOODS`, `DESTROY_CONTRACT_TARGET`, `DETONATE_CONTRACT_CHARGE`, `ACQUIRE_CONTRACT_INTEL`, `TRANSMIT_CONTRACT_INTEL` | 3 / 5 / 1 / 3 / 3칸 |
+| 수습 | `DISPOSE_CORPSE`, `CLEAN_TRACES`, `CUT_POWER`, `BROADCAST_FALSE_TARGET`, `PLANT_FAKE_NOISE`, `HACK_CONTROL_ROOM` | 3 / 2~4 / 3 / 4 / 2 / 4칸 |
+| 조우 | `ENCOUNTER_AMBUSH`, `ENCOUNTER_IGNORE`, `ENCOUNTER_EVADE`, `ENCOUNTER_DECEIVE`, `ENCOUNTER_FIGHT` | 0 / 0 / 1 / 0 / 0 또는 1칸 |
+| 장비 | `EQUIP_ITEM`, `UNEQUIP_ITEM`(맵에서) | 건당 `MAP_EQUIP_TIME_COST` = 2칸 |
+| 소모품 | `USE_MAP_CONSUMABLE` | `MAP_CONSUMABLE_TIME_COST` = 1칸 |
+| 탈출 | `REQUEST_EXTRACTION` | 탈출구 가동 5~2칸(Hacking) |
 | 과부화 | `TOGGLE_OVERLOAD` | 0칸 |
 
 이동을 뺀 모든 유료 행동은 **1칸으로 가동 → 그 자리에서 대기로 게이지 채우기 → 완료 시각에 한 번에 확정**이다. 위 표의 칸 수는 전체 소요이고, 자리를 뜨면 작업을 포기한다. 자세한 처리 순서는 [03 맵 시간과 마감](./03-map-time-and-deadlines.md).
@@ -68,7 +69,7 @@
 ### 5단계 — 전투와 보상
 
 - 위협 마커와 같은 노드에 서면 조우 판정이 열린다([06](./06-threats-alert-and-recovery.md)).
-- 전투는 `combat` 화면에서 돌고, 1라운드마다 맵 시간 `COMBAT_ROUND_TIME_COST` = 3칸이 청구된다. 적 기습은 별도로 `COMBAT_ENEMY_AMBUSH_TIME_COST` = 3칸을 더 받는다.
+- 전투는 `combat` 화면에서 돌고, 1라운드마다 맵 시간 `COMBAT_ROUND_TIME_COST` = 1칸이 청구된다. 적 기습은 별도로 `COMBAT_ENEMY_AMBUSH_TIME_COST` = 1칸을 더 받는다.
 - 승리하면 `reward` 화면에서 슬롯마다 3택 1을 고르고 맵으로 돌아온다. 이긴 노드에는 **시체**가 남는다(`corpses`, `src/engine/combatReducer.js`).
 - 이탈(`RESOLVE_DISENGAGE`)은 위협을 제거하지 않고 맵으로 돌아간다.
 
