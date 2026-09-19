@@ -25,7 +25,7 @@ import {
 import { ladderNote, StepBadge } from './ladderDisplay.js';
 import { fakeNoiseRange } from '../engine/recovery.js';
 import { adjacentSectorIds } from '../engine/facilityGraph.js';
-import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE, CAMERA_PERCEPTION } from '../data/facilityLayout.js';
+import { FALSE_BROADCAST_ANY_SECTOR_DECEPTION, ALERT_GAUGE_CAPACITY, ALERT_PRESSURE, CAMERA_PERCEPTION, CAMERA_ALERT_RANGE } from '../data/facilityLayout.js';
 import { getImplantEffect, MAX_DURABILITY } from '../engine/equipmentEngine.js';
 import {
   SECTOR_NAMES, RUN_COLLAPSE_TIME, LANDMARKS_BY_SECTOR,
@@ -50,7 +50,7 @@ import { MapClock, deadlineStyle } from './MapClock.js';
 import { capabilityStep, CAPABILITY_STEP_MIN_GAP } from '../engine/capabilityCosts.js';
 import { forecastAction, describeForecast, forecastUnknownPrizeFarm } from '../engine/actionCosts.js';
 import {
-  runCountdowns, upcomingEvents, timersEndingBefore, observableThreatMoves, staleThreatSightings,
+  runCountdowns, upcomingEvents, timersEndingBefore, observableThreats, observableThreatMoves, staleThreatSightings,
   interruptionNotice, waitBatchNotice, threatMovesDuring, describeNodeLocation, describeObservedThreat,
   EXIT_STATUS_LABELS, TIMELINE_HORIZON, TASK_LABELS,
 } from '../engine/mapTimeline.js';
@@ -202,7 +202,7 @@ function PanelGroup({ title, open, onToggle, children }) {
   return html`
     <div>
       <div
-        role="button" tabindex="0"
+        role="button" tabindex="0" aria-expanded=${open ? 'true' : 'false'}
         style=${{
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer',
     fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase',
@@ -454,6 +454,26 @@ function nodeKnowledge(run, nodeId, perception = 0) {
   return 'unknown';
 }
 
+/**
+ * 노드 하나의 "위협을 얼마나 아는가" — 지도 표식(▲N)과 노드 카드가 **같은 하나의 계산**을 쓴다.
+ * 두 곳에서 따로 세던 시절에는 지도가 시야 밖에서 수를 지우고 카드만 마지막 확인 수를 적었다.
+ * live면 실제 목록을, 아니면 마지막 관측 기록(threatCount)을 읽는다 — 그보다 얕게(두 번째 홉)
+ * 본 자리만 수를 모른 채 유무만 안다(null).
+ * @returns {{knowledge: string, live: boolean, hasThreat: boolean, threatCount: number|null}}
+ */
+function nodeThreatView(run, nodeId, threatsByNode, debugReveal, perception) {
+  const knowledge = nodeKnowledge(run, nodeId, perception);
+  const live = debugReveal || knowledge === 'current' || knowledge === 'fresh';
+  const observation = run.observations[nodeId];
+  const here = threatsByNode[nodeId] || [];
+  return {
+    knowledge,
+    live,
+    hasThreat: live ? here.length > 0 : !!observation?.hasThreat,
+    threatCount: live ? here.length : (observation?.threatCount ?? (observation?.hasThreat ? null : 0)),
+  };
+}
+
 function nodeFill(knowledge, hasThreat, isExit) {
   if (isExit) return 'var(--color-accent)';
   if (knowledge === 'current') return 'var(--color-accent-2-700)';
@@ -544,14 +564,23 @@ function movementRiskForecast(run, edge, destinationNodeId, mobility) {
   // 예고 비용 = 실제 비용. 엔진의 이동 비용 함수를 그대로 쓴다 — 여기서 식을 베껴 두면
   // 한쪽만 바뀌었을 때 플레이어가 도착 시각을 틀리게 읽는다.
   const arrivalAt = run.time + moveTimeCost(edge, mobility);
+  // 도착지 자체는 무료 인접 관측의 사거리 안이라 실제 위협 목록을 그대로 세도 거짓말이 아니다.
   const direct = Object.values(run.threats).filter((threat) => threat.nodeId === destinationNodeId).length;
   if (direct > 0) return { label: `도착 예상: 적 ${direct}그룹`, color: 'var(--color-negative, #dc2626)' };
+  // 그 한 홉 너머는 다르다 — 안개 밖의 위협까지 세면 화면이 플레이어가 모르는 정보를 예고하게
+  // 된다. 유입 예보는 지금 관측 중인 위협만 센다(observableThreats).
   const hops = bfsHopDistances(run.graph.edges, destinationNodeId);
-  const inbound = Object.values(run.threats).filter((threat) => {
+  const observed = observableThreats(run);
+  const inbound = observed.filter((threat) => {
     const hop = hops.get(threat.nodeId);
     return hop === 1 && threat.nextMoveAt <= arrivalAt;
   }).length;
   if (inbound > 0) return { label: `도착 중 적 유입 가능 · ${inbound}그룹`, color: '#b45309' };
+  // 관측이 닿은 이웃이 하나도 없으면 "위협 없음"이라고 단언할 수 없다 — 모른다고 적는다.
+  const anyObservedNeighbor = observed.some((threat) => hops.get(threat.nodeId) === 1);
+  if (!anyObservedNeighbor) {
+    return { label: '도착 예상: 관측 중인 위협 없음(보이지 않는 곳은 모른다)', color: '#15803d' };
+  }
   return { label: '도착 예상: 위협 없음', color: '#15803d' };
 }
 
@@ -561,9 +590,9 @@ const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 6;
 // 노드 안에 유형 첫 글자(복/사/대/봉/설/감/은/비)를 적기 시작하는 배율 — 이보다 작으면 글자가 도형을 덮는다.
 const NODE_TYPE_LETTER_MIN_SCALE = 2.2;
-// 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — CAMERA_HACK_DURATION(15칸)보다
-// 조금 길게 잡아, 그 이후는 조용한 이력 표기로 낮춘다(계속 안 사라지면 지금도 쫓기는 중처럼 읽힘).
-const CAMERA_DETECTION_BANNER_WINDOW = 20;
+// 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — 카메라 해킹이 버는 시간(CAMERA_HACK_DURATION)
+// 보다 조금 길게 잡아, 그 이후는 조용한 이력 표기로 낮춘다(계속 안 사라지면 지금도 쫓기는 중처럼 읽힘).
+const CAMERA_DETECTION_BANNER_WINDOW = CAMERA_HACK_DURATION + 5;
 /** 추적자가 물러난 뒤 그 사실을 위협 패널에 남겨 두는 칸 수. */
 const HUNTER_LOG_NOTICE_TICKS = 15;
 
@@ -673,16 +702,10 @@ function describeThreatsHere(run, node, liveThreats) {
  * 내용에는 위협 상세와 내용물까지 안개와 무관하게 전부 담는다.
  */
 function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, baseStealth = null, perception = 0) {
-  const knowledge = nodeKnowledge(run, n.id, perception);
-  const exit = exitByNode[n.id];
-  const live = debugReveal || knowledge === 'current' || knowledge === 'fresh';
-  const hasThreat = live ? (threatsByNode[n.id] || []).length > 0 : !!run.observations[n.id]?.hasThreat;
   // 그룹 수는 무료 인접 시야가 주는 정보다(ADR-0090) — 시야 밖으로 나가도 마지막으로 센 수가
-  // 관측 기록에 남는다. 그보다 얕게(두 번째 홉) 본 자리만 수를 모른 채 유무만 안다.
-  const observedCount = run.observations[n.id]?.threatCount;
-  const threatCount = live
-    ? (threatsByNode[n.id] || []).length
-    : (observedCount ?? (run.observations[n.id]?.hasThreat ? null : 0));
+  // 관측 기록에 남는다. 지도 표식과 같은 계산을 쓴다(nodeThreatView).
+  const { knowledge, live, hasThreat } = nodeThreatView(run, n.id, threatsByNode, debugReveal, perception);
+  const exit = exitByNode[n.id];
   const observedAt = run.observations[n.id]?.observedAt;
   const knowledgeLabel = {
     current: '현재 위치',
@@ -796,7 +819,7 @@ function describeNode(run, n, threatsByNode, exitByNode, debugReveal = false, ba
   }
 
   const footer = run.activeRecon?.targetNodeIds.includes(n.id) ? ['실시간 정찰 중'] : [];
-  return { knowledge, exit, hasThreat, threatCount, header, rows, footer };
+  return { knowledge, header, rows, footer };
 }
 
 /**
@@ -849,14 +872,15 @@ const EDGE_APPROACH_LABELS = { safe: '안전', normal: '표준', rush: '강행' 
  * @param {object} edge
  * @param {{revealed: boolean, capabilities: object, debugReveal?: boolean, openableEdgeIds: Set<string>,
  *   pickableEdgeIds: Set<string>|null, activeBarriers: object, routeEdgeIds: Set<string>|null,
- *   playerHops: Map<string, number>, edgeApproachMode: string, threatMoves: any[]}} ctx
+ *   playerHops: Map<string, number>, edgeApproachMode: string, threatMoves: any[],
+ *   nodeById: Record<string, object>, blockedByEncounter: boolean, approachPanelVisible: boolean}} ctx
  */
 function describeEdge(run, edge, ctx) {
   const {
     revealed, capabilities, debugReveal = false, openableEdgeIds, pickableEdgeIds,
     activeBarriers, routeEdgeIds, playerHops, edgeApproachMode, threatMoves,
+    nodeById, blockedByEncounter = false, approachPanelVisible = false,
   } = ctx;
-  const nodeById = (id) => run.graph.nodes.find((n) => n.id === id);
   // 'electronic'은 통로의 종류가 아니라 자물쇠의 종류다 — 막힌 통로는 언제나 'blocked'를 달고,
   // 그중 일부에 'electronic'이 덧붙는다(facilityLayout.js). 그러니 자물쇠는 언제나 하나다.
   const lockFeature = edge.features.includes('electronic') ? 'electronic'
@@ -890,6 +914,8 @@ function describeEdge(run, edge, ctx) {
   const LOCKED = { background: 'var(--color-neutral-700)', color: 'var(--color-bg)' };
   const NEGATIVE = { background: 'var(--color-negative, #dc2626)', color: 'var(--color-bg)' };
   const hgParts = highGround ? highGroundParts(edge, capabilities.mobility) : null;
+  // 이동 칸은 엔진의 비용 함수에서 받는다 — 카드에 1을 박아 두면 규칙이 바뀐 날 카드만 거짓말을 한다.
+  const moveTicks = moveTimeCost(edge, capabilities.mobility);
   let badge = null;
   if (barrier) {
     badge = { label: `장벽 · ${leftTicksText(barrier.expiresAt, run.time)}`, background: 'transparent', color: 'var(--color-bg)', border: '1px solid var(--color-bg)' };
@@ -901,13 +927,14 @@ function describeEdge(run, edge, ctx) {
     badge = { label: '개방됨', ...ACCENT };
   } else if (revealed && highGround && adjacent && !traversable) {
     badge = { label: '통과 불가', ...NEGATIVE };
-  } else if (traversable) {
+  } else if (traversable && !blockedByEncounter) {
+    // 조우가 다른 맵 행동을 막는 동안에는 지날 수 있다고 적지 않는다 — canMoveNow와 같은 판정이다.
     badge = { label: highGround && hgParts.gap > 0 ? '지날 수 있음 · 대가' : '지날 수 있음', ...ACCENT };
   }
 
   /** 끝 노드 하나 — 주어는 노드 유형이고, 그 뒤에 구역(또는 `현재 위치`)이 온다. */
   const endOf = (nodeId) => {
-    const node = nodeById(nodeId);
+    const node = nodeById[nodeId];
     const typeLabel = node ? (NODE_TYPE_LABELS[node.type] || node.type) : nodeId;
     if (nodeId === run.playerNodeId) return { typeLabel, note: '현재 위치' };
     const landmark = run.graph.landmarks.find((l) => l.nodeId === nodeId);
@@ -961,10 +988,10 @@ function describeEdge(run, edge, ctx) {
   if (revealed && highGround) {
     const { required, value, blocked, gap, hpCost } = hgParts;
     const detail = blocked
-      ? [{ text: `통과 불가 — Mobility ${required - 2} 이상이어야 대가를 치르고 넘는다` }]
+      ? [{ text: `통과 불가 — Mobility ${required + CAPABILITY_STEP_MIN_GAP} 이상이어야 대가를 치르고 넘는다` }]
       : gap <= 0
         ? [{ text: '추가 대가 없음' }]
-        : [{ text: `부족분 ${gap} → 넘을 때 ` }, { text: `HP −${hpCost}`, color: 'var(--color-accent-2-400)' }, { text: ' · 시간은 그대로 1칸' }];
+        : [{ text: `부족분 ${gap} → 넘을 때 ` }, { text: `HP −${hpCost}`, color: 'var(--color-accent-2-400)' }, { text: ` · 시간은 그대로 ${moveTicks}칸` }];
     rows.push({
       kind: 'highGround',
       icon: 'highGround',
@@ -1008,9 +1035,10 @@ function describeEdge(run, edge, ctx) {
       kind: 'move',
       icon: 'move',
       color: traversable ? null : 'var(--color-neutral-400)',
-      title: traversable ? '이동 1칸'
-        : lockedNow ? '이동 1칸 — 열기 전에는 지날 수 없다'
-        : '이동 1칸 — 지금은 지날 수 없다',
+      title: blockedByEncounter ? `이동 ${moveTicks}칸 — 조우 중에는 지날 수 없다`
+        : traversable ? `이동 ${moveTicks}칸`
+        : lockedNow ? `이동 ${moveTicks}칸 — 열기 전에는 지날 수 없다`
+        : `이동 ${moveTicks}칸 — 지금은 지날 수 없다`,
       detail,
     });
   } else if (!adjacent) {
@@ -1029,12 +1057,14 @@ function describeEdge(run, edge, ctx) {
   const rule = barrier ? '장벽은 현장 장비로 다시 칠 수 있다'
     : reverseEnd ? '다른 길로 돌아가야 한다'
     : revealed && lockFeature && opened ? '열린 문은 위협도 지난다'
-    : openable ? '패널의 접근 모드(안전/표준/강행)가 적용된다'
+    // 접근 모드 이야기는 그 패널이 실제로 보일 때만 한다 — 안 보이는 패널을 가리키면 찾을 수 없다.
+    : openable && approachPanelVisible ? '패널의 접근 모드(안전/표준/강행)가 적용된다'
     : revealed && lockFeature && !opened ? '열면 런 내내 열려 있다'
-    : revealed && highGround ? 'Mobility 0 이하는 통과 불가'
+    : revealed && highGround ? `Mobility ${HIGH_GROUND_MOBILITY_REQUIREMENT + CAPABILITY_STEP_MIN_GAP} 미만은 통과 불가`
     : adjacent ? '이동 소음은 출발 시각에 난다'
     : '';
-  const hint = pickable ? '클릭해 지정'
+  const hint = blockedByEncounter ? '조우 중 — 회피하거나 전투에 들어가야 한다'
+    : pickable ? '클릭해 지정'
     : openable ? '클릭해 개방'
     : traversable ? '노드를 더블클릭해 이동'
     : null;
@@ -1073,16 +1103,20 @@ export function MapScreen() {
     mapViewSignal.value = typeof next === 'function' ? next(mapViewSignal.value) : next;
   };
   // 커스텀 툴팁(브라우저 기본 title의 지연 없이 즉시 표시). 두 종류가 있다:
-  // - {anchor: {x, y}, node?} — 노드·통로처럼 지도 위에 자리가 있는 것. anchor는 **캔버스 좌표**라
-  //   호버 중에 지도를 끌어도 카드가 그 자리에 붙어 있고, 커서보다 한 프레임 늦게 따라오지 않는다.
+  // - {kind: 'node'|'edge', id, anchor?} — 지도 위에 자리가 있는 것. 상태에는 **무엇에 얹혀
+  //   있는가**만 담고 카드 내용은 렌더 시점에 그 하나만 만든다. 그래서 (1) 100여 노드·통로의
+  //   설명을 미리 만들지 않아도 되고, (2) 호버 중에 상황이 바뀌면(이동·대기·장벽 만료) 카드가
+  //   곧바로 최신 run을 말한다. anchor는 **캔버스 좌표**라 지도를 끌어도 카드가 그 자리에 붙어
+  //   있다. anchor가 없으면(사이드바 줄 호버) 지도 강조만 하고 카드는 띄우지 않는다.
   // - {x, y, text} — 임플란트 화살표처럼 지도 위 자리가 없는 것. 그때만 커서를 따라간다.
-  // node는 describeNode의 구조화된 설명이고, 그때는 NodeTooltipCard로 그린다.
   const [hover, setHover] = useState(null);
   const mapAreaRef = useRef(null); // 캔버스 좌표를 화면 좌표로 바꿀 때 기준이 되는 지도 영역
   const hoverCardRef = useRef(null);
   const [hoverCardPos, setHoverCardPos] = useState({ left: -9999, top: -9999 });
-  const [hoveredNodeId, setHoveredNodeId] = useState(null); // 노드 호버 시 연결 엣지 강조용
-  const [hoveredEdgeId, setHoveredEdgeId] = useState(null); // 통로 호버 시 그 통로를 굵게 — 카드가 어느 선을 말하는지 보여야 한다
+  // 강조 대상은 호버 상태에서 그대로 읽는다 — 따로 둔 상태와 페이로드가 어긋나 "카드는 A를
+  // 말하는데 지도는 B를 밝히는" 일이 없게 한다.
+  const hoveredNodeId = hover?.kind === 'node' ? hover.id : null; // 노드 호버 시 연결 엣지 강조용
+  const hoveredEdgeId = hover?.kind === 'edge' ? hover.id : null; // 통로 호버 시 그 통로를 굵게
   const [selectedNodeId, setSelectedNodeId] = useState(null); // 클릭해 "선택 노드" 패널에 고정한 노드
   const [legendOpen, setLegendOpen] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
@@ -1143,6 +1177,31 @@ export function MapScreen() {
     if (hoverFrameRef.current.id && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(hoverFrameRef.current.id);
   }, []);
 
+  // 커서 아래에 있던 엘리먼트가 언마운트되면 mouseleave가 오지 않는다 — 이동하거나 디버그
+  // 전체보기를 토글하면 지도가 통째로 다시 그려지므로, 그때는 호버를 직접 비운다. 안 그러면
+  // 카드가 더 이상 커서 아래에 없는 자리를 계속 말한다.
+  // 첫 실행은 건너뛴다 — preact의 effect는 그리고 난 **뒤에** 흐르므로, 마운트 직후에 그냥
+  // 비우면 그 사이에 얹힌 호버까지 함께 지워진다.
+  const hoverResetKeyRef = useRef(null);
+  useEffect(() => {
+    const key = `${run?.playerNodeId}|${debugReveal}`;
+    const previous = hoverResetKeyRef.current;
+    hoverResetKeyRef.current = key;
+    if (previous === null || previous === key) return;
+    hoverFrameRef.current.pending = null;
+    setHover(null);
+  }, [run?.playerNodeId, debugReveal]);
+
+  // 호버 카드 자리는 window 크기와 지도 영역의 사각형에서 나온다 — 창을 줄이면 그 두 값이 다
+  // 바뀌므로 다시 계산해야 카드가 화면 밖에 남지 않는다.
+  const [viewportTick, setViewportTick] = useState(0);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined;
+    const onResize = () => setViewportTick((tick) => tick + 1);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // 지도 위에 자리가 있는 호버(노드·통로)는 그 자리에 붙인다. 캔버스 좌표 → 화면 좌표 변환은
   // SVG의 뷰박스 맞춤(fit)과 팬/줌(view)을 차례로 적용한 것이며, 오른쪽으로 삐져나가면 왼쪽으로
   // 뒤집고 위아래는 화면 안으로 민다(Tooltip.js와 같은 규칙).
@@ -1165,7 +1224,7 @@ export function MapScreen() {
       left: Math.max(8, left),
       top: Math.max(8, Math.min(viewportHeight - height - 8, screenY - 12)),
     });
-  }, [hover, view.x, view.y, view.scale]);
+  }, [hover, view.x, view.y, view.scale, viewportTick]);
 
   if (!run) return null;
 
@@ -1186,8 +1245,11 @@ export function MapScreen() {
   const burdenCount = getBurdenItems(ps.inventory).length;
   const zones = sectorZones(run.graph, positions);
 
+  // 노드를 id로 찾는 자리가 한 프레임에 수백 번이라(통로 카드의 양 끝, 경로 목록) 매번
+  // nodes.find를 돌리면 그것만으로 O(노드×통로)가 된다.
+  const nodeById = {};
   const nodeTypeById = {};
-  for (const node of run.graph.nodes) nodeTypeById[node.id] = node.type;
+  for (const node of run.graph.nodes) { nodeById[node.id] = node; nodeTypeById[node.id] = node.type; }
 
   const threatsByNode = {};
   for (const threat of Object.values(run.threats)) (threatsByNode[threat.nodeId] ||= []).push(threat);
@@ -1244,13 +1306,12 @@ export function MapScreen() {
   const currentTraces = (run.evidence || []).filter((e) => e.nodeId === run.playerNodeId);
   const powerCutSectorIds = new Set((run.powerCuts || []).filter((c) => c.expiresAt > run.time).map((c) => c.sectorId));
   // Deception 3 이상은 인접 구역이 아니라 아무 구역으로나 가짜 목표를 쏠 수 있다(D).
+  // 가짜 목표를 쏠 수 있는 구역 목록(Deception 3 이상이면 이웃이 아니어도 된다).
   const broadcastSectorIds = currentSectorId
     ? (capabilities.deception >= FALSE_BROADCAST_ANY_SECTOR_DECEPTION
       ? Object.keys(run.sectorAlerts).filter((id) => id !== currentSectorId)
       : adjacentSectorIds(run.graph, currentSectorId))
     : [];
-  // 가짜 목표를 쏠 수 있는 구역 목록(Deception 3 이상이면 이웃이 아니어도 된다).
-  const broadcastTargetSectorIds = broadcastSectorIds;
   const hackableGenerators = (run.graph.generators || []).filter((generator) => isDeviceVisible(generator.nodeId)
     && canHackDevice(generator.nodeId) && !run.disabledGeneratorIds.includes(generator.id));
   const activeReconNodeIds = new Set(run.activeRecon?.targetNodeIds || []);
@@ -1345,7 +1406,8 @@ export function MapScreen() {
     return true;
   };
   const handleNodeKeyDown = (ev, nodeId) => {
-    if (ev.key === 'Enter' || ev.key === ' ') { handleNodeSelect(nodeId); return; }
+    // Space는 기본값이 "화면 한 장 내리기"다 — 막지 않으면 노드를 고를 때마다 지도에서 손이 떠난다.
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); handleNodeSelect(nodeId); return; }
     if (ARROW_VECTORS[ev.key] && moveFocusFrom(nodeId, ev.key)) ev.preventDefault();
   };
 
@@ -1395,7 +1457,7 @@ export function MapScreen() {
     // 예고하므로 클릭 가드도 같은 판정을 써야 한다 — 정말 막히는 것은 불가 단계뿐이다.
     if (capabilityStep(requirement.current, requirement.required) === 'impossible') {
       const kindLabel = requirement.kind === 'hacking' ? 'Hacking' : 'Force';
-      setError(`${kindLabel} ${requirement.required}이 표준, ${requirement.required - 2} 이상이면 대가를 치르고 열 수 있습니다(현재 ${requirement.current}).`);
+      setError(`${kindLabel} ${requirement.required}이 표준, ${requirement.required + CAPABILITY_STEP_MIN_GAP} 이상이면 대가를 치르고 열 수 있습니다(현재 ${requirement.current}).`);
       return;
     }
     runCommand({ type: 'OPEN_SPECIAL_EDGE', edgeId: edge.id, capabilityKind: requirement.kind, mode: edgeApproachMode });
@@ -1429,16 +1491,25 @@ export function MapScreen() {
   // onMouseMove가 수십 번 오는데, 그때마다 100여 노드 지도를 다시 그리면 눈에 띄게 끊긴다.
   const showHover = (ev, text) => scheduleHover({ x: ev.clientX, y: ev.clientY, text });
   /** 노드와 통로는 문장이 아니라 카드다(NodeTooltipCard / EdgeTooltipCard) — 지도 임플란트
-   * 화살표처럼 성격이 하나뿐인 표식만 그대로 문자열을 쓴다. 두 카드의 자리는 커서가 아니라
-   * 그 대상의 **캔버스 좌표**다(anchor) — 노드는 제 자리에, 통로는 가운데에 붙는다. */
-  const showNodeHover = (pos, description, hint) => scheduleHover({ anchor: { x: pos.x, y: pos.y }, node: description, hint });
-  const showEdgeHover = (pos, description) => scheduleHover({ anchor: { x: pos.x, y: pos.y }, edge: description });
+   * 화살표처럼 성격이 하나뿐인 표식만 그대로 문자열을 쓴다. 상태에는 대상 id와 자리만 담고
+   * 카드 내용은 렌더 때 그 하나만 만든다. 두 카드의 자리는 커서가 아니라 그 대상의 **캔버스
+   * 좌표**다(anchor) — 노드는 제 자리에, 통로는 가운데에 붙는다. */
+  const showNodeHover = (nodeId, pos) => scheduleHover({ kind: 'node', id: nodeId, anchor: { x: pos.x, y: pos.y } });
+  const showEdgeHover = (edgeId, pos) => scheduleHover({ kind: 'edge', id: edgeId, anchor: { x: pos.x, y: pos.y } });
+  /** 사이드바 줄에 얹었을 때 — 지도 위 자리가 없으므로 그 노드만 밝히고 카드는 띄우지 않는다. */
+  const highlightNode = (nodeId) => scheduleHover(nodeId ? { kind: 'node', id: nodeId } : null);
   const hideHover = () => scheduleHover(null);
   const recenterAt = (canvasX, canvasY) => setView((v) => ({ ...v, x: -(canvasX - CANVAS_CENTER) * v.scale, y: -(canvasY - CANVAS_CENTER) * v.scale }));
   /** 패널 줄을 눌렀을 때 지도를 그 노드로 옮긴다 — 위치를 말로만 읽어 주면 결국 눈으로 찾아야 한다. */
   const focusOnNode = (nodeId) => {
     const pos = positions[nodeId];
     if (pos) recenterAt(pos.x, pos.y);
+  };
+  /** 지도를 옮기는 사이드바 줄의 공통 키보드 처리 — 마우스로만 닿는 줄은 없어야 한다. */
+  const focusNodeKeyDown = (nodeId) => (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    ev.preventDefault();
+    focusOnNode(nodeId);
   };
 
   // 현재 뷰(팬/줌)에서 실제로 보이는 캔버스 좌표 범위 — 미니맵 뷰포트 사각형 계산용.
@@ -1459,6 +1530,8 @@ export function MapScreen() {
   const inspectedObservedAt = selectedNodeId && run.observations[selectedNodeId] ? run.observations[selectedNodeId].observedAt : null;
   const selectedEdge = selectedNodeId ? findTraversableEdge(run, selectedNodeId) : null;
   const selectedEdgeTraversable = selectedEdge ? canTraverseEdge(run, selectedEdge, capabilities.mobility) : false;
+  // 선택 노드 패널의 도착 위험 예보 — 색과 문구가 같은 한 번의 계산에서 나와야 한다.
+  const selectedMoveRisk = selectedEdge ? movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility) : null;
   const selectedCamera = selectedNodeId ? cameraByNode[selectedNodeId] : null;
   const selectedCameraActive = selectedCamera
     && !(run.disabledCameraIds || []).includes(selectedCamera.id)
@@ -1483,6 +1556,30 @@ export function MapScreen() {
   const staleSightings = staleThreatSightings(run);
   const interruption = interruptionNotice(run);
   const waitNotice = waitBatchNotice(run);
+
+  /** 특수 엣지의 성격이 드러났는가 — 지도 선 모양과 통로 카드가 같은 게이팅을 쓴다. */
+  const edgeRevealed = (edge) => debugReveal
+    || nodeKnowledge(run, edge.from, viewCapabilities.perception) !== 'unknown'
+    || nodeKnowledge(run, edge.to, viewCapabilities.perception) !== 'unknown';
+  // 접근 모드 표는 현재 노드 패널 안에만 있다 — 통로 카드가 그 표를 가리키려면 그게 보여야 한다.
+  const approachPanelVisible = currentSpecialEdges.length > 0 && (!selectedNodeId || selectedNodeId === run.playerNodeId);
+
+  // 호버 카드는 **지금 얹혀 있는 하나만** 만든다. 100여 노드·통로의 설명을 미리 만들어 핸들러에
+  // 실어 두면 호버 한 번이 지도 전체를 다시 설명하는 일이 되고, 호버 중에 상황이 바뀌어도
+  // 카드는 얹은 순간의 옛 run을 말하게 된다.
+  const hoveredNode = hover?.kind === 'node' && hover.anchor ? nodeById[hover.id] : null;
+  const hoveredNodeDescription = hoveredNode
+    ? describeNode(run, hoveredNode, threatsByNode, exitByNode, debugReveal, viewCapabilities.stealth, viewCapabilities.perception)
+    : null;
+  const hoveredNodeHint = hoveredNode && canMoveNow(hoveredNode.id) ? '클릭해 선택 · 더블클릭해 이동' : '클릭해 선택';
+  const hoveredEdge = hover?.kind === 'edge' && hover.anchor ? run.graph.edges.find((e) => e.id === hover.id) : null;
+  const hoveredEdgeDescription = hoveredEdge
+    ? describeEdge(run, hoveredEdge, {
+      revealed: edgeRevealed(hoveredEdge), capabilities, debugReveal, openableEdgeIds, pickableEdgeIds,
+      activeBarriers, routeEdgeIds, playerHops, edgeApproachMode, threatMoves,
+      nodeById, blockedByEncounter: encounterBlocked, approachPanelVisible,
+    })
+    : null;
 
   return html`
     <div style=${{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
@@ -1564,11 +1661,13 @@ export function MapScreen() {
               color: recent ? 'var(--color-bg)' : 'var(--color-text)',
               background: recent ? 'var(--color-negative, #dd2b0f)' : 'var(--color-neutral-200)',
             }}
-            onMouseEnter=${() => setHoveredNodeId(run.lastCameraDetection.nodeId)}
-            onMouseLeave=${() => setHoveredNodeId(null)}
+            role="button" tabindex="0"
+            onMouseEnter=${() => highlightNode(run.lastCameraDetection.nodeId)}
+            onMouseLeave=${() => highlightNode(null)}
             onClick=${() => focusOnNode(run.lastCameraDetection.nodeId)}
+            onKeyDown=${focusNodeKeyDown(run.lastCameraDetection.nodeId)}
           >
-            카메라 발각 — ${where}에서 ${elapsed}칸 전 위치가 노출됐습니다.${recent ? ' 반경 3홉 내 적이 이 위치로 이동했습니다.' : ''}
+            카메라 발각 — ${where}에서 ${elapsed}칸 전 위치가 노출됐습니다.${recent ? ` 반경 ${CAMERA_ALERT_RANGE}홉 내 적이 이 위치로 이동했습니다.` : ''}
           </div>
         `;
       })() : null}
@@ -1593,7 +1692,7 @@ export function MapScreen() {
               <div><strong style=${{ color: loot.color }}>${loot.name}</strong>${loot.sub ? ` · ${loot.sub}` : ''}</div>
             </div>`;
           })() : null}
-          ${run.encounter ? html`<div style=${{ pointerEvents: 'auto' }}><${EncounterPanel} run=${run} capabilities=${capabilities} /></div>` : null}
+          ${run.encounter ? html`<div class="map-encounter-slot" style=${{ pointerEvents: 'auto' }}><${EncounterPanel} run=${run} capabilities=${capabilities} /></div>` : null}
         </div>
       ` : null}
 
@@ -1642,7 +1741,7 @@ export function MapScreen() {
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>⇄</span>구역 출입구(관문). 인접 구역으로 넘어가는 유일한 일반 통로이자 증원이 들어오는 자리</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>†</span>전투에서 이긴 자리에 남은 시체. 위협이 밟으면 신고되어 경계 게이지가 오른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#b45309', fontWeight: 800 }}>˙N</span>내가 남긴 흔적 수. 강한 흔적이 발견되면 경계 게이지가 오른다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▲N</span>포착된 위협 그룹 수(시야 밖에서는 그룹 수 없이 ▲만)</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▲N</span>포착된 위협 그룹 수(시야 밖은 마지막 확인 때의 수)</div>
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>위협 표식 — 실시간으로 볼 때만 모드가 붙는다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)' }}>▲N</span>순찰 — 정해진 길을 돈다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)', fontWeight: 800 }}>▲N</span>조사/경계 — 무언가를 보고 움직이는 중</div>
@@ -1695,7 +1794,7 @@ export function MapScreen() {
                   // 정찰해 본 적이 있어야만(unknown이 아니어야) 드러난다 — 그 전까지는 평범한
                   // 엣지처럼 보인다. 실제로 열 수 있는지(openable)는 항상 인접 엣지에서만
                   // 계산되므로 이 게이팅과 무관하게 이미 안전하다.
-                  const revealed = debugReveal || nodeKnowledge(run, e.from, viewCapabilities.perception) !== 'unknown' || nodeKnowledge(run, e.to, viewCapabilities.perception) !== 'unknown';
+                  const revealed = edgeRevealed(e);
                   const special = e.features.length > 0 && revealed;
                   const opened = run.openedEdgeIds.includes(e.id);
                   const openable = openableEdgeIds.has(e.id);
@@ -1712,13 +1811,10 @@ export function MapScreen() {
                   const isSpine = !special && PASSAGE_TYPES.has(nodeTypeById[e.from]) && PASSAGE_TYPES.has(nodeTypeById[e.to]);
                   const stroke = barrier ? 'var(--color-neutral-900)' : pickable ? 'var(--color-accent)' : openable ? 'var(--color-accent-2-700)' : highGround ? '#7c3aed' : 'var(--color-divider)';
                   const oneWay = e.bidirectional === false && revealed;
-                  // 통로의 설명은 문장이 아니라 카드다(EdgeTooltipCard) — 잠금·고지대·방향·
-                  // 장벽·이동은 서로 다른 결정을 부르므로 각자의 줄을 가져야 한다.
-                  const edgeDescription = describeEdge(run, e, {
-                    revealed, capabilities, debugReveal, openableEdgeIds, pickableEdgeIds,
-                    activeBarriers, routeEdgeIds, playerHops, edgeApproachMode, threatMoves,
-                  });
                   const { d: pathD, midX, midY, angleDeg } = edgePath(from, to);
+                  // 통로의 설명(카드)은 호버한 그 하나만 렌더 아래쪽에서 만든다 — 여기서 전부
+                  // 만들면 통로 200여 개의 설명을 매 프레임 새로 짓게 된다.
+                  const edgeLabel = `통로: ${NODE_TYPE_LABELS[nodeTypeById[e.from]] || e.from} ↔ ${NODE_TYPE_LABELS[nodeTypeById[e.to]] || e.to}`;
                   return html`
                     <g key=${e.id}>
                       ${highlighted ? html`<path d=${pathD} fill="none" stroke="var(--color-accent-300)" stroke-width="9" pointer-events="none"></path>` : null}
@@ -1732,13 +1828,19 @@ export function MapScreen() {
                         d=${pathD} fill="none" stroke="transparent" stroke-width="16"
                         data-edge-id=${e.id}
                         style=${{ cursor: clickable ? 'pointer' : 'default' }}
+                        role=${clickable ? 'button' : undefined}
+                        aria-label=${clickable ? edgeLabel : undefined}
                         onClick=${() => handleEdgeClick(e)}
-                        onMouseEnter=${() => { showEdgeHover({ x: midX, y: midY }, edgeDescription); setHoveredEdgeId(e.id); }}
-                        onMouseLeave=${() => { hideHover(); setHoveredEdgeId(null); }}
+                        onMouseEnter=${() => showEdgeHover(e.id, { x: midX, y: midY })}
+                        onMouseLeave=${hideHover}
                         tabindex=${clickable ? 0 : undefined}
-                        onFocus=${() => { showEdgeHover({ x: midX, y: midY }, edgeDescription); setHoveredEdgeId(e.id); }}
-                        onBlur=${() => { hideHover(); setHoveredEdgeId(null); }}
-                        onKeyDown=${(ev) => { if (clickable && (ev.key === 'Enter' || ev.key === ' ')) handleEdgeClick(e); }}
+                        onFocus=${() => showEdgeHover(e.id, { x: midX, y: midY })}
+                        onBlur=${hideHover}
+                        onKeyDown=${(ev) => {
+                          if (!clickable || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+                          ev.preventDefault(); // Space가 화면을 굴려 버리면 지도에서 손이 떠난다
+                          handleEdgeClick(e);
+                        }}
                       ></path>
                     </g>
                   `;
@@ -1746,12 +1848,11 @@ export function MapScreen() {
               </g>
               ${run.graph.nodes.map((n) => {
                 if (!chartedNodeIds.has(n.id)) return null;
-                const knowledge = nodeKnowledge(run, n.id, viewCapabilities.perception);
+                // 관측 상태와 위협 수는 노드 카드와 같은 하나의 계산에서 온다(nodeThreatView) —
+                // 시야 밖이면 마지막으로 확인한 그룹 수를 그대로 적는다.
+                const { knowledge, live, hasThreat, threatCount } = nodeThreatView(run, n.id, threatsByNode, debugReveal, viewCapabilities.perception);
                 const pos = positions[n.id];
                 const exit = exitByNode[n.id];
-                const live = debugReveal || knowledge === 'current' || knowledge === 'fresh';
-                const hasThreat = live ? (threatsByNode[n.id] || []).length > 0 : !!run.observations[n.id]?.hasThreat;
-                const threatCount = live ? (threatsByNode[n.id] || []).length : (run.observations[n.id]?.hasThreat ? null : 0);
                 // displayKnowledge: 디버그 모드에서 색/투명도만 "다 보임"으로 바꾼다(진짜 knowledge는
                 // 그대로 둬서 이동 가능 판정 등 다른 로직은 안개 규칙을 그대로 따른다).
                 const displayKnowledge = debugReveal ? (n.id === run.playerNodeId ? 'current' : 'fresh') : knowledge;
@@ -1765,8 +1866,6 @@ export function MapScreen() {
                     ? run.graph.opportunities.find((o) => o.id === opportunity.id)?.tier
                     : scoutedGradeOf(run, n.id, opportunity.id)?.tier)
                   : null;
-                const nodeDescription = describeNode(run, n, threatsByNode, exitByNode, debugReveal, viewCapabilities.stealth, viewCapabilities.perception);
-                const nodeHint = canMoveNow(n.id) ? '클릭해 선택 · 더블클릭해 이동' : '클릭해 선택';
                 const isSelected = n.id === selectedNodeId || (!selectedNodeId && n.id === run.playerNodeId);
                 const activelyObserved = activeReconNodeIds.has(n.id);
                 const camera = cameraByNode[n.id];
@@ -1831,11 +1930,11 @@ export function MapScreen() {
                       style=${{ cursor: 'pointer' }}
                       onClick=${() => handleNodeSelect(n.id)}
                       onDblClick=${() => handleNodeDoubleClick(n.id)}
-                      onMouseEnter=${() => { showNodeHover(pos, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
-                      onMouseLeave=${() => { hideHover(); setHoveredNodeId(null); }}
+                      onMouseEnter=${() => showNodeHover(n.id, pos)}
+                      onMouseLeave=${hideHover}
                       tabindex=${n.id === focusedNodeId ? 0 : -1}
-                      onFocus=${() => { showNodeHover(pos, nodeDescription, nodeHint); setHoveredNodeId(n.id); }}
-                      onBlur=${() => { hideHover(); setHoveredNodeId(null); }}
+                      onFocus=${() => showNodeHover(n.id, pos)}
+                      onBlur=${hideHover}
                       onKeyDown=${(ev) => handleNodeKeyDown(ev, n.id)}
                     ></circle>
                   </g>
@@ -1851,8 +1950,8 @@ export function MapScreen() {
                   if (!pos) return null;
                   return html`
                     <g key=${hunter.id}>
-                      <text x=${pos.x} y=${pos.y + NODE_RADIUS + 12} text-anchor="middle" font-size="12" font-weight="900" fill="var(--color-negative, #dd2b0f)">◆</text>
-                      <text x=${pos.x} y=${pos.y + NODE_RADIUS + 22} text-anchor="middle" font-size="9" font-weight="800" fill="var(--color-negative, #dd2b0f)">추적자</text>
+                      <text data-hunter-marker=${hunter.id} x=${pos.x} y=${pos.y + NODE_RADIUS + 12} text-anchor="middle" font-size="12" font-weight="900" fill="var(--color-negative, #dd2b0f)">◆</text>
+                      <text data-hunter-marker=${hunter.id} x=${pos.x} y=${pos.y + NODE_RADIUS + 22} text-anchor="middle" font-size="9" font-weight="800" fill="var(--color-negative, #dd2b0f)">추적자</text>
                     </g>
                   `;
                 })}
@@ -1908,24 +2007,24 @@ export function MapScreen() {
             </svg>
           </div>
 
-          ${hover && hover.node ? html`
+          ${hoveredNodeDescription ? html`
             <div ref=${hoverCardRef} style=${{
               position: 'fixed', left: `${hoverCardPos.left}px`, top: `${hoverCardPos.top}px`, zIndex: 100,
               boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
             }}>
-              <${NodeTooltipCard} description=${hover.node} text=${describeNodeText(hover.node)} hint=${hover.hint || '클릭해 선택'} />
+              <${NodeTooltipCard} description=${hoveredNodeDescription} text=${describeNodeText(hoveredNodeDescription)} hint=${hoveredNodeHint} />
             </div>
           ` : null}
-          ${hover && hover.edge ? html`
+          ${hoveredEdgeDescription ? html`
             <div ref=${hoverCardRef} style=${{
               position: 'fixed', left: `${hoverCardPos.left}px`, top: `${hoverCardPos.top}px`, zIndex: 100,
               boxShadow: 'var(--shadow-lg)', pointerEvents: 'none',
             }}>
-              <${EdgeTooltipCard} description=${hover.edge} text=${describeEdgeText(hover.edge)} />
+              <${EdgeTooltipCard} description=${hoveredEdgeDescription} text=${describeEdgeText(hoveredEdgeDescription)} />
             </div>
           ` : null}
           ${/* 지도 위에 자리가 없는 표식(임플란트 화살표)만 커서를 따라간다. */ null}
-          ${hover && !hover.node && !hover.edge ? html`
+          ${hover && hover.text ? html`
             <div style=${{
               position: 'fixed', left: `${hover.x + 14}px`, top: `${hover.y + 14}px`, zIndex: 100,
               background: 'var(--color-neutral-900)', color: 'var(--color-bg)', padding: '6px 10px',
@@ -1992,9 +2091,12 @@ export function MapScreen() {
                     display: 'flex', gap: '6px', fontSize: '10.5px', cursor: event.nodeId ? 'pointer' : 'default',
                     ...(event.kind === 'collapse' || event.kind === 'closure' ? deadlineStyle(event.inTicks) : { color: 'var(--color-neutral-700)' }),
                   }}
-                  onMouseEnter=${() => { if (event.nodeId) setHoveredNodeId(event.nodeId); }}
-                  onMouseLeave=${() => { if (event.nodeId) setHoveredNodeId(null); }}
+                  role=${event.nodeId ? 'button' : undefined}
+                  tabindex=${event.nodeId ? 0 : undefined}
+                  onMouseEnter=${() => { if (event.nodeId) highlightNode(event.nodeId); }}
+                  onMouseLeave=${() => { if (event.nodeId) highlightNode(null); }}
                   onClick=${() => { if (event.nodeId) focusOnNode(event.nodeId); }}
+                  onKeyDown=${(ev) => { if (event.nodeId) focusNodeKeyDown(event.nodeId)(ev); }}
                 >
                   <span style=${{ minWidth: '40px', fontWeight: 800, textAlign: 'right' }}>${event.inTicks}칸 후</span>
                   <span>${event.text}</span>
@@ -2011,9 +2113,11 @@ export function MapScreen() {
               <${Tooltip} key=${hunter.id} align="left" width=${260} content=${`경계도 3단계가 내보낸 개체입니다. 조우 회피도 속이기도 통하지 않고, 같은 노드에 닿으면 곧바로 전투입니다. 2칸마다 한 번 움직이며(경계도·봉쇄와 무관), ${hunter.ticksUntilLost}칸 동안 나를 보지 못하면 물러납니다. 구역 경계도를 3 아래로 내리거나 그 구역 통제실을 장악해도 물러납니다.`}>
                 <div
                   style=${{ fontSize: '10.5px', color: 'var(--color-negative, #dd2b0f)', fontWeight: 900, width: 'fit-content', cursor: 'pointer', marginBottom: '3px' }}
-                  onMouseEnter=${() => setHoveredNodeId(hunter.nodeId)}
-                  onMouseLeave=${() => setHoveredNodeId(null)}
+                  role="button" tabindex="0"
+                  onMouseEnter=${() => highlightNode(hunter.nodeId)}
+                  onMouseLeave=${() => highlightNode(null)}
                   onClick=${() => focusOnNode(hunter.nodeId)}
+                  onKeyDown=${focusNodeKeyDown(hunter.nodeId)}
                 >
                   ◆ 추적자 · ${SECTOR_NAMES[hunter.sectorId] || hunter.sectorId} · 나와 ${hunter.hopsFromPlayer ?? '?'}홉 · 놓치기까지 ${hunter.ticksUntilLost}칸
                 </div>
@@ -2037,9 +2141,11 @@ export function MapScreen() {
                 <${Tooltip} key=${threat.id} align="left" width=${250} content=${`${whereIs(threat.nodeId)}에서 관측 중입니다. ${threatCompositionNote(threat)} ${threat.interval !== null && threat.interval !== undefined ? `지금 상태(${THREAT_MODE_LABELS[threat.mode] || threat.mode})를 유지하면 ${threat.interval}칸마다 한 번 움직입니다 — 추적으로 바뀌면 더 빨라집니다.` : '이동 주기는 Perception 2부터 읽힙니다.'} 어디로 갈지는 알 수 없습니다. 줄을 누르면 지도가 그 자리로 갑니다.`}>
                   <div
                     style=${{ fontSize: '10.5px', color: 'var(--color-negative, #dd2b0f)', fontWeight: 700, width: 'fit-content', cursor: 'pointer' }}
-                    onMouseEnter=${() => setHoveredNodeId(threat.nodeId)}
-                    onMouseLeave=${() => setHoveredNodeId(null)}
+                    role="button" tabindex="0"
+                    onMouseEnter=${() => highlightNode(threat.nodeId)}
+                    onMouseLeave=${() => highlightNode(null)}
                     onClick=${() => focusOnNode(threat.nodeId)}
+                    onKeyDown=${focusNodeKeyDown(threat.nodeId)}
                   >
                     ${whereIs(threat.nodeId)} · ${threatSummaryText(threat)}${threat.ticksUntilMove !== null && threat.ticksUntilMove !== undefined ? ` · 다음 이동까지 ${threat.ticksUntilMove}칸` : ''}
                   </div>
@@ -2049,9 +2155,11 @@ export function MapScreen() {
                 <div
                   key=${sighting.nodeId}
                   style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', cursor: 'pointer', width: 'fit-content' }}
-                  onMouseEnter=${() => setHoveredNodeId(sighting.nodeId)}
-                  onMouseLeave=${() => setHoveredNodeId(null)}
+                  role="button" tabindex="0"
+                  onMouseEnter=${() => highlightNode(sighting.nodeId)}
+                  onMouseLeave=${() => highlightNode(null)}
                   onClick=${() => focusOnNode(sighting.nodeId)}
+                  onKeyDown=${focusNodeKeyDown(sighting.nodeId)}
                 >
                   ${whereIs(sighting.nodeId)} · ${sighting.ticksAgo}칸 전 관측
                 </div>
@@ -2139,7 +2247,7 @@ export function MapScreen() {
                     ? `${describeForecast(forecastAction('move', { edge: selectedEdge, value: capabilities.mobility }), '이동')}${selectedEdge.features.includes('highGround') ? ` · ${highGroundNote(selectedEdge, capabilities.mobility)}` : ''}`
                     : '경로 없음'}
                 </div>
-                ${selectedEdgeTraversable ? html`<div style=${{ fontSize: '10.5px', color: movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).color, marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${movementRiskForecast(run, selectedEdge, selectedNodeId, capabilities.mobility).label}</div>` : null}
+                ${selectedEdgeTraversable && selectedMoveRisk ? html`<div style=${{ fontSize: '10.5px', color: selectedMoveRisk.color, marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${selectedMoveRisk.label}</div>` : null}
                 ${selectedCameraActive ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${CAMERA_WATCH_NOTICE}</div>` : null}
               ` : null}
 
@@ -2417,7 +2525,7 @@ export function MapScreen() {
                       ${/* 파밍과 같은 3모드 선택 — 개방도 "시간을 더 쓰고 조용히"와 "빨리 시끄럽게"의
                            선택이므로, 한쪽에만 모드를 주면 같은 결정을 두 규칙으로 배우게 된다. */ null}
                       <div style=${{ display: 'flex', gap: '4px', marginBottom: '5px' }}>
-                        ${[['safe', '안전'], ['normal', '표준'], ['rush', '강행']].map(([mode, modeLabel]) => html`
+                        ${Object.entries(EDGE_APPROACH_LABELS).map(([mode, modeLabel]) => html`
                           <button
                             key=${mode}
                             class=${edgeApproachMode === mode ? 'btn btn-primary' : 'btn btn-secondary'}
@@ -2436,7 +2544,7 @@ export function MapScreen() {
                             key=${edge.id} run=${run} actionId="openEdge"
                             opts=${{ value: current, capabilityKind: kind, edge, mode: edgeApproachMode }}
                             label=${`${featureText(edge.features)} 통로 개방`}
-                            tip=${`이 통로는 ${featureText(edge.features)}으로 막혀 있습니다. ${kindLabel} ${required}이 표준, ${required - 2} 이상이면 대가를 치르고 열 수 있습니다(현재 ${current}). 지도에서 이 엣지를 직접 클릭해도 됩니다.`}
+                            tip=${`이 통로는 ${featureText(edge.features)}으로 막혀 있습니다. ${kindLabel} ${required}이 표준, ${required + CAPABILITY_STEP_MIN_GAP} 이상이면 대가를 치르고 열 수 있습니다(현재 ${current}). 지도에서 이 엣지를 직접 클릭해도 됩니다.`}
                             onClick=${() => handleEdgeClick(edge)}
                           />
                         `;
@@ -2618,7 +2726,7 @@ export function MapScreen() {
                             onClick=${() => runCommand({ type: 'CUT_POWER' })}
                           />
                         ` : null}
-                        ${canBroadcast ? broadcastTargetSectorIds.map((target) => {
+                        ${canBroadcast ? broadcastSectorIds.map((target) => {
                           // 상한(3)에 찬 구역으로는 넘길 수 없다 — 넘기면 +1이 잘려 경계도가
                           // 사라지고, 옮기는 수단이 지우는 수단이 된다(총량 보존, ADR-0073).
                           const full = (run.sectorAlerts[target]?.level || 0) >= 3;

@@ -13,6 +13,7 @@ import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import { createRunState } from '../src/engine/runEngine.js';
 import { RUN_COLLAPSE_TIME, BASIC_RECON_TIME } from '../src/data/facilityLayout.js';
 import { finishTaskSnapshot } from './helpers/finishTask.js';
+import { layoutPositions, CANVAS_WIDTH, CANVAS_HEIGHT, NODE_RADIUS } from '../src/components/mapLayout.js';
 
 const projectUrl = (path) => new URL(path, import.meta.url).href;
 register(projectUrl('./helpers/preactResolve.mjs'));
@@ -168,7 +169,12 @@ test('열세 조우 패널은 지금 되는 것과 막힌 것을 나란히 적�
     encounter: { threatId: threat.id, nodeId: base.playerNodeId, tier: 'disadvantage', graceUsed: false },
   };
 
-  const text = renderMap(run);
+  // 화면 전체 글자에서 찾으면 사이드바의 다른 문구가 우연히 같은 말을 해도 통과한다 —
+  // 조우 패널 **안**에서만 본다.
+  const root = mountMap(run);
+  const panel = queryAll(root, (el) => el.getAttribute && el.getAttribute('class') === 'map-encounter-slot')[0];
+  assert.ok(panel, '조우 패널이 떠 있어야 한다');
+  const text = panel.textContent;
   assert.ok(text.includes('지금 할 수 있는 것'), '허용·막힘 목록의 제목이 있어야 한다');
   assert.ok(text.includes('유료 행동 1회'), '열세에서 남은 행동권이 적혀 있어야 한다');
   assert.ok(text.includes('허용') && text.includes('막힘'), '두 칸의 라벨이 모두 있어야 한다');
@@ -599,6 +605,19 @@ test('노드 카드는 커서가 아니라 그 노드의 자리에 붙는다', a
   assert.ok(Number.isFinite(Number.parseFloat(card.style.left)), '카드 위치가 숫자여야 한다');
   assert.ok(!card.style.left.startsWith('-9999'), '노드 자리에서 계산한 위치가 아직 반영되지 않았다');
 
+  // "커서에서 나오지 않았다"만으로는 자리가 맞는지 모른다 — 화면이 쓰는 그 계산식으로 직접 잰다.
+  // (miniDom의 getBoundingClientRect는 0,0에 100×100, 기본 뷰는 scale 1 · 팬 0이다.)
+  const rect = { left: 0, top: 0, width: 100, height: 100 };
+  const fit = Math.min(rect.width / CANVAS_WIDTH, rect.height / CANVAS_HEIGHT);
+  const anchor = layoutPositions(run.graph)[run.playerNodeId];
+  const screenX = rect.left + (rect.width - CANVAS_WIDTH * fit) / 2 + fit * anchor.x;
+  const screenY = rect.top + (rect.height - CANVAS_HEIGHT * fit) / 2 + fit * anchor.y;
+  const gap = (NODE_RADIUS + 12) * fit;
+  assert.ok(Math.abs(Number.parseFloat(card.style.left) - Math.max(8, screenX + gap)) < 0.5,
+    `카드 left가 계산식과 다르다: ${card.style.left}`);
+  assert.ok(Math.abs(Number.parseFloat(card.style.top) - Math.max(8, screenY - 12)) < 0.5,
+    `카드 top이 계산식과 다르다: ${card.style.top}`);
+
   resetMapView();
 });
 
@@ -647,7 +666,14 @@ test('추적자는 관측하지 못한 구역에 있어도 지도와 위협 패�
     sectorAlerts: { ...base.sectorAlerts, [farSector]: { level: 3, pressure: 0, resolvedEventIds: [] } },
   };
 
-  const text = mountMap(run).textContent;
+  const root = mountMap(run);
+  // 지도 레이어는 글자 검색이 아니라 표식 엘리먼트로 확인한다 — 사이드바의 '추적자' 줄이
+  // 지도 표식 대신 통과시키면 "지도에서 사라지는" 회귀를 못 잡는다.
+  const markers = queryAll(root, (el) => el.getAttribute && el.getAttribute('data-hunter-marker') === `hunter_${farSector}`);
+  assert.ok(markers.length >= 2, '지도에 추적자 표식(◆과 이름)이 그려져야 한다');
+  assert.ok(markers.some((el) => el.textContent === '◆'), '지도 표식에 ◆가 있어야 한다');
+  assert.ok(markers.some((el) => el.textContent === '추적자'), '지도 표식에 이름이 붙어야 한다');
+  const text = root.textContent;
   assert.ok(text.includes('추적자'), '미관측 구역의 추적자도 지도·패널에 이름이 보여야 한다');
   assert.ok(text.includes('놓치기까지 16칸'), '남은 칸이 위협 패널 첫 줄에 보여야 한다');
 });
@@ -709,4 +735,54 @@ test('카메라 위치는 관측하지 않은 노드에서도 노드 카드에 �
   fire(hit, 'click');
   await new Promise((resolve) => { setTimeout(resolve, 0); });
   assert.ok(root.textContent.includes('카메라 작동 중'), '미확인 노드에서도 카메라 상태가 보여야 한다');
+});
+
+test('도착 위험 예보는 관측하지 못한 위협을 세지 않는다', async () => {
+  // 안개 밖의 위협까지 세면 화면이 플레이어가 모르는 정보를 예고한다 — 관측 범위(현재·인접·
+  // 정찰) 밖에 세워 둔 위협은 도착 예보에 한 그룹도 보태지 않아야 한다.
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const edge = base.graph.edges.find((e) => (e.from === base.playerNodeId || e.to === base.playerNodeId)
+    && e.features.length === 0 && e.bidirectional !== false);
+  const destination = edge.from === base.playerNodeId ? edge.to : edge.from;
+  // 도착지에서 한 홉이지만 내게서는 두 홉인 노드 — 무료 인접 시야가 닿지 않는 자리다.
+  const adjacentToMe = new Set(base.graph.edges
+    .filter((e) => e.from === base.playerNodeId || e.to === base.playerNodeId)
+    .map((e) => (e.from === base.playerNodeId ? e.to : e.from)));
+  const hidden = base.graph.edges
+    .filter((e) => e.from === destination || e.to === destination)
+    .map((e) => (e.from === destination ? e.to : e.from))
+    .find((id) => id !== base.playerNodeId && !adjacentToMe.has(id));
+  assert.ok(hidden, '도착지에서 한 홉이면서 내 시야 밖인 노드가 있어야 한다');
+
+  const threat = Object.values(base.threats)[0];
+  const run = {
+    ...base,
+    observations: {},
+    threats: { [threat.id]: { ...threat, nodeId: hidden, alwaysVisible: false, nextMoveAt: base.time } },
+  };
+  const root = mountMap(run);
+  const text = await hoverEdge(root, edge.id);
+  assert.ok(!text.includes('도착 중 적 유입 가능'), '관측하지 못한 위협을 유입으로 세면 안 된다');
+  assert.ok(text.includes('관측 중인 위협 없음'), '모르는 것은 모른다고 적어야 한다');
+});
+
+test('시야 밖 노드의 위협 표식은 마지막으로 확인한 그룹 수를 적는다', () => {
+  // 시야를 벗어났다고 수를 지우면 화면이 아는 것보다 덜 말한다 — 관측 기록의 threatCount가
+  // 그대로 ▲N으로 남고, 노드 카드와 같은 규칙이어야 한다.
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const adjacent = new Set(base.graph.edges
+    .filter((e) => e.from === base.playerNodeId || e.to === base.playerNodeId)
+    .map((e) => (e.from === base.playerNodeId ? e.to : e.from)));
+  const far = base.graph.nodes.find((n) => n.id !== base.playerNodeId && !adjacent.has(n.id));
+  const run = {
+    ...base,
+    threats: {},
+    observations: {
+      ...base.observations,
+      [far.id]: { observedAt: base.time - 5, hasThreat: true, threatCount: 2, detailLevel: 0 },
+    },
+  };
+  assert.ok(mountMap(run).textContent.includes('▲2'), '시야 밖 표식에도 마지막 확인 그룹 수가 붙어야 한다');
 });

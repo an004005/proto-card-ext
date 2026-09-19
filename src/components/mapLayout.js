@@ -25,11 +25,24 @@ const RELAX_SETTLE_EPSILON = 0.5;
 const RELAX_OVERSHOOT = 3;
 
 /**
+ * 그래프별 배치 결과 캐시. 배치는 그래프만의 순수 함수인데 구역이 두 배가 된 뒤로는 한 번
+ * 도는 데 0.4초가 걸린다 — 화면이 다시 마운트될 때마다(전투·인벤토리 팝업마다) 그 값을 다시
+ * 만들면 지도가 열릴 때마다 눈에 띄게 멈춘다. 그래프 객체는 런 동안 바뀌지 않으므로 그것을
+ * 키로 기억해 두고, 런이 끝나 그래프가 버려지면 캐시도 함께 사라진다(WeakMap).
+ * @type {WeakMap<object, Record<string, {x: number, y: number}>>}
+ */
+const layoutCache = new WeakMap();
+
+/**
  * @param {{nodes: {id: string, x: number, y: number}[], edges: {from: string, to: string}[]}} graph
  * @returns {Record<string, {x: number, y: number}>}
  */
 export function layoutPositions(graph) {
-  return relaxPositions(graph, inflateSectors(graph, rehangRooms(graph, scaledPositions(graph))));
+  const cached = layoutCache.get(graph);
+  if (cached) return cached;
+  const positions = relaxPositions(graph, inflateSectors(graph, rehangRooms(graph, scaledPositions(graph))));
+  layoutCache.set(graph, positions);
+  return positions;
 }
 
 /** 지나가기 위한 노드 — 이들끼리 잇는 엣지가 구역 평면도의 복도 뼈대다. */
