@@ -9,7 +9,7 @@ import { ALERT_GAUGE_CAPACITY, ALERT_PRESSURE } from '../data/facilityLayout.js'
 import { Tooltip } from './Tooltip.js';
 
 export const STEP_LABELS = { surplus: '여유', standard: '표준', strained: '무리', severe: '위태', impossible: '불가' };
-export const STEP_COLORS = { surplus: '#15803d', standard: 'var(--color-neutral-600)', strained: '#b45309', severe: '#dc2626', impossible: '#dc2626' };
+export const STEP_COLORS = { surplus: 'var(--color-positive)', standard: 'var(--color-neutral-600)', strained: 'var(--color-warning)', severe: 'var(--color-negative)', impossible: 'var(--color-negative)' };
 
 /**
  * 층계(D8)로 바뀌면서 버튼은 더 이상 잠기지 않고 "대가를 치르고 된다"가 됐다. 그 대가가 누르기

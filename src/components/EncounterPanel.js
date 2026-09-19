@@ -58,7 +58,10 @@ const TIER_BUTTONS = {
  */
 const TIER_ALLOWANCE = {
   advantage: {
-    extra: '이동 · 정찰 · 대기 · 파밍 · 장비 사용 — 모든 행동',
+    // 우위는 막히는 것이 없어서 이름을 다 늘어놓으면 줄만 길어진다. `summary`가 있으면 그것이
+    // 허용 칸 전체가 되고, 없으면 버튼 이름 + `extra`를 이어 붙인다. 이름은 이 경우에도
+    // TIER_BUTTONS에서 나오므로 버튼이 바뀌면 문구도 같이 바뀐다.
+    summary: (names) => `모든 행동 — ${names.join('·')} 포함`,
     blocked: '없음',
   },
   disadvantage: {
@@ -75,12 +78,16 @@ const TIER_ALLOWANCE = {
   },
 };
 
-/** 그 층의 버튼 이름 + 버튼 없이 되는 것. 표와 버튼이 갈라지지 않도록 여기서만 만든다. */
+/**
+ * 그 층의 버튼 이름 + 버튼 없이 되는 것. 표와 버튼이 갈라지지 않도록 여기서만 만든다.
+ * 층 정의에 `summary`가 있으면 버튼 이름을 넘겨 요약 한 줄을 받고, 없으면 이어 붙인다.
+ */
 export function encounterAllowanceText(tier) {
   const entry = TIER_ALLOWANCE[tier];
   if (!entry) return null;
   const names = (TIER_BUTTONS[tier] || []).filter((button) => button.allow).map((button) => button.allow);
-  return { allowed: [...names, entry.extra].join(' · '), blocked: entry.blocked };
+  const allowed = entry.summary ? entry.summary(names) : [...names, entry.extra].join(' · ');
+  return { allowed, blocked: entry.blocked };
 }
 
 /** 조우 층 설명 밑에 붙는 두 칸짜리 요약 — "그래서 지금 뭘 누를 수 있는가"에 답한다. */

@@ -181,7 +181,7 @@ function PendingTaskPanel({ run, runCommand }) {
             onClick=${() => runCommand({ type: 'WAIT_BATCH', ticks: batchTicks })}>완료까지 대기 · ${batchTicks}칸</button>
         </div>
       </div>
-      <div style=${{ marginTop: '5px', fontSize: '10.5px', color: '#b45309', fontWeight: 700 }}>
+      <div style=${{ marginTop: '5px', fontSize: '10.5px', color: 'var(--color-warning)', fontWeight: 700 }}>
         이 노드를 벗어나면 작업을 포기합니다 — 효과도 보상도 남지 않습니다.
       </div>
     </div>
@@ -360,9 +360,9 @@ const EXIT_STATUS_DESCRIPTIONS = {
 const CANVAS_CENTER = CANVAS_WIDTH / 2;
 /** 선택 노드까지의 경로 색. 위협 표식(빨강)·관측(파랑)과 겹치지 않는 초록 — "위협 없음" 예고와
  * 같은 계열이라 '지나갈 수 있는 길'로 읽힌다. */
-const ROUTE_COLOR = '#15803d';
+const ROUTE_COLOR = 'var(--color-positive)';
 /** 고지대만 쓰는 연보라. 어두운 카드 위에서 읽히는 유일한 값이라 토큰 대신 이 리터럴을 쓴다
- * (지도 선의 #7c3aed는 밝은 배경용이고, 검은 카드 위에서는 거의 안 보인다). */
+ * (--color-hacking은 밝은 배경용이고, 검은 카드 위에서는 거의 안 보인다). */
 const HIGH_GROUND_COLOR = '#c4b5fd';
 /** 지도 위 자리에 붙는 호버 카드의 너비 — 좌우 뒤집기 판정이 이 값을 쓴다.
  * NodeTooltipCard와 EdgeTooltipCard의 기본 너비가 같아 하나면 된다. */
@@ -488,7 +488,7 @@ function nodeFill(knowledge, hasThreat, isExit) {
  * @returns {{fill: string, weight: number, suffix: string}}
  */
 function threatMarker(threats) {
-  const plain = { fill: 'var(--color-accent-2-700, #dd2b0f)', weight: 400, suffix: '' };
+  const plain = { fill: 'var(--color-accent-2-700)', weight: 400, suffix: '' };
   if (!threats || threats.length === 0) return plain;
   if (threats.some((t) => t.mode === 'pursuit')) return { fill: 'var(--color-negative)', weight: 900, suffix: '!' };
   if (threats.every((t) => t.mode === 'patrol')) return plain;
@@ -575,13 +575,13 @@ function movementRiskForecast(run, edge, destinationNodeId, mobility) {
     const hop = hops.get(threat.nodeId);
     return hop === 1 && threat.nextMoveAt <= arrivalAt;
   }).length;
-  if (inbound > 0) return { label: `도착 중 적 유입 가능 · ${inbound}그룹`, color: '#b45309' };
+  if (inbound > 0) return { label: `도착 중 적 유입 가능 · ${inbound}그룹`, color: 'var(--color-warning)' };
   // 관측이 닿은 이웃이 하나도 없으면 "위협 없음"이라고 단언할 수 없다 — 모른다고 적는다.
   const anyObservedNeighbor = observed.some((threat) => hops.get(threat.nodeId) === 1);
   if (!anyObservedNeighbor) {
-    return { label: '도착 예상: 관측 중인 위협 없음(보이지 않는 곳은 모른다)', color: '#15803d' };
+    return { label: '도착 예상: 관측 중인 위협 없음(보이지 않는 곳은 모른다)', color: 'var(--color-positive)' };
   }
-  return { label: '도착 예상: 위협 없음', color: '#15803d' };
+  return { label: '도착 예상: 위협 없음', color: 'var(--color-positive)' };
 }
 
 const ZOOM_MIN = 0.5;
@@ -1678,7 +1678,7 @@ export function MapScreen() {
       ${interruption ? html`
         <div style=${{
     fontSize: '12px', fontWeight: 700, padding: '7px var(--space-6)', flexShrink: 0,
-    color: 'var(--color-bg)', background: '#b45309',
+    color: 'var(--color-bg)', background: 'var(--color-warning)',
   }}>
           ${interruption.text}
         </div>
@@ -1690,7 +1690,7 @@ export function MapScreen() {
         <div style=${{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 30, display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', pointerEvents: 'none' }}>
           ${farmToast ? (() => {
             const loot = farmLootDisplay(farmToast.loot);
-            return html`<div style=${{ minWidth: '240px', padding: '10px 14px', border: '1px solid #15803d', borderLeft: '4px solid #15803d', background: '#f0fdf4', boxShadow: 'var(--shadow-lg)', color: '#14532d', fontSize: '12px', pointerEvents: 'auto' }}>
+            return html`<div style=${{ minWidth: '240px', padding: '10px 14px', border: '1px solid var(--color-positive)', borderLeft: '4px solid var(--color-positive)', background: 'var(--color-positive-100)', boxShadow: 'var(--shadow-lg)', color: '#14532d', fontSize: '12px', pointerEvents: 'auto' }}>
               <div style=${{ fontWeight: 800, marginBottom: '2px' }}>파밍 획득</div>
               <div><strong style=${{ color: loot.color }}>${loot.name}</strong>${loot.sub ? ` · ${loot.sub}` : ''}</div>
             </div>`;
@@ -1743,11 +1743,11 @@ export function MapScreen() {
                 `)}
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>⇄</span>구역 출입구(관문). 인접 구역으로 넘어가는 유일한 일반 통로이자 증원이 들어오는 자리</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative)', fontWeight: 900 }}>†</span>전투에서 이긴 자리에 남은 시체. 위협이 밟으면 신고되어 경계 게이지가 오른다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#b45309', fontWeight: 800 }}>˙N</span>내가 남긴 흔적 수. 강한 흔적이 발견되면 경계 게이지가 오른다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-warning)', fontWeight: 800 }}>˙N</span>내가 남긴 흔적 수. 강한 흔적이 발견되면 경계 게이지가 오른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▲N</span>포착된 위협 그룹 수(시야 밖은 마지막 확인 때의 수)</div>
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>위협 표식 — 실시간으로 볼 때만 모드가 붙는다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)' }}>▲N</span>순찰 — 정해진 길을 돈다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)', fontWeight: 800 }}>▲N</span>조사/경계 — 무언가를 보고 움직이는 중</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700)' }}>▲N</span>순찰 — 정해진 길을 돈다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700)', fontWeight: 800 }}>▲N</span>조사/경계 — 무언가를 보고 움직이는 중</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative)', fontWeight: 900 }}>▲N!</span>추적 — 나를 쫓고 있다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative)', fontWeight: 900 }}>◆ 추적자</span>경계도 3단계가 내보낸 개체. 안개와 무관하게 항상 보이고, 회피·속이기 없이 전투만 남는다. 20칸 동안 나를 보지 못하거나, 그 구역 경계도가 3 아래로 내려가거나, 통제실을 장악하면 물러난다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '2px dashed var(--color-accent-2-700)' }}></span>미개방 특수 엣지(인접 시 클릭해 개방)</div>
@@ -1758,10 +1758,10 @@ export function MapScreen() {
                 ${/* 지도에 실제로 그려지는 기호인데 범례에 없던 것들 — 없으면 화면의 C·I·G와
                     구역 색이 무엇인지 알 방법이 없다(리뷰 B7). */ null}
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>장치와 구역 상태</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#dc2626', fontWeight: 900 }}>C</span>카메라 — 작동 중(빨강) / <span style=${{ color: '#0ea5e9', fontWeight: 900 }}>해킹됨(파랑)</span> / <span style=${{ color: '#64748b', fontWeight: 900 }}>파괴됨(회색)</span>. 위치는 런 시작부터 전부 보인다. 그 방에서 행동을 마치거나 떠날 때 실효 Stealth ${CAMERA_PERCEPTION} 미만이면 발각되고, 소음을 내면 즉시 발각된다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#7c3aed', fontWeight: 900 }}>I</span>접속 인터페이스 — 장악하면 이 구역의 발견된 카메라·발전기를 거리와 무관하게 원격 조작할 수 있다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#ca8a04', fontWeight: 900 }}>G</span>배터리 발전기 — 살아 있으면 이 구역 적이 전투 시작 시 갑옷 5를 받는다(<span style=${{ color: '#64748b', fontWeight: 900 }}>회색은 무력화됨</span>)</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '1.5px dashed #7c3aed', boxSizing: 'border-box' }}></span>구역 랜드마크(통제실 장악 자리, 구역당 하나). 안개가 걷히면 이름이 툴팁에 보인다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative)', fontWeight: 900 }}>C</span>카메라 — 작동 중(빨강) / <span style=${{ color: 'var(--color-recon)', fontWeight: 900 }}>해킹됨(파랑)</span> / <span style=${{ color: '#64748b', fontWeight: 900 }}>파괴됨(회색)</span>. 위치는 런 시작부터 전부 보인다. 그 방에서 행동을 마치거나 떠날 때 실효 Stealth ${CAMERA_PERCEPTION} 미만이면 발각되고, 소음을 내면 즉시 발각된다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-hacking)', fontWeight: 900 }}>I</span>접속 인터페이스 — 장악하면 이 구역의 발견된 카메라·발전기를 거리와 무관하게 원격 조작할 수 있다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-generator)', fontWeight: 900 }}>G</span>배터리 발전기 — 살아 있으면 이 구역 적이 전투 시작 시 갑옷 5를 받는다(<span style=${{ color: '#64748b', fontWeight: 900 }}>회색은 무력화됨</span>)</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '1.5px dashed var(--color-hacking)', boxSizing: 'border-box' }}></span>구역 랜드마크(통제실 장악 자리, 구역당 하나). 안개가 걷히면 이름이 툴팁에 보인다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '2.5px solid var(--color-accent-2-700)', boxSizing: 'border-box' }}></span>계약 목표부 — 이번 계약의 확보·설치·데이터 확보 자리</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', background: 'var(--color-negative)', opacity: 0.18, border: '1px solid var(--color-divider)' }}></span>구역 배경색 = 경계도. 진할수록 높고, 높으면 위협이 자주 움직이고 증원이 빨라진다</div>
               </div>
@@ -1812,7 +1812,7 @@ export function MapScreen() {
                   // 복도끼리 잇는 엣지는 그 구역 평면도의 뼈대다. 굵게 그려야 격자·사슬·방사·탑
                   // 같은 배치 원형이 방들 사이에 묻히지 않고 한눈에 읽힌다.
                   const isSpine = !special && PASSAGE_TYPES.has(nodeTypeById[e.from]) && PASSAGE_TYPES.has(nodeTypeById[e.to]);
-                  const stroke = barrier ? 'var(--color-neutral-900)' : pickable ? 'var(--color-accent)' : openable ? 'var(--color-accent-2-700)' : highGround ? '#7c3aed' : 'var(--color-divider)';
+                  const stroke = barrier ? 'var(--color-neutral-900)' : pickable ? 'var(--color-accent)' : openable ? 'var(--color-accent-2-700)' : highGround ? 'var(--color-hacking)' : 'var(--color-divider)';
                   const oneWay = e.bidirectional === false && revealed;
                   const { d: pathD, midX, midY, angleDeg } = edgePath(from, to);
                   // 통로의 설명(카드)은 호버한 그 하나만 렌더 아래쪽에서 만든다 — 여기서 전부
@@ -1876,7 +1876,7 @@ export function MapScreen() {
                 const generator = generatorByNode[n.id];
                 return html`
                   <g key=${n.id}>
-                    ${activelyObserved ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="rgba(14, 165, 233, 0.16)" stroke="#0ea5e9" stroke-width="3" pointer-events="none"></circle>` : null}
+                    ${activelyObserved ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 10} fill="rgba(14, 165, 233, 0.16)" stroke="var(--color-recon)" stroke-width="3" pointer-events="none"></circle>` : null}
                     ${isSelected ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 6} fill="none" stroke="var(--color-accent)" stroke-width="2" pointer-events="none"></circle>` : null}
                     ${routeNodeIds?.has(n.id) && n.id !== run.playerNodeId && n.id !== selectedNodeId ? html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 5} fill="none" stroke=${ROUTE_COLOR} stroke-width="2.5" opacity="0.85" pointer-events="none"></circle>` : null}
                     ${exit
@@ -1910,18 +1910,18 @@ export function MapScreen() {
                       return html`<text x=${pos.x} y=${pos.y - NODE_RADIUS - 8} text-anchor="middle" font-size="13" font-weight=${marker.weight} fill=${marker.fill} opacity=${nodeOpacity(displayKnowledge)} pointer-events="none">▲${threatCount ?? ''}${marker.suffix}</text>`;
                     })() : null}
                     ${opportunity && opportunity.grade === 'prize'
-                      ? html`<text x=${pos.x + 9} y=${pos.y - 6} text-anchor="middle" font-size="11" font-weight="900" fill=${prizeTier === 'elite' ? '#b45309' : 'var(--color-accent-2-700)'} pointer-events="none">◆</text>`
+                      ? html`<text x=${pos.x + 9} y=${pos.y - 6} text-anchor="middle" font-size="11" font-weight="900" fill=${prizeTier === 'elite' ? 'var(--color-warning)' : 'var(--color-accent-2-700)'} pointer-events="none">◆</text>`
                       : (opportunity ? html`<circle cx=${pos.x + 9} cy=${pos.y - 9} r="3.5" fill="var(--color-accent-2-700)" stroke="var(--color-bg)" stroke-width="1" pointer-events="none"></circle>` : null)}
                     ${corpseByNode[n.id] ? html`<text x=${pos.x + 12} y=${pos.y + 13} text-anchor="middle" font-size="11" font-weight="900" fill="var(--color-negative)" pointer-events="none">†</text>` : null}
-                    ${traceCountByNode.get(n.id) ? html`<text x=${pos.x - 12} y=${pos.y + 4} text-anchor="middle" font-size="9" font-weight="800" fill="#b45309" opacity="0.85" pointer-events="none">˙${traceCountByNode.get(n.id)}</text>` : null}
-                    ${camera ? html`<text x=${pos.x - 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledCameraIds?.includes(camera.id) ? '#64748b' : (isCameraHackActive(run, camera.id) ? '#0ea5e9' : '#dc2626')} pointer-events="none">C</text>` : null}
-                    ${hasInterface ? html`<text x=${pos.x + 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill="#7c3aed" pointer-events="none">I</text>` : null}
-                    ${generator ? html`<text x=${pos.x} y=${pos.y + 22} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledGeneratorIds.includes(generator.id) ? '#64748b' : '#ca8a04'} pointer-events="none">G</text>` : null}
+                    ${traceCountByNode.get(n.id) ? html`<text x=${pos.x - 12} y=${pos.y + 4} text-anchor="middle" font-size="9" font-weight="800" fill="var(--color-warning)" opacity="0.85" pointer-events="none">˙${traceCountByNode.get(n.id)}</text>` : null}
+                    ${camera ? html`<text x=${pos.x - 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledCameraIds?.includes(camera.id) ? '#64748b' : (isCameraHackActive(run, camera.id) ? 'var(--color-recon)' : 'var(--color-negative)')} pointer-events="none">C</text>` : null}
+                    ${hasInterface ? html`<text x=${pos.x + 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill="var(--color-hacking)" pointer-events="none">I</text>` : null}
+                    ${generator ? html`<text x=${pos.x} y=${pos.y + 22} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledGeneratorIds.includes(generator.id) ? '#64748b' : 'var(--color-generator)'} pointer-events="none">G</text>` : null}
                     ${(() => {
                       const landmark = landmarkByNode[n.id];
                       if (!landmark || (knowledge === 'unknown' && !debugReveal)) return null;
                       const isObjective = !!run.contract && run.contract.sectorId === landmark.sectorId;
-                      return html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 3} fill="none" stroke=${isObjective ? 'var(--color-accent-2-700)' : '#7c3aed'} stroke-width=${isObjective ? 2.5 : 1.5} stroke-dasharray=${isObjective ? null : '3 2'} opacity=${nodeOpacity(displayKnowledge)} pointer-events="none"></circle>`;
+                      return html`<circle cx=${pos.x} cy=${pos.y} r=${NODE_RADIUS + 3} fill="none" stroke=${isObjective ? 'var(--color-accent-2-700)' : 'var(--color-hacking)'} stroke-width=${isObjective ? 2.5 : 1.5} stroke-dasharray=${isObjective ? null : '3 2'} opacity=${nodeOpacity(displayKnowledge)} pointer-events="none"></circle>`;
                     })()}
                     ${/* roving tabindex — 탭 순서에 노드가 160개 들어가면 키보드로는 사이드바에
                         닿을 수 없다. 탭 정지점은 지금 보고 있는 노드 하나뿐이고, 나머지는 그
@@ -2213,7 +2213,7 @@ export function MapScreen() {
                           </div>
                         `;
                       })}
-                      ${specialText ? html`<div style=${{ fontSize: '10.5px', color: '#7c3aed', fontWeight: 700, marginTop: '2px' }}>경로의 특수 통로: ${specialText}</div>` : null}
+                      ${specialText ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-hacking)', fontWeight: 700, marginTop: '2px' }}>경로의 특수 통로: ${specialText}</div>` : null}
                     </div>
                   `;
                 })() : null}
@@ -2251,13 +2251,13 @@ export function MapScreen() {
                     : '경로 없음'}
                 </div>
                 ${selectedEdgeTraversable && selectedMoveRisk ? html`<div style=${{ fontSize: '10.5px', color: selectedMoveRisk.color, marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${selectedMoveRisk.label}</div>` : null}
-                ${selectedCameraActive ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${CAMERA_WATCH_NOTICE}</div>` : null}
+                ${selectedCameraActive ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-negative)', marginTop: '-7px', marginBottom: '10px', fontWeight: 800 }}>${CAMERA_WATCH_NOTICE}</div>` : null}
               ` : null}
 
               ${(!selectedNodeId || selectedNodeId === run.playerNodeId) ? html`
                 <div style=${{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <${PanelGroup} title="여기서 할 수 있는 것" open=${panelGroupsOpen.actions} onToggle=${() => togglePanelGroup('actions')}>
-                  ${cameraWatchingHere ? html`<div style=${{ fontSize: '10.5px', color: '#dc2626', marginBottom: '8px', fontWeight: 800 }}>${CAMERA_WATCH_NOTICE}</div>` : null}
+                  ${cameraWatchingHere ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-negative)', marginBottom: '8px', fontWeight: 800 }}>${CAMERA_WATCH_NOTICE}</div>` : null}
                   <${PendingTaskPanel} run=${run} runCommand=${runCommand} />
                   <div>
                     <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: '4px' }}>오버라이드 칩</div>
@@ -2286,7 +2286,7 @@ export function MapScreen() {
                       onClick=${() => runCommand({ type: 'BASIC_RECON' })}
                     />
                     ${run.activeRecon ? html`
-                      <div style=${{ marginTop: '5px', padding: '5px 7px', borderLeft: '3px solid #0ea5e9', background: 'rgba(14, 165, 233, 0.10)', fontSize: '10.5px' }}>
+                      <div style=${{ marginTop: '5px', padding: '5px 7px', borderLeft: '3px solid var(--color-recon)', background: 'rgba(14, 165, 233, 0.10)', fontSize: '10.5px' }}>
                         실시간 정찰 중 · ${run.activeRecon.source === 'camera' ? `카메라 ${run.activeRecon.sourceNodeId}` : '현재 위치'}
                         ${run.activeRecon.expiresAt == null ? ' · 이동/다른 정찰 전까지 유지' : ` · ${leftTicksText(run.activeRecon.expiresAt, run.time)}`}
                       </div>
@@ -2313,7 +2313,7 @@ export function MapScreen() {
                         />
                       </div>
                     </div>
-                    ${waitNotice ? html`<div style=${{ marginTop: '4px', fontSize: '10.5px', color: '#b45309', fontWeight: 700 }}>${waitNotice.text}</div>` : null}
+                    ${waitNotice ? html`<div style=${{ marginTop: '4px', fontSize: '10.5px', color: 'var(--color-warning)', fontWeight: 700 }}>${waitNotice.text}</div>` : null}
                   </div>
 
                   ${(() => {
@@ -2447,7 +2447,7 @@ export function MapScreen() {
                           <${Tooltip} key=${opp.id} align="left" width=${260} content=${forecastTooltip(run, forecast, name, tip, encounterBlocked ? ENCOUNTER_BLOCK_NOTE : '')}>
                             <button class="btn btn-secondary" style=${{ fontSize: '12px', width: '100%', marginBottom: '4px' }} disabled=${encounterBlocked} onClick=${() => setFarmPlan(opp)}>
                               ${name}${currentOpportunities.length > 1 ? ` #${idx + 1}` : ''} (${opp.usesRemaining}회 남음) · ${timeText}${forecast.noise ? ` · 소음 ${noiseText}` : ''}
-                              ${isPrize && graded ? html`<span style=${{ fontSize: '10px', fontWeight: 800, color: '#b45309' }}> · ${PRIZE_AXIS_LABELS[opp.axis] || opp.axis}</span>` : null}
+                              ${isPrize && graded ? html`<span style=${{ fontSize: '10px', fontWeight: 800, color: 'var(--color-warning)' }}> · ${PRIZE_AXIS_LABELS[opp.axis] || opp.axis}</span>` : null}
                             </button>
                           <//>
                         `;
@@ -2455,7 +2455,7 @@ export function MapScreen() {
                     </div>
                   ` : null}
                   ${farmPlan ? html`
-                    <div style=${{ padding: '8px', border: '1px solid #b45309', background: '#fffbeb', fontSize: '11px' }}>
+                    <div style=${{ padding: '8px', border: '1px solid var(--color-warning)', background: 'var(--color-warning-100)', fontSize: '11px' }}>
                       <strong>파밍 계획</strong> · 실행 전 접근 방식을 고르거나 중단할 수 있습니다. 행동 중 적 유입 시 전투가 발생할 수 있습니다.
                       <div style=${{ display: 'flex', gap: '5px', marginTop: '6px', flexWrap: 'wrap' }}>
                         ${[
@@ -2482,7 +2482,7 @@ export function MapScreen() {
                     </div>
                   ` : null}
                   ${run.pendingFarmChoice ? html`
-                    <div style=${{ padding: '8px', border: '2px solid #b45309', background: '#fffbeb', fontSize: '11px' }}>
+                    <div style=${{ padding: '8px', border: '2px solid var(--color-warning)', background: 'var(--color-warning-100)', fontSize: '11px' }}>
                       <strong>확보 대상 — ${PRIZE_TIER_LABELS[run.pendingFarmChoice.tier]} · ${PRIZE_AXIS_LABELS[run.pendingFarmChoice.axis]}</strong>
                       <div style=${{ color: 'var(--color-neutral-600)', margin: '3px 0 6px' }}>
                         하나만 가져갈 수 있습니다. 지금 인벤토리에 무엇을 넣을 자리가 있는지 보고 고르세요 — 이 자리를 뜨면 나머지는 사라집니다.
@@ -2513,7 +2513,7 @@ export function MapScreen() {
                     </div>
                   ` : null}
                   ${run.lastActionResult?.kind === 'farm' && run.lastActionResult.completedAt === run.time ? html`
-                    <div style=${{ padding: '6px 8px', borderLeft: `3px solid ${run.lastActionResult.status === 'ambushed' ? '#dc2626' : '#15803d'}`, background: run.lastActionResult.status === 'ambushed' ? '#fef2f2' : '#f0fdf4', fontSize: '10.5px' }}>
+                    <div style=${{ padding: '6px 8px', borderLeft: `3px solid ${run.lastActionResult.status === 'ambushed' ? 'var(--color-negative)' : 'var(--color-positive)'}`, background: run.lastActionResult.status === 'ambushed' ? 'var(--color-negative-100)' : 'var(--color-positive-100)', fontSize: '10.5px' }}>
                       ${run.lastActionResult.status === 'ambushed'
                         ? '파밍 완료 직후 습격 발생 — 기회 사용은 반영되었습니다.'
                         : (run.pendingFarmChoice
@@ -2559,7 +2559,7 @@ export function MapScreen() {
                   <${PanelGroup} title="장치·시설" open=${panelGroupsOpen.devices} onToggle=${() => togglePanelGroup('devices')}>
                   ${currentInterface ? html`
                     <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>카메라 접속 인터페이스</div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-hacking)', marginBottom: '4px' }}>카메라 접속 인터페이스</div>
                       <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
                         ${currentInterfaceHacked
     ? '접속 완료 · 이 구역의 발견한 모든 해킹 지점에 원격 접속할 수 있습니다.'
@@ -2594,7 +2594,7 @@ export function MapScreen() {
 
                   ${!currentInterface && (hackableCameras.length > 0 || hackableGenerators.length > 0) ? html`
                     <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>직접 해킹</div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-hacking)', marginBottom: '4px' }}>직접 해킹</div>
                       <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>Hacking ${capabilities.hacking} · 현재 노드는 Hacking 1부터, 이후 레벨마다 직접 사거리가 1홉씩 늘어납니다.</div>
                       ${hackableCameras.map((camera) => html`
                         <${ActionButton}
@@ -2617,7 +2617,7 @@ export function MapScreen() {
 
                   ${currentCamera ? html`
                     <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#dc2626', marginBottom: '4px' }}>현재 노드 카메라</div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-negative)', marginBottom: '4px' }}>현재 노드 카메라</div>
                       <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>
                         ${(run.disabledCameraIds || []).includes(currentCamera.id)
     ? '파괴됨 · 더 이상 감지하지 않습니다.'
@@ -2636,7 +2636,7 @@ export function MapScreen() {
 
                   ${currentGenerator ? html`
                     <div>
-                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#ca8a04', marginBottom: '4px' }}>배터리 발전기</div>
+                      <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-generator)', marginBottom: '4px' }}>배터리 발전기</div>
                       <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '5px' }}>${run.disabledGeneratorIds.includes(currentGenerator.id) ? '무력화됨 — 이 구역 적의 시작 갑옷 보너스가 없습니다.' : '가동 중 — 이 구역 모든 적은 전투 시작 시 갑옷 5를 얻습니다.'}</div>
                       ${!run.disabledGeneratorIds.includes(currentGenerator.id) ? html`
                         <${ActionButton}
@@ -2661,7 +2661,7 @@ export function MapScreen() {
                     ];
                     return html`
                       <div>
-                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: '#7c3aed', marginBottom: '4px' }}>구역 통제실</div>
+                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-hacking)', marginBottom: '4px' }}>구역 통제실</div>
                         <div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>
                           현재 해킹 ${capabilities.hacking} — 실행하면 도달한 레벨까지 전부 적용됩니다(상위 레벨이 하위 효과 포함).
                         </div>

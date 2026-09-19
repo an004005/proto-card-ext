@@ -59,6 +59,11 @@ for (const tier of ['advantage', 'even', 'disadvantage', 'forced']) {
   });
 }
 
+test('우위 허용 표는 요약 한 줄이다 — 그래도 버튼 이름이 전부 적힌다', () => {
+  const { allowed } = encounterAllowanceText('advantage');
+  assert.equal(allowed, '모든 행동 — 기습·무시·회피·속이기 포함');
+});
+
 test('동률에는 교전 버튼이 없다 — 전투는 열세 지속에서만 열린다', () => {
   const buttons = enabledButtons(mountPanel('even')).map((node) => node.textContent);
   assert.ok(!buttons.some((label) => label.includes('전투')), '동률에서 전투 버튼이 눌린다');

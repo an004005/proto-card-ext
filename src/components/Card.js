@@ -259,7 +259,7 @@ export function Card({
           </span>
         ` : null}
         ${escapeProgress ? html`
-          <span style=${{ position: 'absolute', top: '28px', right: '-2px', fontSize: '10px', background: '#0e7490', color: '#fff', padding: '2px 5px', fontWeight: 800 }}>
+          <span style=${{ position: 'absolute', top: '28px', right: '-2px', fontSize: '10px', background: 'var(--color-info)', color: '#fff', padding: '2px 5px', fontWeight: 800 }}>
             이탈 +${escapeProgress}
           </span>
         ` : null}
