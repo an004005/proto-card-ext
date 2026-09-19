@@ -131,7 +131,7 @@ export function RewardScreen() {
         <span style=${{ fontSize: '12px', opacity: 0.7 }}>${claimedCount}/${slots.length} 선택됨</span>
         ${/* 보상을 받기 전에 "지금 소지품이 몇 칸 남았는지"를 말해야 한다 — 넘치면 그 물건은
             선물이 아니라 덱에 섞이는 짐 카드가 된다(리뷰 B3). */ null}
-        <span style=${{ fontSize: '12px', fontWeight: burdenCount > 0 ? 800 : 400, color: burdenCount > 0 ? 'var(--color-negative, #dc2626)' : undefined }}>
+        <span style=${{ fontSize: '12px', fontWeight: burdenCount > 0 ? 800 : 400, color: burdenCount > 0 ? 'var(--color-negative)' : undefined }}>
           소지품 ${inventory.items.length}/${inventory.capacity}${burdenCount > 0 ? ` — 넘친 ${burdenCount}개는 짐 카드` : ' — 넘치면 짐 카드'}
         </span>
         <button class="btn btn-primary" style=${{ padding: '12px 40px' }} onClick=${() => dispatch({ type: 'CONFIRM_REWARDS' })}>

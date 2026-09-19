@@ -19,8 +19,8 @@ export function IconClock() {
  * @param {number} ticks
  */
 export function deadlineStyle(ticks) {
-  if (ticks <= 10) return { color: 'var(--color-bg)', background: 'var(--color-negative, #dd2b0f)', fontWeight: 800, padding: '0 4px' };
-  if (ticks <= 30) return { color: 'var(--color-negative, #dd2b0f)', fontWeight: 800 };
+  if (ticks <= 10) return { color: 'var(--color-bg)', background: 'var(--color-negative)', fontWeight: 800, padding: '0 4px' };
+  if (ticks <= 30) return { color: 'var(--color-negative)', fontWeight: 800 };
   return { color: 'var(--color-neutral-600)' };
 }
 

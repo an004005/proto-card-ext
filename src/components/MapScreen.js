@@ -478,7 +478,7 @@ function nodeFill(knowledge, hasThreat, isExit) {
   if (isExit) return 'var(--color-accent)';
   if (knowledge === 'current') return 'var(--color-accent-2-700)';
   if (knowledge === 'unknown') return 'var(--color-neutral-300)';
-  return hasThreat ? 'var(--color-negative, #dd2b0f)' : 'var(--color-bg)';
+  return hasThreat ? 'var(--color-negative)' : 'var(--color-bg)';
 }
 
 /**
@@ -490,7 +490,7 @@ function nodeFill(knowledge, hasThreat, isExit) {
 function threatMarker(threats) {
   const plain = { fill: 'var(--color-accent-2-700, #dd2b0f)', weight: 400, suffix: '' };
   if (!threats || threats.length === 0) return plain;
-  if (threats.some((t) => t.mode === 'pursuit')) return { fill: 'var(--color-negative, #dd2b0f)', weight: 900, suffix: '!' };
+  if (threats.some((t) => t.mode === 'pursuit')) return { fill: 'var(--color-negative)', weight: 900, suffix: '!' };
   if (threats.every((t) => t.mode === 'patrol')) return plain;
   return { ...plain, weight: 800 }; // investigate · alert · exit_guard — 색은 그대로, 굵기만
 }
@@ -560,13 +560,13 @@ function exitStatusLabel(exit) {
 }
 
 function movementRiskForecast(run, edge, destinationNodeId, mobility) {
-  if (!edge) return { label: '경로 없음', color: 'var(--color-negative, #dc2626)' };
+  if (!edge) return { label: '경로 없음', color: 'var(--color-negative)' };
   // 예고 비용 = 실제 비용. 엔진의 이동 비용 함수를 그대로 쓴다 — 여기서 식을 베껴 두면
   // 한쪽만 바뀌었을 때 플레이어가 도착 시각을 틀리게 읽는다.
   const arrivalAt = run.time + moveTimeCost(edge, mobility);
   // 도착지 자체는 무료 인접 관측의 사거리 안이라 실제 위협 목록을 그대로 세도 거짓말이 아니다.
   const direct = Object.values(run.threats).filter((threat) => threat.nodeId === destinationNodeId).length;
-  if (direct > 0) return { label: `도착 예상: 적 ${direct}그룹`, color: 'var(--color-negative, #dc2626)' };
+  if (direct > 0) return { label: `도착 예상: 적 ${direct}그룹`, color: 'var(--color-negative)' };
   // 그 한 홉 너머는 다르다 — 안개 밖의 위협까지 세면 화면이 플레이어가 모르는 정보를 예고하게
   // 된다. 유입 예보는 지금 관측 중인 위협만 센다(observableThreats).
   const hops = bfsHopDistances(run.graph.edges, destinationNodeId);
@@ -915,7 +915,7 @@ function describeEdge(run, edge, ctx) {
 
   const ACCENT = { background: 'var(--color-accent-2-500)', color: 'var(--color-neutral-900)' };
   const LOCKED = { background: 'var(--color-neutral-700)', color: 'var(--color-bg)' };
-  const NEGATIVE = { background: 'var(--color-negative, #dc2626)', color: 'var(--color-bg)' };
+  const NEGATIVE = { background: 'var(--color-negative)', color: 'var(--color-bg)' };
   const hgParts = highGround ? highGroundParts(edge, capabilities.mobility) : null;
   // 이동 칸은 엔진의 비용 함수에서 받는다 — 카드에 1을 박아 두면 규칙이 바뀐 날 카드만 거짓말을 한다.
   const moveTicks = moveTimeCost(edge, capabilities.mobility);
@@ -1592,7 +1592,7 @@ export function MapScreen() {
           ${run.contract ? html`
             <span style=${{ fontSize: '11px', color: run.contract.status === 'completed' ? 'var(--color-accent-700)' : 'var(--color-neutral-600)' }}>
               계약 「${run.contract.name}」 — ${{ accepted: '진행 중', acquired: '확보됨', completed: '완료' }[run.contract.status]}
-              ${run.lockdown ? html`<strong style=${{ color: 'var(--color-negative, #dd2b0f)' }}> · 봉쇄 중(위협 가속 — 출구 폐쇄 시각은 그대로)</strong>` : null}
+              ${run.lockdown ? html`<strong style=${{ color: 'var(--color-negative)' }}> · 봉쇄 중(위협 가속 — 출구 폐쇄 시각은 그대로)</strong>` : null}
             </span>
           ` : null}
         </div>
@@ -1600,7 +1600,7 @@ export function MapScreen() {
           <${Tooltip} content=${`현재 체력입니다. 0이 되면 전투 불능으로 런이 종료됩니다. 필드에서는 소모품으로만 회복할 수 있습니다.${injury > 0 ? ` 지금은 HP가 ${Math.round((ps.hp / ps.maxHp) * 100)}%라 여섯 Capability가 전부 ${injury} 깎여 있습니다 — 회복하면 그 자리에서 풀립니다(ADR-0093).` : ''}`}>
             <div style=${{ display: 'flex', alignItems: 'center', gap: '5px', padding: '0 var(--space-3)', borderRight: '1px solid var(--color-divider)' }}>
               <${IconHeart} /><span>HP <strong>${ps.hp}</strong>/${ps.maxHp}</span>
-              ${injury > 0 ? html`<span class="tag" style=${{ background: 'var(--color-negative, #dd2b0f)', color: 'var(--color-bg)', fontWeight: 800, fontSize: '10px', padding: '0 5px' }}>부상 −${injury}</span>` : null}
+              ${injury > 0 ? html`<span class="tag" style=${{ background: 'var(--color-negative)', color: 'var(--color-bg)', fontWeight: 800, fontSize: '10px', padding: '0 5px' }}>부상 −${injury}</span>` : null}
             </div>
           <//>
           <${MapClock} run=${run} countdowns=${countdowns} />
@@ -1652,7 +1652,7 @@ export function MapScreen() {
         </div>
       ` : null}
 
-      ${error ? html`<div style=${{ fontSize: '12px', color: 'var(--color-negative, #dd2b0f)', padding: '0 var(--space-6)', flexShrink: 0 }}>${error}</div>` : null}
+      ${error ? html`<div style=${{ fontSize: '12px', color: 'var(--color-negative)', padding: '0 var(--space-6)', flexShrink: 0 }}>${error}</div>` : null}
       ${run.lastCameraDetection ? (() => {
         const elapsed = run.time - run.lastCameraDetection.detectedAt;
         const recent = elapsed <= CAMERA_DETECTION_BANNER_WINDOW; // 최근 한동안만 "긴급"으로 강조 — 계속 안 사라지면 지금도 쫓기는 중처럼 읽혀서 오해를 줌.
@@ -1662,7 +1662,7 @@ export function MapScreen() {
             style=${{
               fontSize: '12px', fontWeight: 800, padding: '7px var(--space-6)', flexShrink: 0, cursor: 'pointer',
               color: recent ? 'var(--color-bg)' : 'var(--color-text)',
-              background: recent ? 'var(--color-negative, #dd2b0f)' : 'var(--color-neutral-200)',
+              background: recent ? 'var(--color-negative)' : 'var(--color-neutral-200)',
             }}
             role="button" tabindex="0"
             onMouseEnter=${() => highlightNode(run.lastCameraDetection.nodeId)}
@@ -1727,9 +1727,9 @@ export function MapScreen() {
               <div style=${{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-accent-2-700)' }}></span>현재 위치</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-bg)', border: '1.5px solid var(--color-divider)' }}></span>시야 안 · 안전(실시간)</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-negative, #dd2b0f)' }}></span>시야 안 · 위협 포착(실시간)</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-negative)' }}></span>시야 안 · 위협 포착(실시간)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-bg)', border: '1.5px solid var(--color-divider)', opacity: 0.55 }}></span>시야 밖 · 마지막 확인 안전</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-negative, #dd2b0f)', opacity: 0.55 }}></span>시야 밖 · 마지막 확인 위협</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-negative)', opacity: 0.55 }}></span>시야 밖 · 마지막 확인 위협</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-neutral-300)' }}></span>한 번도 확인 안 함 — 방이 있다는 것만 알고 안에 무엇이 있는지는 모른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--color-accent)' }}></span>탈출구(A/B/K, 안개 무관 항상 표시)</div>
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>노드 유형 — 모양으로 구분</div>
@@ -1742,14 +1742,14 @@ export function MapScreen() {
                   </div>
                 `)}
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>⇄</span>구역 출입구(관문). 인접 구역으로 넘어가는 유일한 일반 통로이자 증원이 들어오는 자리</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>†</span>전투에서 이긴 자리에 남은 시체. 위협이 밟으면 신고되어 경계 게이지가 오른다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative)', fontWeight: 900 }}>†</span>전투에서 이긴 자리에 남은 시체. 위협이 밟으면 신고되어 경계 게이지가 오른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#b45309', fontWeight: 800 }}>˙N</span>내가 남긴 흔적 수. 강한 흔적이 발견되면 경계 게이지가 오른다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▲N</span>포착된 위협 그룹 수(시야 밖은 마지막 확인 때의 수)</div>
                 <div style=${{ borderTop: '1px solid var(--color-divider)', margin: '3px 0', paddingTop: '5px', fontWeight: 700 }}>위협 표식 — 실시간으로 볼 때만 모드가 붙는다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)' }}>▲N</span>순찰 — 정해진 길을 돈다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-accent-2-700, #dd2b0f)', fontWeight: 800 }}>▲N</span>조사/경계 — 무언가를 보고 움직이는 중</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>▲N!</span>추적 — 나를 쫓고 있다</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative, #dd2b0f)', fontWeight: 900 }}>◆ 추적자</span>경계도 3단계가 내보낸 개체. 안개와 무관하게 항상 보이고, 회피·속이기 없이 전투만 남는다. 20칸 동안 나를 보지 못하거나, 그 구역 경계도가 3 아래로 내려가거나, 통제실을 장악하면 물러난다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative)', fontWeight: 900 }}>▲N!</span>추적 — 나를 쫓고 있다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: 'var(--color-negative)', fontWeight: 900 }}>◆ 추적자</span>경계도 3단계가 내보낸 개체. 안개와 무관하게 항상 보이고, 회피·속이기 없이 전투만 남는다. 20칸 동안 나를 보지 못하거나, 그 구역 경계도가 3 아래로 내려가거나, 통제실을 장악하면 물러난다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '2px dashed var(--color-accent-2-700)' }}></span>미개방 특수 엣지(인접 시 클릭해 개방)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '16px', borderTop: '3px dotted var(--color-neutral-900)' }}></span>임시 장벽 활성(적 이동 차단, 시한부)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span>▶</span>일방통행 엣지(화살표 방향으로만 이동 가능)</div>
@@ -1763,7 +1763,7 @@ export function MapScreen() {
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ color: '#ca8a04', fontWeight: 900 }}>G</span>배터리 발전기 — 살아 있으면 이 구역 적이 전투 시작 시 갑옷 5를 받는다(<span style=${{ color: '#64748b', fontWeight: 900 }}>회색은 무력화됨</span>)</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '1.5px dashed #7c3aed', boxSizing: 'border-box' }}></span>구역 랜드마크(통제실 장악 자리, 구역당 하나). 안개가 걷히면 이름이 툴팁에 보인다</div>
                 <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', borderRadius: '50%', border: '2.5px solid var(--color-accent-2-700)', boxSizing: 'border-box' }}></span>계약 목표부 — 이번 계약의 확보·설치·데이터 확보 자리</div>
-                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', background: 'var(--color-negative, #dd2b0f)', opacity: 0.18, border: '1px solid var(--color-divider)' }}></span>구역 배경색 = 경계도. 진할수록 높고, 높으면 위협이 자주 움직이고 증원이 빨라진다</div>
+                <div style=${{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style=${{ width: '12px', height: '12px', background: 'var(--color-negative)', opacity: 0.18, border: '1px solid var(--color-divider)' }}></span>구역 배경색 = 경계도. 진할수록 높고, 높으면 위협이 자주 움직이고 증원이 빨라진다</div>
               </div>
             </div>
           ` : null}
@@ -1912,7 +1912,7 @@ export function MapScreen() {
                     ${opportunity && opportunity.grade === 'prize'
                       ? html`<text x=${pos.x + 9} y=${pos.y - 6} text-anchor="middle" font-size="11" font-weight="900" fill=${prizeTier === 'elite' ? '#b45309' : 'var(--color-accent-2-700)'} pointer-events="none">◆</text>`
                       : (opportunity ? html`<circle cx=${pos.x + 9} cy=${pos.y - 9} r="3.5" fill="var(--color-accent-2-700)" stroke="var(--color-bg)" stroke-width="1" pointer-events="none"></circle>` : null)}
-                    ${corpseByNode[n.id] ? html`<text x=${pos.x + 12} y=${pos.y + 13} text-anchor="middle" font-size="11" font-weight="900" fill="var(--color-negative, #dd2b0f)" pointer-events="none">†</text>` : null}
+                    ${corpseByNode[n.id] ? html`<text x=${pos.x + 12} y=${pos.y + 13} text-anchor="middle" font-size="11" font-weight="900" fill="var(--color-negative)" pointer-events="none">†</text>` : null}
                     ${traceCountByNode.get(n.id) ? html`<text x=${pos.x - 12} y=${pos.y + 4} text-anchor="middle" font-size="9" font-weight="800" fill="#b45309" opacity="0.85" pointer-events="none">˙${traceCountByNode.get(n.id)}</text>` : null}
                     ${camera ? html`<text x=${pos.x - 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill=${run.disabledCameraIds?.includes(camera.id) ? '#64748b' : (isCameraHackActive(run, camera.id) ? '#0ea5e9' : '#dc2626')} pointer-events="none">C</text>` : null}
                     ${hasInterface ? html`<text x=${pos.x + 12} y=${pos.y - 10} text-anchor="middle" font-size="9" font-weight="900" fill="#7c3aed" pointer-events="none">I</text>` : null}
@@ -1953,8 +1953,8 @@ export function MapScreen() {
                   if (!pos) return null;
                   return html`
                     <g key=${hunter.id}>
-                      <text data-hunter-marker=${hunter.id} x=${pos.x} y=${pos.y + NODE_RADIUS + 12} text-anchor="middle" font-size="12" font-weight="900" fill="var(--color-negative, #dd2b0f)">◆</text>
-                      <text data-hunter-marker=${hunter.id} x=${pos.x} y=${pos.y + NODE_RADIUS + 22} text-anchor="middle" font-size="9" font-weight="800" fill="var(--color-negative, #dd2b0f)">추적자</text>
+                      <text data-hunter-marker=${hunter.id} x=${pos.x} y=${pos.y + NODE_RADIUS + 12} text-anchor="middle" font-size="12" font-weight="900" fill="var(--color-negative)">◆</text>
+                      <text data-hunter-marker=${hunter.id} x=${pos.x} y=${pos.y + NODE_RADIUS + 22} text-anchor="middle" font-size="9" font-weight="800" fill="var(--color-negative)">추적자</text>
                     </g>
                   `;
                 })}
@@ -2115,7 +2115,7 @@ export function MapScreen() {
             ${hunterMarks.map((hunter) => html`
               <${Tooltip} key=${hunter.id} align="left" width=${260} content=${`경계도 3단계가 내보낸 개체입니다. 조우 회피도 속이기도 통하지 않고, 같은 노드에 닿으면 곧바로 전투입니다. 2칸마다 한 번 움직이며(경계도·봉쇄와 무관), ${hunter.ticksUntilLost}칸 동안 나를 보지 못하면 물러납니다. 구역 경계도를 3 아래로 내리거나 그 구역 통제실을 장악해도 물러납니다.`}>
                 <div
-                  style=${{ fontSize: '10.5px', color: 'var(--color-negative, #dd2b0f)', fontWeight: 900, width: 'fit-content', cursor: 'pointer', marginBottom: '3px' }}
+                  style=${{ fontSize: '10.5px', color: 'var(--color-negative)', fontWeight: 900, width: 'fit-content', cursor: 'pointer', marginBottom: '3px' }}
                   role="button" tabindex="0"
                   onMouseEnter=${() => highlightNode(hunter.nodeId)}
                   onMouseLeave=${() => highlightNode(null)}
@@ -2143,7 +2143,7 @@ export function MapScreen() {
               ${threatMoves.map((threat) => html`
                 <${Tooltip} key=${threat.id} align="left" width=${250} content=${`${whereIs(threat.nodeId)}에서 관측 중입니다. ${threatCompositionNote(threat)} ${threat.interval !== null && threat.interval !== undefined ? `지금 상태(${THREAT_MODE_LABELS[threat.mode] || threat.mode})를 유지하면 ${threat.interval}칸마다 한 번 움직입니다 — 추적으로 바뀌면 더 빨라집니다.` : '이동 주기는 Perception 2부터 읽힙니다.'} 어디로 갈지는 알 수 없습니다. 줄을 누르면 지도가 그 자리로 갑니다.`}>
                   <div
-                    style=${{ fontSize: '10.5px', color: 'var(--color-negative, #dd2b0f)', fontWeight: 700, width: 'fit-content', cursor: 'pointer' }}
+                    style=${{ fontSize: '10.5px', color: 'var(--color-negative)', fontWeight: 700, width: 'fit-content', cursor: 'pointer' }}
                     role="button" tabindex="0"
                     onMouseEnter=${() => highlightNode(threat.nodeId)}
                     onMouseLeave=${() => highlightNode(null)}
@@ -2179,7 +2179,7 @@ export function MapScreen() {
               ${inspected.knowledge === 'stale' && inspectedObservedAt != null ? html`<div style=${{ fontSize: '10.5px', fontStyle: 'italic', color: 'var(--color-neutral-600)', marginBottom: '10px' }}>${run.time - inspectedObservedAt}칸 전 관측 (시각 ${inspectedObservedAt}) — 그 사이 상황이 바뀌었을 수 있습니다.</div>` : null}
 
               ${selectedNodeId && selectedNodeId !== run.playerNodeId ? html`
-                <div class="map-route-summary" style=${{ fontSize: '11px', fontWeight: 800, color: routeToSelected ? ROUTE_COLOR : 'var(--color-negative, #dc2626)', marginBottom: '8px' }}>
+                <div class="map-route-summary" style=${{ fontSize: '11px', fontWeight: 800, color: routeToSelected ? ROUTE_COLOR : 'var(--color-negative)', marginBottom: '8px' }}>
                   ${routeToSelected
                     ? `최단 경로: ${routeToSelected.edgeIds.length}칸 이동 · 지도에 표시`
                     : '최단 경로: 지금 지날 수 있는 길이 없음(잠긴 문·일방통행 역방향·넘을 수 없는 고지대·아직 지도에 없는 노드)'}
@@ -2245,7 +2245,7 @@ export function MapScreen() {
                 <${Tooltip} align="left" width=${260} content=${encounterBlocked ? ENCOUNTER_BLOCK_NOTE : '인접 노드로 이동합니다. 이동 소음은 출발 시각에 나고, 도착 판정은 완료 칸에 한 번 합니다.'}>
                   <button class="btn btn-primary" disabled=${!selectedEdgeTraversable || encounterBlocked} style=${{ fontSize: '12px', width: '100%', marginBottom: '2px' }} onClick=${() => handleMove(selectedNodeId)}>이 노드로 이동</button>
                 <//>
-                <div style=${{ fontSize: '10.5px', color: selectedEdgeTraversable ? 'var(--color-neutral-600)' : 'var(--color-negative, #dd2b0f)', marginBottom: '10px' }}>
+                <div style=${{ fontSize: '10.5px', color: selectedEdgeTraversable ? 'var(--color-neutral-600)' : 'var(--color-negative)', marginBottom: '10px' }}>
                   ${selectedEdge
                     ? `${describeForecast(forecastAction('move', { edge: selectedEdge, value: capabilities.mobility }), '이동')}${selectedEdge.features.includes('highGround') ? ` · ${highGroundNote(selectedEdge, capabilities.mobility)}` : ''}`
                     : '경로 없음'}
@@ -2703,7 +2703,7 @@ export function MapScreen() {
                     const cut = (run.powerCuts || []).find((c) => c.sectorId === currentSectorId && c.expiresAt > run.time);
                     return html`
                       <div>
-                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-negative, #dd2b0f)', marginBottom: '4px' }}>수습</div>
+                        <div style=${{ fontSize: '10px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--color-negative)', marginBottom: '4px' }}>수습</div>
                         ${cut ? html`<div style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', marginBottom: '6px' }}>전원 차단 중 — ${leftTicksText(cut.expiresAt, run.time)}. 그동안 이 구역 경계도가 오르지 않습니다(전자 자물쇠도 해킹 불가).</div>` : null}
                         ${currentCorpse ? html`
                           <${ActionButton}
