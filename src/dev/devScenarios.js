@@ -38,6 +38,7 @@ export const DEV_SCENARIO_GROUPS = [
       { name: 'recovery', label: '수습 수단 전부 사용 가능', watch: '시체 처리·흔적 정리·전원 차단·가짜 목표가 한 블록에 모이고, 각 버튼에 층계 대가가 붙는가.' },
       { name: 'evidence', label: '흔적과 시체가 널린 구역', watch: '지도에 시체 †와 흔적 ˙N 표식이 뜨는가.' },
       { name: 'alert-high', label: '경계도 최대 + 증원 임박', watch: '경계도 게이지와 다음 증원 시각(통제실 장악 구역만)이 보이는가.' },
+      { name: 'hunter', label: '추적자 출현(경계도 3, 통제실 미장악)', watch: '다음 칸에 추적자가 랜드마크에 스폰돼 항상 보이고, 위협 패널 첫 줄에 놓치기까지 남은 칸이 뜨는가.' },
       { name: 'power-cut', label: '전원 차단 진행 중', watch: '차단 만료 시각과 "전자 자물쇠 해킹 불가" 안내가 뜨는가.' },
     ],
   },
@@ -89,6 +90,7 @@ export function applyDevScenario(snapshot, name) {
     case 'recovery': return withRecovery(snapshot, run);
     case 'evidence': return withEvidence(snapshot, run);
     case 'alert-high': return withAlertHigh(snapshot, run);
+    case 'hunter': return withHunterPending(snapshot, run);
     case 'power-cut': return withPowerCut(snapshot, run);
     case 'prize-node': return withPrizeNode(snapshot, run);
     case 'prize-choice': return withPrizeChoice(snapshot, run);
@@ -222,6 +224,19 @@ function withAlertHigh(snapshot, run) {
       // 교대까지 코앞인 상태를 보려는 시나리오다. 맵 시간은 정수 칸이므로(ADR-0075) 간격을
       // 나누지 않고 몇 칸 뒤인지를 그대로 쓴다.
       reinforcements: { ...run.reinforcements, [sectorId]: { nextAt: run.time + DEV_IMMINENT_REINFORCEMENT_TICKS, alertSeen: 3 } },
+    },
+  };
+}
+
+/** 현재 구역 경계도만 3으로 — 통제실은 장악하지 않은 채라 다음 월드 갱신(대기 1칸)에 추적자가
+ * 스폰된다(runEngine.syncHunters). alert-high는 통제실을 장악해 두므로 추적자가 나오지 않는다. */
+function withHunterPending(snapshot, run) {
+  const sectorId = sectorOf(run, run.playerNodeId);
+  return {
+    ...snapshot,
+    facilityRunState: {
+      ...run,
+      sectorAlerts: { ...run.sectorAlerts, [sectorId]: { level: 3, pressure: 0, resolvedEventIds: ['dev_h1', 'dev_h2', 'dev_h3'] } },
     },
   };
 }

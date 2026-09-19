@@ -652,6 +652,18 @@ test('추적자는 관측하지 못한 구역에 있어도 지도와 위협 패�
   assert.ok(text.includes('놓치기까지 16칸'), '남은 칸이 위협 패널 첫 줄에 보여야 한다');
 });
 
+test('물러난 추적자는 위협 패널에 이유가 한 줄로 남고 15칸이 지나면 사라진다 (ADR-0092)', () => {
+  const { graph } = generateFacilityGraph(11);
+  const base = createRunState(graph, 11);
+  const sectorId = graph.sectorIds[1];
+  const entry = { at: base.time, sectorId, reason: 'lost', text: '추적자가 흔적을 놓쳤다 — 20칸 동안 나를 보지 못했다.' };
+  const recent = mountMap({ ...base, time: base.time + 3, hunterLog: [entry] }).textContent;
+  assert.ok(recent.includes('추적자가 흔적을 놓쳤다'), '최근 무력화 이력은 패널에 보여야 한다');
+  assert.ok(recent.includes('3칸 전'), '몇 칸 전인지 함께 적는다');
+  const old = mountMap({ ...base, time: base.time + 40, hunterLog: [entry] }).textContent;
+  assert.ok(!old.includes('추적자가 흔적을 놓쳤다'), '오래된 이력은 지운다');
+});
+
 test('HP가 절반 이하인 런에서는 상단에 부상 배지가 뜬다 (ADR-0093)', () => {
   const { graph } = generateFacilityGraph(11);
   const run = { ...createRunState(graph, 11), threats: {} };

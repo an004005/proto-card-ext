@@ -564,6 +564,8 @@ const NODE_TYPE_LETTER_MIN_SCALE = 2.2;
 // 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — CAMERA_HACK_DURATION(15칸)보다
 // 조금 길게 잡아, 그 이후는 조용한 이력 표기로 낮춘다(계속 안 사라지면 지금도 쫓기는 중처럼 읽힘).
 const CAMERA_DETECTION_BANNER_WINDOW = 20;
+/** 추적자가 물러난 뒤 그 사실을 위협 패널에 남겨 두는 칸 수. */
+const HUNTER_LOG_NOTICE_TICKS = 15;
 
 function IconHeart() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17s-6.2-3.9-6.2-8.5A3.8 3.8 0 0 1 10 6.1a3.8 3.8 0 0 1 6.2 2.4C16.2 13.1 10 17 10 17z"/></svg>`; }
 function IconBox() { return html`<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5 10 3l7 3.5-7 3.5-7-3.5Z"/><path d="M3 6.5V14l7 3.5 7-3.5V6.5"/><path d="M10 10v7.5"/></svg>`; }
@@ -2016,6 +2018,15 @@ export function MapScreen() {
                   ◆ 추적자 · ${SECTOR_NAMES[hunter.sectorId] || hunter.sectorId} · 나와 ${hunter.hopsFromPlayer ?? '?'}홉 · 놓치기까지 ${hunter.ticksUntilLost}칸
                 </div>
               <//>
+            `)}
+            ${/* 물러난 추적자는 잠깐 한 줄로 남긴다 — 표식이 사라진 이유(놓침·경계도 하락·통제실)를
+                말하지 않으면 "왜 없어졌지"가 남는다. HUNTER_LOG_NOTICE_TICKS 지나면 지운다. */ null}
+            ${(run.hunterLog || [])
+    .filter((entry) => run.time - entry.at <= HUNTER_LOG_NOTICE_TICKS)
+    .map((entry) => html`
+              <div key=${`${entry.sectorId}:${entry.at}`} class="map-hunter-log" style=${{ fontSize: '10.5px', color: 'var(--color-neutral-600)', fontStyle: 'italic', marginBottom: '3px' }}>
+                ${entry.text} (${run.time - entry.at}칸 전 · ${SECTOR_NAMES[entry.sectorId] || entry.sectorId})
+              </div>
             `)}
             ${hunterMarks.length > 0 && threatMoves.length === 0 && staleSightings.length === 0
     ? null
