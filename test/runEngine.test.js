@@ -637,8 +637,11 @@ test('useConcealment applies its node\'s fixed bonus, costs CONCEALMENT_ACTION_T
   const cameraNodeIds = new Set(graph.cameras.map((c) => c.nodeId));
   // 떠날 자리도 필요하다 — 목적지에 카메라가 있으면 거기서도 −1이 붙어 "은엄폐가 사라졌다"와
   // 구분되지 않으므로, 카메라 없는 이웃이 하나라도 있는 은엄폐 노드를 고른다.
+  // 특수 통로는 잠겨 있거나 고지대거나 일방통행이라 그냥 걸어 나갈 수 없다 — 평범한 통로로
+  // 이어진 이웃만 본다(ADR-0097 이후로는 도면의 지름길도 특수 통로다).
   const cameraFreeNeighbor = (id) => {
     const edge = graph.edges.find((e) => {
+      if (e.features.length > 0) return false;
       const other = e.from === id ? e.to : e.to === id ? e.from : null;
       return other && !cameraNodeIds.has(other);
     });

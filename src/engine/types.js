@@ -106,6 +106,8 @@
  * @property {SpecialEdgeFeature[]} features 빈 배열 = 일반 복도.
  * @property {number} [requiredCapability] 이 엣지를 여는 데 필요한 Capability 수치. 없으면 1.
  *   통신·관제탑 승강기처럼 배치 원형이 구조적으로 두는 통로가 더 높은 값을 갖는다.
+ * @property {true} [fromFloorPlan] 평면도가 낸 통로였는데 인접하지 않은 노드를 이어서 특수
+ *   통로가 된 것(ADR-0097). 그 구역의 특수 엣지 정원에 포함된다.
  */
 
 /**

@@ -4,9 +4,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateFacilityGraph } from '../src/engine/facilityGraph.js';
 import {
-  layoutPositions, scaledPositions, countLayoutOverlaps,
+  layoutPositions, scaledPositions, countLayoutOverlaps, plainSectorEdges,
   CANVAS_WIDTH, CANVAS_HEIGHT, CANVAS_PADDING, NODE_RADIUS,
 } from '../src/components/mapLayout.js';
+import { PLAIN_EDGE_SCREEN_MAX_LENGTH_FACTOR } from '../src/data/facilityLayout.js';
 
 const SEEDS = [1, 2, 3, 5, 8, 11, 13];
 
@@ -61,6 +62,32 @@ test('정리 후에는 노드가 서로 포개지지 않고, 통로 위에 얹�
         const d = Math.hypot(positions[ids[i]].x - positions[ids[j]].x, positions[ids[i]].y - positions[ids[j]].y);
         assert.ok(d >= NODE_RADIUS * 2 + 4, `seed ${seed}: ${ids[i]}와 ${ids[j]}가 ${d.toFixed(1)}px로 포개짐`);
       }
+    }
+  }
+});
+
+// ADR-0097: 엔진이 인접한 노드만 평범한 통로로 잇더라도, 화면 정리가 그것을 다시 길게 늘이면
+// 플레이어에게는 여전히 도면을 가로지르는 줄이다. 화면에서도 상한을 지킨다.
+test('화면에서도 구역 안 평범한 통로는 그 구역 중앙값의 2배를 넘지 않는다', () => {
+  for (const seed of [1, 2, 3, 4, 5]) {
+    const { graph } = generateFacilityGraph(seed);
+    const positions = layoutPositions(graph);
+    const sectorOf = Object.fromEntries(graph.nodes.map((n) => [n.id, n.sectorId]));
+    const lengthsBySector = {};
+    for (const edge of plainSectorEdges(graph)) {
+      (lengthsBySector[sectorOf[edge.from]] ??= []).push(Math.hypot(
+        positions[edge.from].x - positions[edge.to].x, positions[edge.from].y - positions[edge.to].y,
+      ));
+    }
+    for (const [sectorId, lengths] of Object.entries(lengthsBySector)) {
+      const sorted = lengths.slice().sort((a, b) => a - b);
+      const mid = sorted.length >> 1;
+      const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+      const longest = sorted[sorted.length - 1];
+      assert.ok(
+        longest <= median * PLAIN_EDGE_SCREEN_MAX_LENGTH_FACTOR,
+        `seed ${seed}: ${sectorId}의 가장 긴 평범한 통로가 중앙값의 ${(longest / median).toFixed(2)}배다`,
+      );
     }
   }
 });

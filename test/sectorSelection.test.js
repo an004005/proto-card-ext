@@ -134,7 +134,9 @@ test('네 구역짜리 그래프는 어떤 시드에서도 fallback 없이 생�
     const { graph, usedFallback } = generateFacilityGraph(seed);
     assert.equal(usedFallback, false, `시드 ${seed}: fallback 토폴로지로 떨어졌다`);
     assert.equal(graph.sectorIds.length, RUN_SECTOR_COUNT);
-    assert.equal(graph.nodes.length, totalNodesFor(graph.sectorIds), `시드 ${seed}: 노드 수`);
+    // 배치 원형이 정한 노드 수 + 긴 다리를 쪼개며 끼운 복도 노드(ADR-0097, 런당 0~2개).
+    const splitNodes = graph.nodes.filter((n) => n.id.includes('_split')).length;
+    assert.equal(graph.nodes.length, totalNodesFor(graph.sectorIds) + splitNodes, `시드 ${seed}: 노드 수`);
     assert.equal(graph.landmarks.length, RUN_SECTOR_COUNT);
     // 탈출구는 표준 A와 열쇠 둘뿐이고(ADR-0083) 서로 다른, 시작 구역이 아닌 구역에 놓인다.
     assert.deepEqual(graph.exits.map((e) => e.exitId), ['A', 'key'], `시드 ${seed}: 출구 목록`);

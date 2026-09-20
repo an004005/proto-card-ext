@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import process from 'node:process';
 
-import { generateFacilityGraph, adjacentSectorIds } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, adjacentSectorIds, findPlainEdgeViolations } from '../src/engine/facilityGraph.js';
 import { moveTimeCost, forecastAction, actionTimeCost } from '../src/engine/actionCosts.js';
 import { CONTRACT_DEFS } from '../src/data/contracts.js';
 import { canClimbHighGround } from '../src/engine/runEngine.js';
@@ -190,6 +190,18 @@ export function measureSeed(seed) {
     if (edge.features.length === 0) featureCounts.plain += 1;
     for (const f of edge.features) featureCounts[f] = (featureCounts[f] || 0) + 1;
   }
+  // 평범한 통로는 인접한 노드만 잇는다(ADR-0097) — 위반은 0이어야 한다. 함께 길이 분포도 낸다.
+  const plainEdgeViolations = findPlainEdgeViolations(graph).length;
+  const nodeById = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
+  const plainLengths = graph.edges
+    .filter((e) => e.features.length === 0 && nodeById[e.from].sectorId === nodeById[e.to].sectorId)
+    .map((e) => Math.hypot(nodeById[e.from].x - nodeById[e.to].x, nodeById[e.from].y - nodeById[e.to].y))
+    .sort((a, b) => a - b);
+  const plainMedian = stats(plainLengths).median;
+  const plainP95 = plainLengths[Math.min(plainLengths.length - 1, Math.floor(plainLengths.length * 0.95))];
+  // 정규화 패스가 평면도의 지름길에 대가를 붙인 것 — 특수 엣지 정원 안에서 센다.
+  const convertedFromFloorPlan = graph.edges.filter((e) => e.fromFloorPlan).length;
+  const splitCorridorNodes = graph.nodes.filter((n) => n.id.includes('_split')).length;
 
   /** @type {Record<string, any>} */
   const byMobility = {};
@@ -273,6 +285,11 @@ export function measureSeed(seed) {
     nodeCount: graph.nodes.length,
     edgeCount: graph.edges.length,
     featureCounts,
+    plainEdgeViolations,
+    plainEdgeMedian: plainMedian,
+    plainEdgeP95Ratio: plainMedian > 0 ? plainP95 / plainMedian : NaN,
+    convertedFromFloorPlan,
+    splitCorridorNodes,
     byMobility,
   };
 }
@@ -329,6 +346,14 @@ export function formatReport(result) {
   const feat = ['plain', 'oneWay', 'blocked', 'electronic', 'highGround']
     .map((k) => `${k} ${(rs.reduce((s, r) => s + (r.featureCounts[k] || 0), 0) / rs.length).toFixed(1)}`).join(' · ');
   out.push(`시드당 평균 엣지 성격: ${feat}`);
+  // 평범한 통로는 인접한 노드만 잇는다(ADR-0097).
+  const violationTotal = rs.reduce((s, r) => s + r.plainEdgeViolations, 0);
+  const violationSeeds = rs.filter((r) => r.plainEdgeViolations > 0).length;
+  const plainMedians = stats(pick((r) => r.plainEdgeMedian));
+  const plainRatios = stats(pick((r) => r.plainEdgeP95Ratio));
+  out.push(`인접 규칙 위반 평범한 통로: ${violationTotal}개 (${violationSeeds}/${rs.length}시드) — 목표 0`);
+  out.push(`구역 안 평범한 통로 길이: 중앙값 ${num(plainMedians.median, 1)} (시드별 ${num(plainMedians.min, 1)}~${num(plainMedians.max, 1)}) · 95퍼센타일/중앙값 ${num(plainRatios.median, 2)} (최대 ${num(plainRatios.max, 2)})`);
+  out.push(`평면도가 낸 지름길에 대가를 붙인 통로: 시드당 ${(rs.reduce((s, r) => s + r.convertedFromFloorPlan, 0) / rs.length).toFixed(1)}개 · 긴 다리를 쪼개며 끼운 복도 노드: 시드당 ${(rs.reduce((s, r) => s + r.splitCorridorNodes, 0) / rs.length).toFixed(1)}개`);
   out.push('');
 
   // 1. 시작점에서 각 출구까지

@@ -22,7 +22,7 @@
 // 순수하고 결정론적이다. 모든 함수가 rngState를 명시적으로 전달한다(rng.js 참고).
 
 import { nextFloat, nextInt, shuffle, weightedPick } from './rng.js';
-import { SECTOR_LAYOUTS, NODE_MIN_SEPARATION, NODE_SEPARATION_PASSES, TOWER_ELEVATOR_REQUIREMENT, TOWER_LOBBY_ROOMS, TOWER_LOBBY_SPREAD, LANDMARK_CANDIDATE_MIN, LANDMARK_CANDIDATE_MAX } from '../data/facilityLayout.js';
+import { SECTOR_LAYOUTS, NODE_MIN_SEPARATION, NODE_SEPARATION_PASSES, TOWER_ELEVATOR_REQUIREMENT, TOWER_LOBBY_ROOMS, TOWER_LOBBY_RING_RADIUS, LANDMARK_CANDIDATE_MIN, LANDMARK_CANDIDATE_MAX } from '../data/facilityLayout.js';
 
 /**
  * @typedef {Object} LocalNode
@@ -49,6 +49,14 @@ import { SECTOR_LAYOUTS, NODE_MIN_SEPARATION, NODE_SEPARATION_PASSES, TOWER_ELEV
 
 /** 복도 한 칸의 기준 간격. 모든 골격이 이 단위로 그려지고 마지막에 함께 정규화된다. */
 const SPACING = 1;
+
+// 방이 자기 복도 마디에서 떨어지는 거리. 같은 마디에 여러 방이 붙으면 양옆으로 번갈아 퍼지고
+// 두 개마다 한 겹씩 바깥으로 나간다. 겹이 무한정 멀어지면 그 방의 문이 도면을 가로지르는 긴
+// 평범한 통로가 되므로(ADR-0097), 겹은 ROOM_MAX_LAYER에서 멈추고 나머지는 각도로만 흩어진다 —
+// 끝에서 밀어내기(separate)가 겹친 방을 떼어 놓는다.
+const ROOM_FIRST_LAYER = 0.78;
+const ROOM_LAYER_STEP = 0.52;
+const ROOM_MAX_LAYER = 2;
 
 /** @param {number} v @param {number} lo @param {number} hi */
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -361,10 +369,12 @@ const SKELETON_BUILDERS = {
  * @param {{value: import('./types.js').FacilityNodeType, weight: number}[]} roomTypes
  * @param {number[]} [forcedHosts] 앞쪽 방들을 반드시 매달 골격 마디. 탑 1층 로비처럼 특정
  *   마디에 방이 모여야 하는 배치 원형이 쓴다. 나머지 방은 평소대로 골고루 퍼진다.
- * @param {Record<number, number>} [hostSpread] 마디별 방 거리 배수. 그 마디에 방이 많이 몰리는
- *   배치 원형이 방끼리 붙어 보이지 않도록 넓게 벌릴 때 쓴다.
+ * @param {Record<number, {radius: number, count: number}>} [hostRing] 이 마디의 방은 부채꼴이 아니라
+ *   반지름이 같은 고리 위에 고르게 놓는다. 방이 한 마디에 여러 개 몰리는 배치 원형(탑 1층
+ *   로비)이 쓴다 — 겹겹이 멀어지는 대신 거리가 전부 같아, 그 문들이 전부 짧은 평범한 통로로
+ *   남는다(ADR-0097).
  */
-function attachRooms(rngState, skeleton, roomCount, roomTypes, forcedHosts = [], hostSpread = {}) {
+function attachRooms(rngState, skeleton, roomCount, roomTypes, forcedHosts = [], hostRing = {}) {
   let state = rngState;
   const skeletonSize = skeleton.points.length;
   /** @type {number[][]} */
@@ -399,8 +409,16 @@ function attachRooms(rngState, skeleton, roomCount, roomTypes, forcedHosts = [],
     const len = Math.hypot(dx, dy);
     const perpendicular = len < 1e-6 ? 0 : Math.atan2(dx, -dy);
     const ja = jitter(state, 0.22); state = ja.state;
-    const angle = perpendicular + (k % 2 === 0 ? 0 : Math.PI) + ja.value;
-    const distance = SPACING * (0.78 + 0.52 * Math.floor(k / 2)) * (hostSpread[hostIndex] || 1);
+    // 고리는 정원만큼만 받는다. 그 마디에 방이 더 붙으면(hostOrder가 한 바퀴 돌아 다시 고른
+    // 경우) 평소대로 부채꼴로 매달아 고리 위 방과 겹치지 않게 한다.
+    const ringDef = hostRing[hostIndex];
+    const ring = ringDef && k < ringDef.count ? ringDef : null;
+    const angle = ring
+      ? perpendicular + (Math.PI * 2 * k) / Math.max(1, ring.count) + ja.value * 0.3
+      : perpendicular + (k % 2 === 0 ? 0 : Math.PI) + ja.value;
+    const distance = ring
+      ? SPACING * ring.radius
+      : SPACING * (ROOM_FIRST_LAYER + ROOM_LAYER_STEP * Math.min(Math.floor(k / 2), ROOM_MAX_LAYER));
 
     const typeResult = weightedPick(state, roomTypes); state = typeResult.state;
     const index = skeletonSize + rooms.length;
@@ -538,7 +556,10 @@ export function generateSectorLayout(rngState, sectorId) {
     ? hosts.flatMap((h) => new Array(LANDMARK_CANDIDATE_MIN).fill(h))
     : [];
   const forcedHosts = [...lobbyHosts, ...landmarkForced].slice(0, roomCount);
-  const attached = attachRooms(state, skeleton, roomCount, layout.roomTypes, forcedHosts, isTower ? { 0: TOWER_LOBBY_SPREAD } : {});
+  const attached = attachRooms(
+    state, skeleton, roomCount, layout.roomTypes, forcedHosts,
+    isTower && lobbyHosts.length > 0 ? { 0: { radius: TOWER_LOBBY_RING_RADIUS, count: lobbyHosts.length } } : {},
+  );
   state = attached.rngState;
 
   /** @type {LocalNode[]} */

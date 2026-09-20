@@ -24,7 +24,11 @@ function autoPlayCombat(snapshot, guardLimit = 100) {
       (c) => c.defId.includes('slash') || c.defId.includes('shot') || c.defId.includes('stab') || c.defId.includes('aim'),
     );
     const playable = attack && isCardPlayable(combat, attack.instanceId);
+    // 공격 카드가 없으면 턴을 넘기기 전에 낼 수 있는 아무 카드나 낸다 — 방어·이동 카드를 그냥
+    // 버리면 두 명짜리 무리에도 지는 일이 잦고, 그러면 이 도우미가 "이긴 전투"를 못 만든다.
+    const fallback = combat.piles.hand.find((c) => isCardPlayable(combat, c.instanceId));
     if (playable && aliveEnemy) s = finishTaskSnapshot(gameReducer(s, { type: 'PLAY_CARD', instanceId: attack.instanceId, targetId: aliveEnemy.id }));
+    else if (fallback && aliveEnemy) s = finishTaskSnapshot(gameReducer(s, { type: 'PLAY_CARD', instanceId: fallback.instanceId, targetId: aliveEnemy.id }));
     else s = finishTaskSnapshot(gameReducer(s, { type: 'END_TURN' }));
     guard += 1;
   }
@@ -113,13 +117,15 @@ function moveTowardNearestThreat(s, skipThreatIds = new Set()) {
   if (s.facilityRunState?.encounter) return resolveEncounterOnce(s);
   const run = s.facilityRunState;
   const { parent, dist } = bfsWithParents(run.graph, run.playerNodeId);
-  const threatNodeIds = Object.values(run.threats)
-    .filter((t) => !skipThreatIds.has(t.id))
-    .map((t) => t.nodeId)
-    .filter((id) => dist[id] !== undefined);
-  if (threatNodeIds.length === 0) return driveMapForward(s);
-  threatNodeIds.sort((a, b) => dist[a] - dist[b]);
-  const target = threatNodeIds[0];
+  // 가장 작은 무리부터 고른다 — "가장 가까운" 것만 보면 어느 무리를 먼저 만나는지가 평면도
+  // 생성 규칙이 바뀔 때마다 달라지고, 그 자리에 여섯 명짜리 무리가 서 있으면 아래 자동 전투가
+  // 진다. 무리 크기로 먼저 고르면 "이길 수 있는 전투 하나"라는 이 도우미의 뜻이 도면과 무관하게
+  // 유지된다. 같은 크기면 가까운 쪽, 그다음은 id로 갈라 결정론을 지킨다.
+  const candidates = Object.values(run.threats)
+    .filter((t) => !skipThreatIds.has(t.id) && dist[t.nodeId] !== undefined);
+  if (candidates.length === 0) return driveMapForward(s);
+  candidates.sort((a, b) => (a.size || 0) - (b.size || 0) || dist[a.nodeId] - dist[b.nodeId] || (a.id < b.id ? -1 : 1));
+  const target = candidates[0].nodeId;
   if (target === run.playerNodeId) return driveMapForward(s);
   const nextHop = firstHopToward(parent, run.playerNodeId, target);
   if (!nextHop) return driveMapForward(s);

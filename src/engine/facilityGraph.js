@@ -47,8 +47,9 @@ import { baselineWalkDistances, baselineWalkArcs, bfsHopDistances, countEdgeDisj
 import { generateSectorLayout } from './layoutArchetypes.js';
 import {
   ALL_SECTOR_IDS, RUN_SECTOR_COUNT, START_SECTOR_ID, DEEPEST_SECTOR_ID,
-  SECTOR_RING_RADIUS, SECTOR_NODE_RADIUS,
+  SECTOR_RING_RADIUS, SECTOR_NODE_RADIUS, NODE_MIN_SEPARATION,
   BASE_EDGE_DEGREE_HARD_CAP, EXIT_PLACEMENT_MAX_ATTEMPTS,
+  PLAIN_EDGE_MAX_LENGTH_FACTOR, PLAIN_EDGE_MAX_BLOCKING_NODES,
   SPECIAL_EDGES_PER_SECTOR_MIN, SPECIAL_EDGES_PER_SECTOR_MAX,
   CROSS_SECTOR_SPECIAL_EDGES_MIN, CROSS_SECTOR_SPECIAL_EDGES_MAX,
   LONG_RANGE_SPECIAL_EDGES_MIN, LONG_RANGE_SPECIAL_EDGES_MAX, SPECIAL_EDGE_CATEGORY_WEIGHTS,
@@ -269,6 +270,293 @@ export function buildBaseGraph(rngState, sectorIds) {
   return { nodes, edges, nodeIdsBySector, externalIdsBySector, groupByNodeId, landmarkIdsBySector, rngState: state };
 }
 
+// ---- 평범한 통로는 인접한 노드만 잇는다 (ADR-0097) ----
+
+/** @param {number[]} values */
+function median(values) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/** 같은 구역 안 평범한 통로만 담은 인접 리스트. @param {import('./types.js').FacilityEdge[]} plainEdges */
+function plainAdjacency(plainEdges) {
+  /** @type {Map<string, Set<string>>} */
+  const adjacency = new Map();
+  for (const edge of plainEdges) {
+    if (!adjacency.has(edge.from)) adjacency.set(edge.from, new Set());
+    if (!adjacency.has(edge.to)) adjacency.set(edge.to, new Set());
+    /** @type {Set<string>} */ (adjacency.get(edge.from)).add(edge.to);
+    /** @type {Set<string>} */ (adjacency.get(edge.to)).add(edge.from);
+  }
+  return adjacency;
+}
+
+/**
+ * 이 통로를 뺀 평범한 부분그래프에서 두 끝이 그래도 이어져 있는가. 이어져 있지 않으면 그
+ * 통로가 유일한 길(다리)이라, 잠글 수 없고 쪼개는 수밖에 없다.
+ * @param {Map<string, Set<string>>} adjacency
+ * @param {string} from @param {string} to
+ */
+function stillConnectedWithout(adjacency, from, to) {
+  let frontier = [from];
+  const seen = new Set([from]);
+  for (let hops = 1; frontier.length > 0; hops++) {
+    /** @type {string[]} */
+    const next = [];
+    for (const node of frontier) {
+      for (const other of adjacency.get(node) || []) {
+        if ((node === from && other === to) || (node === to && other === from)) continue;
+        if (seen.has(other)) continue;
+        if (other === to) return true;
+        seen.add(other);
+        next.push(other);
+      }
+    }
+    frontier = next;
+  }
+  return false;
+}
+
+/**
+ * 두 노드를 지름으로 하는 원 안에 들어 있는 같은 구역의 다른 노드 수 — "사이에 방이 몇 개나
+ * 끼어 있나"를 축척과 무관하게 세는 값이다(Gabriel 그래프의 빈 원 조건).
+ * @param {import('./types.js').FacilityNode} a @param {import('./types.js').FacilityNode} b
+ * @param {import('./types.js').FacilityNode[]} sectorNodes
+ */
+function blockingNodeCount(a, b, sectorNodes) {
+  const cx = (a.x + b.x) / 2;
+  const cy = (a.y + b.y) / 2;
+  const radius = distance(a, b) / 2;
+  let count = 0;
+  for (const node of sectorNodes) {
+    if (node.id === a.id || node.id === b.id) continue;
+    if (Math.hypot(node.x - cx, node.y - cy) < radius) count += 1;
+  }
+  return count;
+}
+
+/**
+ * 규칙을 어기는 평범한 통로 — 특징이 없는데 두 끝이 공간적으로 인접하지 않은 통로다(ADR-0097).
+ * 관문 엣지는 구역과 구역을 잇는 구조라 판정에서 빠진다(같은 구역 안 통로만 본다).
+ *
+ * 두 가지 중 하나라도 걸리면 위반이다.
+ *   (a) 길이가 그 구역 평범한 통로 길이 중앙값 × PLAIN_EDGE_MAX_LENGTH_FACTOR를 넘는다.
+ *   (b) 두 끝을 지름으로 하는 원 안에 같은 구역의 다른 노드가 PLAIN_EDGE_MAX_BLOCKING_NODES개
+ *       보다 많이 들어 있다 — 사이에 방이 여럿 끼어 있는데 그 위를 건너뛰어 문을 낸 셈이다.
+ *       단 그 통로를 빼면 두 끝이 끊기는 경우(다리)는 지름길일 수 없으므로 (b)에서 빠진다.
+ *       길이가 (a)를 넘으면 다리라도 위반이다 — 그건 도면을 가로지르는 줄이고, 잠그는 대신 쪼갠다.
+ * @param {{nodes: import('./types.js').FacilityNode[], edges: import('./types.js').FacilityEdge[]}} graph
+ * @returns {{edgeId: string, from: string, to: string, sectorId: string, reason: 'length'|'between', length: number, limit: number}[]}
+ */
+export function findPlainEdgeViolations(graph) {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  /** @param {string} id */
+  const sectorOf = (id) => /** @type {import('./types.js').FacilityNode} */ (byId.get(id)).sectorId;
+  const plain = graph.edges.filter((e) => e.features.length === 0 && sectorOf(e.from) === sectorOf(e.to));
+  /** @param {import('./types.js').FacilityEdge} e */
+  const lengthOf = (e) => distance(
+    /** @type {{x:number,y:number}} */ (byId.get(e.from)), /** @type {{x:number,y:number}} */ (byId.get(e.to)),
+  );
+
+  /** @type {Map<string, number[]>} */
+  const lengthsBySector = new Map();
+  for (const edge of plain) {
+    const sectorId = sectorOf(edge.from);
+    if (!lengthsBySector.has(sectorId)) lengthsBySector.set(sectorId, []);
+    /** @type {number[]} */ (lengthsBySector.get(sectorId)).push(lengthOf(edge));
+  }
+  /** @type {Map<string, number>} */
+  const limitBySector = new Map();
+  for (const [sectorId, lengths] of lengthsBySector) {
+    limitBySector.set(sectorId, median(lengths) * PLAIN_EDGE_MAX_LENGTH_FACTOR);
+  }
+
+  /** @type {Map<string, import('./types.js').FacilityNode[]>} */
+  const nodesBySector = new Map();
+  for (const node of graph.nodes) {
+    if (!nodesBySector.has(node.sectorId)) nodesBySector.set(node.sectorId, []);
+    /** @type {import('./types.js').FacilityNode[]} */ (nodesBySector.get(node.sectorId)).push(node);
+  }
+  const adjacency = plainAdjacency(plain);
+  const violations = [];
+  for (const edge of plain) {
+    const sectorId = sectorOf(edge.from);
+    const length = lengthOf(edge);
+    const limit = /** @type {number} */ (limitBySector.get(sectorId));
+    if (length > limit) {
+      violations.push({ edgeId: edge.id, from: edge.from, to: edge.to, sectorId, reason: /** @type {const} */ ('length'), length, limit });
+      continue;
+    }
+    const blocking = blockingNodeCount(
+      /** @type {import('./types.js').FacilityNode} */ (byId.get(edge.from)),
+      /** @type {import('./types.js').FacilityNode} */ (byId.get(edge.to)),
+      /** @type {import('./types.js').FacilityNode[]} */ (nodesBySector.get(sectorId)),
+    );
+    if (blocking > PLAIN_EDGE_MAX_BLOCKING_NODES && stillConnectedWithout(adjacency, edge.from, edge.to)) {
+      violations.push({ edgeId: edge.id, from: edge.from, to: edge.to, sectorId, reason: /** @type {const} */ ('between'), length, limit });
+    }
+  }
+  return violations;
+}
+
+/** 규칙을 어긴 평범한 통로를 고치는 패스가 한 그래프에서 도는 최대 횟수. */
+const PLAIN_EDGE_NORMALIZE_PASSES = 6;
+
+/**
+ * 긴 다리를 쪼갤 때 끼워 넣을 복도 노드의 자리. 가운데에서 시작해, 최소 간격보다 가까운 같은
+ * 구역 노드가 있으면 그 반대로 조금씩 밀어낸다(layoutArchetypes.separate와 같은 방식). 난수를
+ * 쓰지 않아 같은 시드면 같은 자리다.
+ * @param {import('./types.js').FacilityNode} a @param {import('./types.js').FacilityNode} b
+ * @param {import('./types.js').FacilityNode[]} sectorNodes
+ */
+function splitPointFor(a, b, sectorNodes) {
+  const required = NODE_MIN_SEPARATION * SECTOR_NODE_RADIUS;
+  let x = (a.x + b.x) / 2;
+  let y = (a.y + b.y) / 2;
+  /** @param {number} cx @param {number} cy */
+  const clearanceAt = (cx, cy) => {
+    let clearance = Infinity;
+    for (const node of sectorNodes) clearance = Math.min(clearance, Math.hypot(node.x - cx, node.y - cy));
+    return clearance;
+  };
+  /** @type {{x: number, y: number, clearance: number}} */
+  let best = { x, y, clearance: clearanceAt(x, y) };
+  if (best.clearance >= required) return { x: best.x, y: best.y };
+  // 가운데가 이미 비좁으면 그 주위를 가까운 고리부터 훑어 최소 간격을 지키는 첫 자리를 쓴다.
+  // 가까운 고리부터 보므로 통로 둘은 최대한 짧게 남는다.
+  for (let ring = 1; ring <= 6; ring++) {
+    for (let step = 0; step < 16; step++) {
+      const angle = (step / 16) * Math.PI * 2;
+      const cx = x + Math.cos(angle) * ring * 0.5 * required;
+      const cy = y + Math.sin(angle) * ring * 0.5 * required;
+      const clearance = clearanceAt(cx, cy);
+      if (clearance >= required) return { x: cx, y: cy };
+      if (clearance > best.clearance) best = { x: cx, y: cy, clearance };
+    }
+  }
+  return { x: best.x, y: best.y };
+}
+
+/**
+ * 기저 그래프를 세운 뒤 도는 정규화 패스(ADR-0097). 규칙을 어기는 평범한 통로를 찾아
+ *   - 평범한 부분그래프의 연결성을 깨지 않으면(다리가 아니면) **특수 통로로 바꾸고**,
+ *   - 다리면 중간에 복도 노드를 끼워 짧은 통로 둘로 **쪼갠다**(그 구역의 유일한 길을 잠글 수는 없다).
+ * 바뀐 통로는 그 구역의 특수 엣지 정원에 포함되므로(placeSpecialEdges가 그만큼 덜 얹는다) 특수
+ * 통로의 총량은 그대로다. 지름길은 늘지 않고, 있던 지름길에 대가가 붙을 뿐이다.
+ *
+ * 한 통로를 특수로 바꾸면 그 옆 통로의 우회 홉이 늘어 새 위반이 생길 수 있으므로 고정점까지
+ * 반복한다. 반복은 PLAIN_EDGE_NORMALIZE_PASSES로 막아 둔다.
+ * @param {import('./types.js').FacilityNode[]} nodes 필요하면 복도 노드가 여기에 더해진다.
+ * @param {import('./types.js').FacilityEdge[]} edges 제자리에서 고쳐 쓰지 않고 새 배열을 돌려준다.
+ * @param {Record<string, string[]>} nodeIdsBySector
+ * @param {Record<string, number>} groupByNodeId
+ * @param {import('./rng.js').RngState} rngState
+ */
+function normalizePlainEdges(nodes, edges, nodeIdsBySector, groupByNodeId, rngState) {
+  let state = rngState;
+  let current = [...edges];
+  /** @type {Record<string, number>} */
+  const convertedBySector = {};
+  let splitCount = 0;
+
+  for (let pass = 0; pass < PLAIN_EDGE_NORMALIZE_PASSES; pass++) {
+    const violations = findPlainEdgeViolations({ nodes, edges: current });
+    if (violations.length === 0) break;
+    // 가장 심한 것(길이 초과 배율이 큰 것, 같으면 더 멀리 건너뛰는 것)부터 고친다. 그래야
+    // 도면을 가장 크게 가로지르는 줄이 먼저 사라지고, 남은 짧은 통로가 연결을 떠맡는다.
+    violations.sort((a, b) => (b.length / b.limit) - (a.length / a.limit) || (a.edgeId < b.edgeId ? -1 : 1));
+
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    /** @param {string} id */
+    const sectorOf = (id) => /** @type {import('./types.js').FacilityNode} */ (byId.get(id)).sectorId;
+    const adjacency = plainAdjacency(current.filter((e) => e.features.length === 0 && sectorOf(e.from) === sectorOf(e.to)));
+    /** @type {Map<string, import('./types.js').FacilityEdge>} */
+    const edgeById = new Map(current.map((e) => [e.id, e]));
+
+    for (const violation of violations) {
+      const edge = edgeById.get(violation.edgeId);
+      if (!edge || edge.features.length > 0) continue;
+      // 지금 이 순간의 평범한 부분그래프에서 다리인가 — 앞선 변환이 우회로를 없앴을 수 있다.
+      const isBridge = !stillConnectedWithout(adjacency, edge.from, edge.to);
+      if (!isBridge) {
+        state = convertToSpecial(edge, state);
+        /** @type {Set<string>} */ (adjacency.get(edge.from)).delete(edge.to);
+        /** @type {Set<string>} */ (adjacency.get(edge.to)).delete(edge.from);
+        convertedBySector[violation.sectorId] = (convertedBySector[violation.sectorId] || 0) + 1;
+        continue;
+      }
+      // 다리는 잠글 수 없다 — 그 구역의 유일한 길이므로, 중간에 복도 노드를 끼워 짧은 통로
+      // 둘로 쪼갠다. 노드가 하나 늘지만 구역의 연결은 그대로이고 통로는 둘 다 짧아진다.
+      const sectorId = violation.sectorId;
+      const a = /** @type {import('./types.js').FacilityNode} */ (byId.get(edge.from));
+      const b = /** @type {import('./types.js').FacilityNode} */ (byId.get(edge.to));
+      const point = splitPointFor(a, b, nodes.filter((n) => n.sectorId === sectorId));
+      /** @type {import('./types.js').FacilityNode} */
+      const midpoint = {
+        id: `${sectorId}_split${splitCount++}`,
+        sectorId: /** @type {import('./types.js').FacilitySectorId} */ (sectorId),
+        type: 'corridor',
+        x: point.x,
+        y: point.y,
+      };
+      if (a.offPlan && b.offPlan) midpoint.offPlan = true;
+      nodes.push(midpoint);
+      byId.set(midpoint.id, midpoint);
+      nodeIdsBySector[sectorId].push(midpoint.id);
+      if (groupByNodeId[edge.from] !== undefined) groupByNodeId[midpoint.id] = groupByNodeId[edge.from];
+      current = current.filter((e) => e !== edge);
+      const first = { id: edgeId(edge.from, midpoint.id), from: edge.from, to: midpoint.id, bidirectional: true, features: [] };
+      const second = { id: edgeId(midpoint.id, edge.to), from: midpoint.id, to: edge.to, bidirectional: true, features: [] };
+      current.push(first, second);
+      edgeById.delete(edge.id);
+      edgeById.set(first.id, first);
+      edgeById.set(second.id, second);
+      const near = /** @type {Set<string>} */ (adjacency.get(edge.from));
+      const far = /** @type {Set<string>} */ (adjacency.get(edge.to));
+      near.delete(edge.to); near.add(midpoint.id);
+      far.delete(edge.from); far.add(midpoint.id);
+      adjacency.set(midpoint.id, new Set([edge.from, edge.to]));
+    }
+  }
+
+  return { edges: current, convertedBySector, rngState: state };
+}
+
+/**
+ * 평범한 통로를 특수 통로로 바꾼다 — 종류는 무작위 특수 엣지와 같은 가중치를 쓴다.
+ * 제자리에서 고친다(엣지 객체는 이 시점에 아직 아무도 들고 있지 않다).
+ * @param {import('./types.js').FacilityEdge} edge
+ * @param {import('./rng.js').RngState} rngState
+ */
+function convertToSpecial(edge, rngState) {
+  const { value: category, state: afterCategory } = weightedPick(rngState, SPECIAL_EDGE_CATEGORY_WEIGHTS);
+  let state = afterCategory;
+  /** @type {import('./types.js').SpecialEdgeFeature[]} */
+  const features = [category];
+  if (category === 'blocked') {
+    const { value: roll, state: afterRoll } = nextFloat(state);
+    state = afterRoll;
+    if (roll < SPECIAL_EDGE_SECOND_TAG_CHANCE) features.push('electronic');
+  }
+  if (category === 'oneWay') {
+    // 지름길로 열리는 방향은 무작위다 — 어느 쪽으로 뛰어내릴 수 있는 환풍구인지가 시드마다 다르다.
+    const { value: flip, state: afterFlip } = nextFloat(state);
+    state = afterFlip;
+    if (flip < 0.5) {
+      const from = edge.from;
+      edge.from = edge.to;
+      edge.to = from;
+      edge.id = edgeId(edge.from, edge.to);
+    }
+    edge.bidirectional = false;
+  }
+  edge.features = features;
+  edge.fromFloorPlan = true;
+  return state;
+}
+
 /**
  * Re-derives per-node coordinates, existing-pair keys, and degree counts from any topology's
  * nodes/edges — used to feed placeSpecialEdges regardless of whether the topology came fresh out
@@ -415,12 +703,18 @@ function tryBuildTopology(rngState, sectorIds, contractSectorId = undefined) {
   const reachable = reachableSet(base.edges, base.nodes[0].id);
   if (reachable.size !== base.nodes.length) return { ok: false, rngState: base.rngState };
 
-  const { byId, existing, degree } = deriveGraphMeta(base.nodes, base.edges);
-  const special = placeSpecialEdges(
-    base.nodes, base.edges, base.nodeIdsBySector, base.externalIdsBySector, base.groupByNodeId,
-    byId, existing, degree, base.rngState, sectorIds,
+  // 평범한 통로는 인접한 노드만 잇는다(ADR-0097) — 도면을 가로지르거나 여러 칸을 건너뛰는
+  // 평범한 통로를 특수 통로로 바꾸거나(지름길에는 대가가 붙는다) 짧은 둘로 쪼갠다.
+  const normalized = normalizePlainEdges(
+    base.nodes, base.edges, base.nodeIdsBySector, base.groupByNodeId, base.rngState,
   );
-  const edges = [...base.edges, ...special.specialEdges];
+
+  const { byId, existing, degree } = deriveGraphMeta(base.nodes, normalized.edges);
+  const special = placeSpecialEdges(
+    base.nodes, normalized.edges, base.nodeIdsBySector, base.externalIdsBySector, base.groupByNodeId,
+    byId, existing, degree, normalized.rngState, sectorIds, normalized.convertedBySector,
+  );
+  const edges = [...normalized.edges, ...special.specialEdges];
 
   const placement = placeStartAndExits(base.nodes, edges, special.rngState, sectorIds, contractSectorId);
   if (!placement) return { ok: false, rngState: special.rngState };
@@ -481,8 +775,10 @@ function getFallbackTopology(sectorIds, contractSectorId = undefined) {
  * @param {Map<string, number>} baseDegree
  * @param {import('./rng.js').RngState} rngState
  * @param {readonly FacilitySectorId[]} sectorIds
+ * @param {Record<string, number>} [convertedBySector] 정규화 패스(ADR-0097)가 이미 특수로 바꾼
+ *   구역 안 통로 수. 정원에 포함되므로 그만큼 덜 얹는다 — 특수 통로 총량은 그대로다.
  */
-function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySector, groupByNodeId, byId, existingPairs, baseDegree, rngState, sectorIds) {
+function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySector, groupByNodeId, byId, existingPairs, baseDegree, rngState, sectorIds, convertedBySector = {}) {
   let state = rngState;
   const existing = new Set(existingPairs);
   const degree = new Map(baseDegree);
@@ -541,7 +837,8 @@ function placeSpecialEdges(nodes, baseEdges, nodeIdsBySector, externalIdsBySecto
     const pool = nodeIdsBySector[sectorId];
     const { value: count, state: sCount } = nextInt(state, SPECIAL_EDGES_PER_SECTOR_MAX - SPECIAL_EDGES_PER_SECTOR_MIN + 1);
     state = sCount;
-    const target = count + SPECIAL_EDGES_PER_SECTOR_MIN;
+    // 정규화 패스가 이미 바꿔 놓은 것이 정원의 일부다(ADR-0097).
+    const target = Math.max(0, count + SPECIAL_EDGES_PER_SECTOR_MIN - (convertedBySector[sectorId] || 0));
     let placed = 0;
     let attempts = 0;
     // 시도 한도는 목표 개수에 비례한다. 고정값이면 개수를 늘렸을 때(ADR-0088의 8~12개) 마지막

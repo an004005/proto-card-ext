@@ -2,6 +2,8 @@
 // 노드가 남의 통로 위에 얹히거나 서로 포개지지 않도록 조금씩 밀어내는 정리를 한다.
 // 순수 함수이며 RNG를 쓰지 않는다 — 같은 그래프는 언제나 같은 그림이 된다.
 
+import { PLAIN_EDGE_SCREEN_MAX_LENGTH_FACTOR } from '../data/facilityLayout.js';
+
 // 구역마다 노드가 두 배가 되면서(ADR-0088) 캔버스도 면적 두 배, 즉 변으로 √2배 키웠다.
 // 엔진 좌표는 여기서 캔버스에 꽉 차게 축척되므로(fitToCanvas), 노드 사이 px 간격을 예전과
 // 비슷하게 유지하는 것은 엔진 쪽 반경이 아니라 이 두 값이다.
@@ -23,6 +25,11 @@ const RELAX_SETTLE_EPSILON = 0.5;
 /** 밀어낼 때는 목표 거리보다 조금 더 멀리 민다(px). 수렴이 목표 바로 아래 1px에서 멎으면
  * 측정으로는 여전히 "붙어 있음"으로 세어지므로, 그 여유를 미리 준다. */
 const RELAX_OVERSHOOT = 3;
+/** 상한을 넘은 평범한 통로를 당기는 세기. 밀어내는 힘과 같은 반복 안에서 겨루므로, 겹침을
+ * 되살릴 만큼 세면 안 된다. */
+const PLAIN_EDGE_PULL_GAIN = 0.9;
+/** 당긴 뒤 남겨 둘 여유(px) — 상한 바로 위에서 멎어 측정에 걸리지 않도록 조금 더 당긴다. */
+const PLAIN_EDGE_PULL_UNDERSHOOT = 12;
 
 /**
  * 그래프별 배치 결과 캐시. 배치는 그래프만의 순수 함수인데 구역이 두 배가 된 뒤로는 한 번
@@ -40,7 +47,7 @@ const layoutCache = new WeakMap();
 export function layoutPositions(graph) {
   const cached = layoutCache.get(graph);
   if (cached) return cached;
-  const positions = relaxPositions(graph, inflateSectors(graph, rehangRooms(graph, scaledPositions(graph))));
+  const positions = relaxPositions(graph, inflateSectors(graph, shortenPlainEdges(graph, rehangRooms(graph, scaledPositions(graph)))));
   layoutCache.set(graph, positions);
   return positions;
 }
@@ -308,11 +315,93 @@ function closestPointOnSegment(p, a, b) {
 }
 
 /**
+ * 화면에서 길이를 재는 대상 — 구역 안 평범한 통로(관문은 구역을 잇는 구조라 빠진다).
+ * 엔진에서 인접한 노드만 잇도록 정규화한 통로들이며(ADR-0097), 화면 정리가 그것을 다시
+ * 늘여 놓으면 플레이어에게는 여전히 도면을 가로지르는 긴 줄이다.
+ * @param {{nodes: {id: string, sectorId?: string}[], edges: {from: string, to: string, features?: string[]}[]}} graph
+ */
+export function plainSectorEdges(graph) {
+  const sectorOf = Object.fromEntries(graph.nodes.map((n) => [n.id, n.sectorId]));
+  return graph.edges.filter((e) => (e.features || []).length === 0
+    && sectorOf[e.from] !== undefined && sectorOf[e.from] === sectorOf[e.to]);
+}
+
+/**
+ * 구역별 "화면상 평범한 통로 길이 중앙값 × PLAIN_EDGE_SCREEN_MAX_LENGTH_FACTOR" 상한.
+ * @param {{nodes: {id: string, sectorId?: string}[], edges: {from: string, to: string, features?: string[]}[]}} graph
+ * @param {Record<string, {x: number, y: number}>} positions
+ * @returns {Record<string, number>}
+ */
+export function plainEdgeScreenLimits(graph, positions) {
+  const sectorOf = Object.fromEntries(graph.nodes.map((n) => [n.id, n.sectorId]));
+  /** @type {Record<string, number[]>} */
+  const lengths = {};
+  for (const edge of plainSectorEdges(graph)) {
+    const sectorId = /** @type {string} */ (sectorOf[edge.from]);
+    (lengths[sectorId] ??= []).push(Math.hypot(
+      positions[edge.from].x - positions[edge.to].x, positions[edge.from].y - positions[edge.to].y,
+    ));
+  }
+  /** @type {Record<string, number>} */
+  const limits = {};
+  for (const [sectorId, values] of Object.entries(lengths)) {
+    const sorted = values.slice().sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    limits[sectorId] = median * PLAIN_EDGE_SCREEN_MAX_LENGTH_FACTOR;
+  }
+  return limits;
+}
+
+/** 평범한 통로 줄이기 패스의 반복 횟수와 한 번에 당기는 비율. */
+const SHORTEN_ITERATIONS = 120;
+const SHORTEN_GAIN = 0.5;
+/** 상한보다 이만큼 아래까지 당겨 둔다 — 뒤따르는 정리(relaxPositions)가 겹침을 풀며 조금 늘이므로
+ * 그 몫을 미리 비워 둔다. */
+const SHORTEN_TARGET_FACTOR = 0.85;
+
+/**
+ * 상한을 넘은 구역 안 평범한 통로의 두 끝을 서로에게 당긴다. 엔진은 인접한 노드만 평범한
+ * 통로로 잇지만(ADR-0097), 방을 다시 매다는 단계(rehangRooms)가 방끼리 난 연결문의 두 끝을
+ * 서로 반대쪽 각도로 보내 버리면 화면에서는 다시 도면을 가로지르는 줄이 된다. 그래서 정리
+ * 직전에 그 줄만 당겨 둔다 — 겹침은 뒤따르는 relaxPositions가 푼다. 난수 없이 결정적이다.
+ * @param {{nodes: {id: string, sectorId?: string}[], edges: {from: string, to: string, features?: string[]}[]}} graph
+ * @param {Record<string, {x: number, y: number}>} positions
+ */
+function shortenPlainEdges(graph, positions) {
+  const sectorOf = Object.fromEntries(graph.nodes.map((n) => [n.id, n.sectorId]));
+  const plainEdges = plainSectorEdges(graph).filter((e) => positions[e.from] && positions[e.to] && e.from !== e.to);
+  if (plainEdges.length === 0) return positions;
+  /** @type {Record<string, {x: number, y: number}>} */
+  const current = Object.fromEntries(Object.entries(positions).map(([id, p]) => [id, { ...p }]));
+
+  for (let iteration = 0; iteration < SHORTEN_ITERATIONS; iteration++) {
+    const limits = plainEdgeScreenLimits(graph, current);
+    let moved = false;
+    for (const edge of plainEdges) {
+      const limit = limits[/** @type {string} */ (sectorOf[edge.from])] * SHORTEN_TARGET_FACTOR;
+      const p = current[edge.from]; const q = current[edge.to];
+      const dx = q.x - p.x; const dy = q.y - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (!(dist > limit) || dist < 1e-6) continue;
+      const pull = (dist - limit) * SHORTEN_GAIN * 0.5;
+      p.x += (dx / dist) * pull; p.y += (dy / dist) * pull;
+      q.x -= (dx / dist) * pull; q.y -= (dy / dist) * pull;
+      moved = true;
+    }
+    if (!moved) break;
+  }
+  return current;
+}
+
+/**
  * 노드를 남의 통로와 이웃 노드로부터 밀어내는 반복 정리. 힘은 두 가지뿐이다 —
  * (1) 노드가 자기 것이 아닌 통로에 EDGE_CLEARANCE보다 가까우면 통로의 수직 방향으로 밀고,
- * (2) 노드끼리 NODE_CLEARANCE보다 가까우면 서로 밀어낸다. 원래 자리에서 MAX_DISPLACEMENT 안에
- * 묶고 캔버스 밖으로 나가지 않게 한다.
- * @param {{nodes: {id: string}[], edges: {from: string, to: string}[]}} graph
+ * (2) 노드끼리 NODE_CLEARANCE보다 가까우면 서로 밀어낸다. 그리고 (3) 구역 안 평범한 통로가
+ * 그 구역 중앙값의 PLAIN_EDGE_SCREEN_MAX_LENGTH_FACTOR배보다 길어지면 두 끝을 서로에게
+ * 당긴다 — 엔진에서 인접한 노드만 잇도록 정리한 통로를(ADR-0097) 화면 정리가 도로 늘이지
+ * 않게 하는 힘이다. 원래 자리에서 MAX_DISPLACEMENT 안에 묶고 캔버스 밖으로 나가지 않게 한다.
+ * @param {{nodes: {id: string, sectorId?: string}[], edges: {from: string, to: string, features?: string[]}[]}} graph
  * @param {Record<string, {x: number, y: number}>} initial
  */
 function relaxPositions(graph, initial) {
@@ -320,6 +409,8 @@ function relaxPositions(graph, initial) {
   const origin = Object.fromEntries(ids.map((id) => [id, { ...initial[id] }]));
   const current = Object.fromEntries(ids.map((id) => [id, { ...initial[id] }]));
   const edges = graph.edges.filter((e) => current[e.from] && current[e.to] && e.from !== e.to);
+  const sectorOf = Object.fromEntries(graph.nodes.map((n) => [n.id, n.sectorId]));
+  const plainEdges = plainSectorEdges(graph).filter((e) => current[e.from] && current[e.to] && e.from !== e.to);
   const lo = CANVAS_PADDING; const hiX = CANVAS_WIDTH - CANVAS_PADDING; const hiY = CANVAS_HEIGHT - CANVAS_PADDING;
 
   for (let iteration = 0; iteration < RELAX_ITERATIONS; iteration++) {
@@ -381,6 +472,21 @@ function relaxPositions(graph, initial) {
         force[ids[j]].x -= (dx / dist) * push; force[ids[j]].y -= (dy / dist) * push;
         moved = true;
       }
+    }
+
+    // (3) 너무 길어진 평범한 통로 ↔ 그 두 끝. 상한은 매 반복 지금 좌표에서 다시 잰다 —
+    // 당기면서 중앙값도 함께 내려가므로, 한 번 잰 값으로 고정하면 상한만 남고 기준이 어긋난다.
+    const limits = plainEdgeScreenLimits(graph, current);
+    for (const edge of plainEdges) {
+      const limit = limits[/** @type {string} */ (sectorOf[edge.from])] - PLAIN_EDGE_PULL_UNDERSHOOT;
+      const p = current[edge.from]; const q = current[edge.to];
+      const dx = q.x - p.x; const dy = q.y - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (!(dist > limit) || dist < 1e-6) continue;
+      const pull = (dist - limit) * PLAIN_EDGE_PULL_GAIN * 0.5;
+      force[edge.from].x += (dx / dist) * pull; force[edge.from].y += (dy / dist) * pull;
+      force[edge.to].x -= (dx / dist) * pull; force[edge.to].y -= (dy / dist) * pull;
+      moved = true;
     }
 
     if (!moved) break;

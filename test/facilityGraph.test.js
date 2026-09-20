@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateFacilityGraph, sectorRingPairs } from '../src/engine/facilityGraph.js';
+import { generateFacilityGraph, sectorRingPairs, findPlainEdgeViolations } from '../src/engine/facilityGraph.js';
 import { countEdgeDisjointPaths, reachableSet, baselineWalkDistances, baselineWalkArcs } from '../src/engine/graphUtils.js';
 import {
   ALL_SECTOR_IDS, SECTOR_LAYOUTS, totalNodesFor, THREAT_COUNT_BY_SECTOR,
@@ -42,12 +42,22 @@ test('different seeds usually produce different graphs', () => {
 test('node/sector/threat/special-edge counts match the spec for many seeds', () => {
   for (let seed = 0; seed < 40; seed++) {
     const { graph } = generateFacilityGraph(seed);
-    assert.equal(graph.nodes.length, totalNodesFor(graph.sectorIds), `seed ${seed}: node count`);
+    // 노드 수는 배치 원형이 정한 값 + 긴 다리를 쪼개며 끼운 복도 노드다(ADR-0097). 쪼개기는
+    // 드물어(런당 0~2개) 구역 크기의 의미는 그대로다.
+    const splitIdsBySector = {};
+    for (const node of graph.nodes) if (node.id.includes('_split')) (splitIdsBySector[node.sectorId] ||= []).push(node.id);
+    const splitTotal = Object.values(splitIdsBySector).reduce((sum, ids) => sum + ids.length, 0);
+    assert.equal(graph.nodes.length, totalNodesFor(graph.sectorIds) + splitTotal, `seed ${seed}: node count`);
+    assert.ok(splitTotal <= 6, `seed ${seed}: 끼워 넣은 복도 노드가 ${splitTotal}개나 된다`);
 
     const bySector = {};
     for (const node of graph.nodes) (bySector[node.sectorId] ||= []).push(node);
     for (const sectorId of graph.sectorIds) {
-      assert.equal(bySector[sectorId]?.length, SECTOR_LAYOUTS[sectorId].nodeCount, `seed ${seed}: ${sectorId} node count`);
+      assert.equal(
+        bySector[sectorId]?.length,
+        SECTOR_LAYOUTS[sectorId].nodeCount + (splitIdsBySector[sectorId] || []).length,
+        `seed ${seed}: ${sectorId} node count`,
+      );
     }
 
     const threatsBySector = {};
@@ -84,17 +94,83 @@ test('node/sector/threat/special-edge counts match the spec for many seeds', () 
     assert.ok(longRange.length >= LONG_RANGE_SPECIAL_EDGES_MIN && longRange.length <= LONG_RANGE_SPECIAL_EDGES_MAX, `seed ${seed}: long-range special edge total ${longRange.length}`);
 
     const withinBySector = {};
+    const convertedBySector = {};
     for (const edge of withinSector) {
       const sectorId = sectorOf(edge.from);
       withinBySector[sectorId] = (withinBySector[sectorId] || 0) + 1;
+      if (edge.fromFloorPlan) convertedBySector[sectorId] = (convertedBySector[sectorId] || 0) + 1;
     }
     for (const sectorId of graph.sectorIds) {
       const count = withinBySector[sectorId] || 0;
       const architectural = ARCHITECTURAL_SPECIAL_EDGES_BY_SECTOR[sectorId] || 0;
+      // 정규화 패스가 평면도의 지름길을 특수로 바꾼 것은 정원 안에서 센다(ADR-0097) — 무작위
+      // 배치가 그만큼 덜 얹으므로 총량은 그대로다. 다만 한 구역에서 바꿀 것이 정원 상한보다
+      // 많으면(드물다) 그만큼은 넘어간다 — 규칙 1이 정원보다 우선한다.
+      const converted = convertedBySector[sectorId] || 0;
       assert.ok(
-        count >= SPECIAL_EDGES_PER_SECTOR_MIN + architectural && count <= SPECIAL_EDGES_PER_SECTOR_MAX + architectural,
-        `seed ${seed}: ${sectorId} within-sector special edge count ${count}`,
+        count >= SPECIAL_EDGES_PER_SECTOR_MIN + architectural
+          && count <= Math.max(SPECIAL_EDGES_PER_SECTOR_MAX, converted) + architectural,
+        `seed ${seed}: ${sectorId} within-sector special edge count ${count} (평면도 변환 ${converted})`,
       );
+    }
+  }
+});
+
+// ADR-0097: 평범한 통로는 인접한 노드만 잇는다. 도면을 가로지르거나 사이에 방이 여럿 낀
+// 통로는 전부 특수 통로이거나 짧은 둘로 쪼개져 있어야 한다.
+test('평범한 통로는 언제나 인접한 노드끼리만 잇는다', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const violations = findPlainEdgeViolations(graph);
+    assert.equal(
+      violations.length, 0,
+      `seed ${seed}: 인접하지 않은 평범한 통로 ${violations.length}개 — ${violations.slice(0, 3).map((v) => `${v.edgeId}(${v.reason})`).join(', ')}`,
+    );
+  }
+});
+
+test('관문을 빼도 각 구역의 평범한 통로만으로 그 구역이 이어져 있다', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const sectorOfNode = new Map(graph.nodes.map((n) => [n.id, n.sectorId]));
+    for (const sectorId of graph.sectorIds) {
+      const ids = graph.nodes.filter((n) => n.sectorId === sectorId).map((n) => n.id);
+      const adjacency = new Map(ids.map((id) => [id, []]));
+      for (const edge of graph.edges) {
+        if (edge.features.length > 0) continue;
+        if (sectorOfNode.get(edge.from) !== sectorId || sectorOfNode.get(edge.to) !== sectorId) continue;
+        adjacency.get(edge.from).push(edge.to);
+        adjacency.get(edge.to).push(edge.from);
+      }
+      const seen = new Set([ids[0]]);
+      const queue = [ids[0]];
+      while (queue.length > 0) {
+        const node = queue.pop();
+        for (const other of adjacency.get(node)) if (!seen.has(other)) { seen.add(other); queue.push(other); }
+      }
+      assert.equal(seen.size, ids.length, `seed ${seed}: ${sectorId}가 평범한 통로만으로는 ${ids.length - seen.size}개 노드만큼 끊겨 있다`);
+    }
+  }
+});
+
+test('특수 통로로 바뀐 평면도 통로에는 반드시 성격이 붙고, 구역 간·원거리 지름길도 마찬가지다', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const { graph } = generateFacilityGraph(seed);
+    const sectorOfNode = new Map(graph.nodes.map((n) => [n.id, n.sectorId]));
+    const adjacentKeys = adjacentSectorKeys(graph);
+    for (const edge of graph.edges) {
+      if (edge.fromFloorPlan) {
+        assert.ok(edge.features.length > 0, `seed ${seed}: ${edge.id}가 평면도 지름길인데 성격이 없다`);
+      }
+      const from = sectorOfNode.get(edge.from);
+      const to = sectorOfNode.get(edge.to);
+      if (from === to) continue;
+      // 구역을 넘는 통로 중 성격이 없는 것은 관문뿐이고, 관문은 링 이웃만 잇는다.
+      if (edge.features.length === 0) {
+        assert.ok(adjacentKeys.has([from, to].sort().join('|')), `seed ${seed}: ${edge.id}가 성격 없이 링 밖을 잇는다`);
+      } else if (!adjacentKeys.has([from, to].sort().join('|'))) {
+        assert.ok(edge.features.length > 0, `seed ${seed}: 원거리 지름길 ${edge.id}에 성격이 없다`);
+      }
     }
   }
 });
