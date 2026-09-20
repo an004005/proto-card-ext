@@ -588,19 +588,30 @@ const ZOOM_MIN = 0.5;
 // 100여 노드가 한 캔버스에 들어가면 한 방의 글자·표식이 몇 픽셀밖에 안 된다. 3배로는 그것을
 // 읽을 수 없어 상한을 6배까지 올렸다 — 휠 한 칸(1.1배)과 +/− 버튼은 그대로다.
 const ZOOM_MAX = 6;
-/** WASD 한 번에 지도가 미끄러지는 화면 픽셀. 키를 누르고 있으면 OS 키 반복이 이어서 민다. */
-const PAN_KEY_STEP = 80;
-/** WASD 키 → 팬 방향. 지도를 "밀지" 않고 시점을 옮기므로 W는 위쪽이 보이게(지도는 아래로) 간다.
+/** WASD를 처음 누르는 순간 한 번에 미는 화면 픽셀. 그 뒤로는 PAN_KEY_SPEED로 프레임마다 이어진다. */
+const PAN_KEY_STEP = 40;
+/** WASD를 누르고 있는 동안의 속도(px/s). OS 키 반복(첫 반복까지 0.5초 남짓)을 기다리지 않고
+ * rAF로 매 프레임 옮기므로 끊김 없이 미끄러진다. */
+const PAN_KEY_SPEED = 480;
+/** WASD 키 → 단위 방향. 지도를 "밀지" 않고 시점을 옮기므로 W는 위쪽이 보이게(지도는 아래로) 간다.
  * 입력 필드 안이나 Ctrl/Alt/Meta 조합은 호출부가 걸러 준다. 방향키는 노드 포커스 이동에 이미 쓰인다.
  * @param {string} key @returns {{dx: number, dy: number}|null} */
 export function panDeltaForKey(key) {
   switch (key.toLowerCase()) {
-    case 'w': return { dx: 0, dy: PAN_KEY_STEP };
-    case 's': return { dx: 0, dy: -PAN_KEY_STEP };
-    case 'a': return { dx: PAN_KEY_STEP, dy: 0 };
-    case 'd': return { dx: -PAN_KEY_STEP, dy: 0 };
+    case 'w': return { dx: 0, dy: 1 };
+    case 's': return { dx: 0, dy: -1 };
+    case 'a': return { dx: 1, dy: 0 };
+    case 'd': return { dx: -1, dy: 0 };
     default: return null;
   }
+}
+/** 동시에 눌린 키들의 합 방향(길이 1). A+S면 아래왼쪽이 보이게 대각선으로, W+S처럼 상쇄되면 0.
+ * @param {Iterable<string>} keys @returns {{dx: number, dy: number}} */
+export function panVectorForKeys(keys) {
+  let dx = 0; let dy = 0;
+  for (const key of keys) { const d = panDeltaForKey(key); if (d) { dx += d.dx; dy += d.dy; } }
+  const len = Math.hypot(dx, dy);
+  return len === 0 ? { dx: 0, dy: 0 } : { dx: dx / len, dy: dy / len };
 }
 // 노드 안에 유형 첫 글자(복/사/대/봉/설/감/은/비)를 적기 시작하는 배율 — 이보다 작으면 글자가 도형을 덮는다.
 const NODE_TYPE_LETTER_MIN_SCALE = 2.2;
@@ -1219,10 +1230,29 @@ export function MapScreen() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // WASD로 지도를 옮긴다 — 드래그는 마우스를 옮겨 잡아야 해서 큰 지도에서 번거롭다. 글자를
-  // 치는 중(입력 필드)이거나 단축키 조합이면 건드리지 않는다. 방향키는 노드 포커스용으로 남긴다.
+  // WASD로 지도를 옮긴다 — 드래그는 마우스를 옮겨 잡아야 해서 큰 지도에서 번거롭다. 눌린 키를
+  // 집합으로 들고 rAF 루프가 매 프레임 그 합 방향으로 민다(OS 키 반복의 첫 지연을 안 기다리고,
+  // A+S 같은 동시 입력은 대각선). 글자를 치는 중(입력 필드)이거나 단축키 조합이면 건드리지 않는다.
+  // 방향키는 노드 포커스용으로 남긴다.
   useEffect(() => {
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined;
+    /** @type {Set<string>} */
+    const held = new Set();
+    let frame = 0;
+    let lastAt = 0;
+    const canAnimate = typeof requestAnimationFrame === 'function';
+    /** @param {number} now */
+    const tick = (now) => {
+      frame = 0;
+      if (held.size === 0) return;
+      const dt = lastAt ? Math.min(0.05, (now - lastAt) / 1000) : 0;
+      lastAt = now;
+      const v = panVectorForKeys(held);
+      if (dt > 0 && (v.dx !== 0 || v.dy !== 0)) {
+        setView((cur) => ({ ...cur, x: cur.x + v.dx * PAN_KEY_SPEED * dt, y: cur.y + v.dy * PAN_KEY_SPEED * dt }));
+      }
+      frame = requestAnimationFrame(tick);
+    };
     /** @param {KeyboardEvent} ev */
     const onKeyDown = (ev) => {
       if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
@@ -1232,10 +1262,24 @@ export function MapScreen() {
       const delta = panDeltaForKey(ev.key);
       if (!delta) return;
       ev.preventDefault();
-      setView((v) => ({ ...v, x: v.x + delta.dx, y: v.y + delta.dy }));
+      const key = ev.key.toLowerCase();
+      if (held.has(key)) return; // OS 키 반복은 무시 — 연속 이동은 rAF가 맡는다.
+      held.add(key);
+      setView((cur) => ({ ...cur, x: cur.x + delta.dx * PAN_KEY_STEP, y: cur.y + delta.dy * PAN_KEY_STEP }));
+      if (canAnimate && !frame) { lastAt = 0; frame = requestAnimationFrame(tick); }
     };
+    /** @param {KeyboardEvent} ev */
+    const onKeyUp = (ev) => { held.delete(ev.key.toLowerCase()); };
+    const onBlur = () => { held.clear(); };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+      if (frame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+    };
   }, []);
 
   // 지도 위에 자리가 있는 호버(노드·통로)는 그 자리에 붙인다. 캔버스 좌표 → 화면 좌표 변환은

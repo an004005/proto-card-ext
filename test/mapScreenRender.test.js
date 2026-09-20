@@ -23,7 +23,7 @@ installMiniDom();
 const { render, html } = await import(projectUrl('../src/lib.js'));
 const { snapshotSignal, historySignal } = await import(projectUrl('../src/state/runState.js'));
 const { createHistory } = await import(projectUrl('../src/engine/historyEngine.js'));
-const { MapScreen, panDeltaForKey } = await import(projectUrl('../src/components/MapScreen.js'));
+const { MapScreen, panDeltaForKey, panVectorForKeys } = await import(projectUrl('../src/components/MapScreen.js'));
 const { resetMapView } = await import(projectUrl('../src/state/mapViewState.js'));
 
 function snapshotOf(run, loadoutOverride = null) {
@@ -795,4 +795,15 @@ test('WASD 키는 지도를 옮기는 방향 벡터로 바뀌고, 그 밖의 키
   assert.ok(d && d.dx < 0 && d.dy === 0, 'D는 반대');
   assert.equal(w.dy, -s.dy); assert.equal(a.dx, -d.dx);
   for (const key of ['ArrowUp', 'Enter', ' ', 'q', 'x']) assert.equal(panDeltaForKey(key), null, `${key}는 팬 키가 아니다`);
+});
+
+test('동시에 누른 WASD는 합 방향으로 대각선 이동하고, 상쇄되면 멈춘다', () => {
+  const as = panVectorForKeys(['a', 's']);
+  assert.ok(as.dx > 0 && as.dy < 0, 'A+S는 아래왼쪽이 보이게');
+  assert.ok(Math.abs(Math.hypot(as.dx, as.dy) - 1) < 1e-9, '대각선도 같은 속도(길이 1)');
+  const ws = panVectorForKeys(['w', 's']);
+  assert.deepEqual(ws, { dx: 0, dy: 0 }, 'W+S는 상쇄');
+  assert.deepEqual(panVectorForKeys([]), { dx: 0, dy: 0 });
+  const w = panVectorForKeys(['W']);
+  assert.deepEqual(w, { dx: 0, dy: 1 }, '대소문자 무관');
 });
