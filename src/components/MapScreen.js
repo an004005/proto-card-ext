@@ -588,6 +588,20 @@ const ZOOM_MIN = 0.5;
 // 100여 노드가 한 캔버스에 들어가면 한 방의 글자·표식이 몇 픽셀밖에 안 된다. 3배로는 그것을
 // 읽을 수 없어 상한을 6배까지 올렸다 — 휠 한 칸(1.1배)과 +/− 버튼은 그대로다.
 const ZOOM_MAX = 6;
+/** WASD 한 번에 지도가 미끄러지는 화면 픽셀. 키를 누르고 있으면 OS 키 반복이 이어서 민다. */
+const PAN_KEY_STEP = 80;
+/** WASD 키 → 팬 방향. 지도를 "밀지" 않고 시점을 옮기므로 W는 위쪽이 보이게(지도는 아래로) 간다.
+ * 입력 필드 안이나 Ctrl/Alt/Meta 조합은 호출부가 걸러 준다. 방향키는 노드 포커스 이동에 이미 쓰인다.
+ * @param {string} key @returns {{dx: number, dy: number}|null} */
+export function panDeltaForKey(key) {
+  switch (key.toLowerCase()) {
+    case 'w': return { dx: 0, dy: PAN_KEY_STEP };
+    case 's': return { dx: 0, dy: -PAN_KEY_STEP };
+    case 'a': return { dx: PAN_KEY_STEP, dy: 0 };
+    case 'd': return { dx: -PAN_KEY_STEP, dy: 0 };
+    default: return null;
+  }
+}
 // 노드 안에 유형 첫 글자(복/사/대/봉/설/감/은/비)를 적기 시작하는 배율 — 이보다 작으면 글자가 도형을 덮는다.
 const NODE_TYPE_LETTER_MIN_SCALE = 2.2;
 // 카메라 발각 배너를 "긴급"으로 강조하는 시간 창(칸) — 카메라 해킹이 버는 시간(CAMERA_HACK_DURATION)
@@ -1205,6 +1219,25 @@ export function MapScreen() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // WASD로 지도를 옮긴다 — 드래그는 마우스를 옮겨 잡아야 해서 큰 지도에서 번거롭다. 글자를
+  // 치는 중(입력 필드)이거나 단축키 조합이면 건드리지 않는다. 방향키는 노드 포커스용으로 남긴다.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return undefined;
+    /** @param {KeyboardEvent} ev */
+    const onKeyDown = (ev) => {
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const target = /** @type {HTMLElement|null} */ (ev.target);
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
+      const delta = panDeltaForKey(ev.key);
+      if (!delta) return;
+      ev.preventDefault();
+      setView((v) => ({ ...v, x: v.x + delta.dx, y: v.y + delta.dy }));
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   // 지도 위에 자리가 있는 호버(노드·통로)는 그 자리에 붙인다. 캔버스 좌표 → 화면 좌표 변환은
   // SVG의 뷰박스 맞춤(fit)과 팬/줌(view)을 차례로 적용한 것이며, 오른쪽으로 삐져나가면 왼쪽으로
   // 뒤집고 위아래는 화면 안으로 민다(Tooltip.js와 같은 규칙).
@@ -1712,7 +1745,9 @@ export function MapScreen() {
             <${Tooltip} content="지도를 현재 위치로 되돌립니다.">
               <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 9px', background: 'var(--color-bg)' }} onClick=${focusOnPlayer}><${IconTarget} /></button>
             <//>
-            <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 9px', background: 'var(--color-bg)' }} onClick=${resetView}>초기화</button>
+            <${Tooltip} content="보기를 처음 상태로 되돌립니다. 지도는 드래그 또는 W·A·S·D 키로 옮기고, 휠이나 +/−로 확대합니다.">
+              <button class="btn btn-secondary" style=${{ fontSize: '11px', padding: '4px 9px', background: 'var(--color-bg)' }} onClick=${resetView}>초기화</button>
+            <//>
           </div>
 
           ${legendOpen ? html`

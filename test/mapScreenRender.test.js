@@ -23,7 +23,7 @@ installMiniDom();
 const { render, html } = await import(projectUrl('../src/lib.js'));
 const { snapshotSignal, historySignal } = await import(projectUrl('../src/state/runState.js'));
 const { createHistory } = await import(projectUrl('../src/engine/historyEngine.js'));
-const { MapScreen } = await import(projectUrl('../src/components/MapScreen.js'));
+const { MapScreen, panDeltaForKey } = await import(projectUrl('../src/components/MapScreen.js'));
 const { resetMapView } = await import(projectUrl('../src/state/mapViewState.js'));
 
 function snapshotOf(run, loadoutOverride = null) {
@@ -785,4 +785,14 @@ test('시야 밖 노드의 위협 표식은 마지막으로 확인한 그룹 수
     },
   };
   assert.ok(mountMap(run).textContent.includes('▲2'), '시야 밖 표식에도 마지막 확인 그룹 수가 붙어야 한다');
+});
+
+test('WASD 키는 지도를 옮기는 방향 벡터로 바뀌고, 그 밖의 키는 무시된다', () => {
+  const w = panDeltaForKey('w'); const s = panDeltaForKey('S'); const a = panDeltaForKey('a'); const d = panDeltaForKey('D');
+  assert.ok(w && w.dy > 0 && w.dx === 0, 'W는 위쪽이 보이게(지도는 아래로) 민다');
+  assert.ok(s && s.dy < 0 && s.dx === 0, 'S는 반대');
+  assert.ok(a && a.dx > 0 && a.dy === 0, 'A는 왼쪽이 보이게');
+  assert.ok(d && d.dx < 0 && d.dy === 0, 'D는 반대');
+  assert.equal(w.dy, -s.dy); assert.equal(a.dx, -d.dx);
+  for (const key of ['ArrowUp', 'Enter', ' ', 'q', 'x']) assert.equal(panDeltaForKey(key), null, `${key}는 팬 키가 아니다`);
 });
